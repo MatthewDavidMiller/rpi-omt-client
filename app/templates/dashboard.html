@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — {{ hostname }} OMT Client{% endblock %}
+{% block content %}
+<h1>Dashboard</h1>
+
+<section class="playback-banner banner-{{ playback.tone }}" aria-labelledby="playback-heading">
+    <div>
+        <p class="eyebrow">Playback state</p>
+        <h2 id="playback-heading">{{ playback.label }}</h2>
+        <p>{{ playback.detail }}</p>
+    </div>
+    <span class="state-token">{{ playback.state }}</span>
+</section>
+
+<div class="content-grid">
+    <section class="card" aria-labelledby="current-heading">
+        <h2 id="current-heading">Current source</h2>
+        <dl class="details-list">
+            <dt>Source name</dt>
+            <dd>{{ current_source if current_source else "Not configured" }}</dd>
+            <dt>Direct address</dt>
+            <dd>{{ current_source_url_address if current_source_url_address else "Discovery" }}</dd>
+        </dl>
+        <div class="button-row">
+            <form method="POST" action="{{ url_for('dashboard.restart_playback') }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="button button-secondary">Restart playback</button>
+            </form>
+            <form method="POST" action="{{ url_for('dashboard.clear_playback') }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="button button-danger">Stop &amp; Clear Source</button>
+            </form>
+        </div>
+    </section>
+
+    <section class="card" aria-labelledby="selection-heading">
+        <h2 id="selection-heading">Source selection</h2>
+        <form method="POST" action="{{ url_for('dashboard.select_source') }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <label for="source">Available source</label>
+            <select id="source" name="source" required>
+                <option value="">Select a source</option>
+                {% for src in sources %}
+                {% set source_value = src.selection_value if src.selection_value is defined else src %}
+                {% set source_name = src.name if src.name is defined else src %}
+                <option value="{{ source_value }}" {{ "selected" if source_name == current_source else "" }}>{{ src.display_label if src.display_label is defined else src }}</option>
+                {% endfor %}
+            </select>
+            <div class="button-row">
+                <button type="submit" class="button">Play selected source</button>
+            </div>
+        </form>
+        <form method="POST" action="{{ url_for('dashboard.refresh_sources') }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="button button-secondary">Refresh sources</button>
+        </form>
+        {% if sources %}
+        <ul class="badge-list" aria-label="Discovery backends">
+            {% for src in sources %}
+            <li><span class="badge">{{ src.backend if src.backend is defined else "OMT discovery" }}</span> {{ src.name if src.name is defined else src }}</li>
+            {% endfor %}
+        </ul>
+        {% endif %}
+    </section>
+</div>
+{% endblock %}

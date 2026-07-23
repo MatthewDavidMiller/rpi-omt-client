@@ -1,0 +1,174 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:RpiOmt.Deployer.App.ViewModels"
+        x:Class="RpiOmt.Deployer.App.Views.MainWindow"
+        x:DataType="vm:MainViewModel"
+        Title="Raspberry Pi OMT Client Deployer"
+        Width="960" Height="760" MinWidth="620" MinHeight="520"
+        Closing="OnClosing">
+  <Window.Styles>
+    <Style Selector="Border.panel">
+      <Setter Property="Background" Value="{DynamicResource CardBackgroundFillColorDefaultBrush}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource CardStrokeColorDefaultBrush}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="6" />
+      <Setter Property="Padding" Value="12" />
+    </Style>
+    <Style Selector="TextBlock.section-title">
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="Margin" Value="0,0,0,8" />
+    </Style>
+    <Style Selector="TextBox">
+      <Setter Property="MinWidth" Value="150" />
+    </Style>
+    <Style Selector="Button.action">
+      <Setter Property="MinWidth" Value="120" />
+      <Setter Property="Margin" Value="0,0,8,0" />
+    </Style>
+    <Style Selector="GridSplitter.section-splitter">
+      <Setter Property="Background" Value="{DynamicResource CardStrokeColorDefaultBrush}" />
+      <Setter Property="Cursor" Value="SizeNorthSouth" />
+    </Style>
+  </Window.Styles>
+
+  <Grid Margin="14" RowSpacing="8">
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="2*" MinHeight="100" />
+      <RowDefinition Height="6" />
+      <RowDefinition Height="3*" MinHeight="80" />
+      <RowDefinition Height="6" />
+      <RowDefinition Height="5*" MinHeight="100" />
+    </Grid.RowDefinitions>
+    <Grid Grid.Row="0" ColumnDefinitions="*,Auto">
+      <TextBlock Text="Raspberry Pi OMT Client Deployer" FontSize="22" FontWeight="SemiBold" />
+      <ToggleSwitch Grid.Column="1" Content="Dark mode" IsChecked="{Binding IsDark}" />
+    </Grid>
+
+    <Border Grid.Row="1" Classes="panel" IsEnabled="{Binding InputsEnabled}">
+      <Grid RowDefinitions="Auto,Auto,Auto,Auto" ColumnDefinitions="Auto,*,Auto,*" ColumnSpacing="8" RowSpacing="8">
+        <TextBlock Grid.ColumnSpan="4" Text="Connection" Classes="section-title" />
+        <TextBlock Grid.Row="1" Text="Pi host" VerticalAlignment="Center" />
+        <TextBox x:Name="HostTextBox" Grid.Row="1" Grid.Column="1" Text="{Binding Host}" PlaceholderText="pi.local or 192.168.1.10" />
+        <TextBlock Grid.Row="1" Grid.Column="2" Text="Authentication" VerticalAlignment="Center" />
+        <StackPanel Grid.Row="1" Grid.Column="3" Orientation="Horizontal" Spacing="12">
+          <RadioButton Content="Password" GroupName="authentication" IsChecked="{Binding IsPasswordAuthentication}" />
+          <RadioButton Content="SSH key" GroupName="authentication" IsChecked="{Binding IsKeyAuthentication}" />
+        </StackPanel>
+        <StackPanel Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="2" Orientation="Horizontal" Spacing="8">
+          <TextBlock Text="Username" VerticalAlignment="Center" />
+          <TextBox Width="130" Text="{Binding Username}" />
+          <TextBlock Text="SSH port" VerticalAlignment="Center" />
+          <TextBox Width="75" Text="{Binding Port}" />
+        </StackPanel>
+        <Grid Grid.Row="2" Grid.Column="2" Grid.ColumnSpan="2" ColumnDefinitions="Auto,*" ColumnSpacing="8">
+          <TextBlock Text="SSH password" VerticalAlignment="Center" IsVisible="{Binding IsPasswordAuthentication}" />
+          <TextBox Grid.Column="1" Text="{Binding Password}" PasswordChar="●" IsVisible="{Binding IsPasswordAuthentication}" />
+          <TextBlock Text="SSH key" VerticalAlignment="Center" IsVisible="{Binding IsKeyAuthentication}" />
+          <Grid Grid.Column="1" ColumnDefinitions="*,Auto" ColumnSpacing="6" IsVisible="{Binding IsKeyAuthentication}">
+            <TextBox Text="{Binding KeyPath}" />
+            <Button Grid.Column="1" Content="Browse" Click="ChooseKey" />
+          </Grid>
+        </Grid>
+        <TextBlock Grid.Row="3" Grid.Column="2" Text="Key passphrase" VerticalAlignment="Center" IsVisible="{Binding IsKeyAuthentication}" />
+        <TextBox Grid.Row="3" Grid.Column="3" Text="{Binding KeyPassphrase}" PasswordChar="●" IsVisible="{Binding IsKeyAuthentication}" />
+      </Grid>
+    </Border>
+
+    <GridSplitter x:Name="ConnectionTaskSplitter" Grid.Row="2" Classes="section-splitter"
+                  ResizeDirection="Rows" ResizeBehavior="PreviousAndNext" />
+
+    <TabControl x:Name="TaskTabs" Grid.Row="3" IsEnabled="{Binding InputsEnabled}">
+      <TabItem Header="Deploy">
+        <ScrollViewer>
+          <StackPanel Margin="8" Spacing="10">
+            <Border Classes="panel">
+              <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto" ColumnDefinitions="Auto,*" ColumnSpacing="8" RowSpacing="8">
+                <TextBlock Grid.ColumnSpan="2" Text="Deployment settings" Classes="section-title" />
+                <TextBlock Grid.Row="1" Text="Project" VerticalAlignment="Center" />
+                <Grid Grid.Row="1" Grid.Column="1" ColumnDefinitions="*,Auto" ColumnSpacing="6">
+                  <TextBox x:Name="ProjectTextBox" Text="{Binding ProjectRoot}" />
+                  <Button Grid.Column="1" Content="Browse" Click="ChooseProject" />
+                </Grid>
+                <TextBlock Grid.Row="2" Text="Remote dir" VerticalAlignment="Center" />
+                <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding RemoteDirectory}" />
+                <TextBlock Grid.Row="3" Text="Sudo password" VerticalAlignment="Center" />
+                <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding SudoPassword}" PasswordChar="●" PlaceholderText="Uses SSH password when empty" />
+                <CheckBox Grid.Row="4" Grid.Column="1" Content="Build ARM64 image before deploy" IsChecked="{Binding BuildImage}" />
+              </Grid>
+            </Border>
+            <WrapPanel>
+              <Button x:Name="InstallPrerequisitesButton" Classes="action" Content="Install Prerequisites" Command="{Binding InstallPrerequisitesCommand}" />
+              <Button x:Name="DeployButton" Classes="action" Content="Deploy" Command="{Binding DeployCommand}" />
+            </WrapPanel>
+          </StackPanel>
+        </ScrollViewer>
+      </TabItem>
+      <TabItem Header="Manage">
+        <StackPanel Margin="8" Spacing="10">
+          <TextBlock Text="Run read-only checks or restart the installed service." />
+          <WrapPanel>
+            <Button x:Name="TestSshButton" Classes="action" Content="Test SSH" Command="{Binding TestConnectionCommand}" />
+            <Button x:Name="StatusButton" Classes="action" Content="Status" Command="{Binding StatusCommand}" />
+            <Button x:Name="LogsButton" Classes="action" Content="Logs" Command="{Binding LogsCommand}" />
+            <Button x:Name="RestartButton" Classes="action" Content="Restart" Command="{Binding RestartCommand}" />
+          </WrapPanel>
+        </StackPanel>
+      </TabItem>
+      <TabItem Header="Wi-Fi">
+        <ScrollViewer>
+          <StackPanel Margin="8" Spacing="10">
+            <Border Classes="panel">
+              <Grid RowDefinitions="Auto,Auto,Auto,Auto" ColumnDefinitions="Auto,*" ColumnSpacing="8" RowSpacing="8">
+                <TextBlock Grid.ColumnSpan="2" Text="Wi-Fi settings" Classes="section-title" />
+                <TextBlock Grid.Row="1" Text="SSID" VerticalAlignment="Center" />
+                <TextBox x:Name="WifiSsidTextBox" Grid.Row="1" Grid.Column="1" Text="{Binding WifiSsid}" />
+                <TextBlock Grid.Row="2" Text="Wi-Fi password" VerticalAlignment="Center" />
+                <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding WifiPassword}" PasswordChar="●" />
+                <CheckBox Grid.Row="3" Grid.Column="1" Content="Connect immediately" IsChecked="{Binding WifiConnect}" />
+              </Grid>
+            </Border>
+            <Button x:Name="ApplyWifiButton" Classes="action" HorizontalAlignment="Left" Content="Apply Wi-Fi" Command="{Binding ApplyWifiCommand}" />
+          </StackPanel>
+        </ScrollViewer>
+      </TabItem>
+      <TabItem Header="About">
+        <ScrollViewer>
+          <StackPanel Margin="8" Spacing="10">
+            <TextBlock Text="Raspberry Pi OMT Client Deployer" FontSize="20" FontWeight="SemiBold" />
+            <TextBlock Text="{Binding AppVersion, StringFormat='Version {0}'}" />
+            <TextBlock Text="{Binding CopyrightNotice}" TextWrapping="Wrap" />
+            <TextBlock Text="Project license" Classes="section-title" Margin="0,8,0,0" />
+            <TextBox Text="{Binding ProjectLicense}" IsReadOnly="True" AcceptsReturn="True"
+                     TextWrapping="Wrap" MinHeight="180" />
+            <TextBlock Text="Third-party notices" Classes="section-title" Margin="0,8,0,0" />
+            <TextBox Text="{Binding ThirdPartyNotices}" IsReadOnly="True" AcceptsReturn="True"
+                     TextWrapping="Wrap" MinHeight="240" />
+          </StackPanel>
+        </ScrollViewer>
+      </TabItem>
+    </TabControl>
+
+    <GridSplitter x:Name="TaskActivitySplitter" Grid.Row="4" Classes="section-splitter"
+                  ResizeDirection="Rows" ResizeBehavior="PreviousAndNext" />
+
+    <Border Grid.Row="5" Classes="panel">
+      <Grid RowDefinitions="Auto,Auto,*" ColumnDefinitions="*,Auto,Auto" RowSpacing="6">
+        <TextBlock Text="Activity" FontWeight="SemiBold" />
+        <Button x:Name="CancelButton" Grid.Column="1" Content="Cancel" Command="{Binding CancelCommand}" Margin="0,0,8,0" />
+        <Button Grid.Column="2" Content="Clear Log" Command="{Binding ClearLogCommand}" />
+        <TextBlock Grid.Row="1" Grid.ColumnSpan="3" Text="{Binding Activity}" />
+        <TextBlock Grid.Row="1" Grid.ColumnSpan="3" Margin="180,0,0,0" Foreground="#FF8A8A" Text="{Binding ValidationMessage}" TextWrapping="Wrap" />
+        <Border Grid.Row="2" Grid.ColumnSpan="3" Background="#020617" CornerRadius="4" Padding="8">
+          <ListBox x:Name="ActivityList" ItemsSource="{Binding ActivityLog}" Background="Transparent" BorderThickness="0">
+            <ListBox.ItemTemplate>
+              <DataTemplate x:DataType="vm:LogLine">
+                <TextBlock Text="{Binding Message}" Foreground="{Binding Color}" FontFamily="Consolas" TextWrapping="Wrap" />
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+        </Border>
+      </Grid>
+    </Border>
+  </Grid>
+</Window>

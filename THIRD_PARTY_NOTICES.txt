@@ -1,0 +1,284 @@
+RASPBERRY PI OMT CLIENT — THIRD-PARTY SOFTWARE NOTICES
+
+This file covers software included in the shipped Raspberry Pi OMT Client
+runtime image and Windows deployer. Build-only and test-only tools are not part
+of the distributed programs and are not listed here.
+
+The project license does not replace any license below. Copyright and license
+texts must be retained when the corresponding component is distributed.
+
+OPEN MEDIA TRANSPORT COMPONENTS
+--------------------------------
+
+Components:
+  omtplayer playback core
+  libomtnet 1.0.0.17
+  libvmx
+Copyright:
+  Copyright (c) 2025 Open Media Transport Contributors
+License: MIT
+Sources and exact revisions:
+  third_party/omt/PROVENANCE.md
+License copies:
+  third_party/omt/omtplayer/LICENSE.txt
+  third_party/omt/libomtnet/LICENSE.txt
+  third_party/omt/libvmx/LICENSE.txt
+
+MIT License
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+WINDOWS DEPLOYER
+----------------
+
+The following NuGet runtime packages are included. Except where separately
+identified below, they are licensed under the MIT License reproduced in this
+file:
+
+  Avalonia 12.1.0
+  Avalonia.BuildServices 11.3.2
+  Avalonia.Desktop 12.1.0
+  Avalonia.FreeDesktop 12.1.0
+  Avalonia.FreeDesktop.AtSpi 12.1.0
+  Avalonia.HarfBuzz 12.1.0
+  Avalonia.Native 12.1.0
+  Avalonia.Remote.Protocol 12.1.0
+  Avalonia.Skia 12.1.0
+  Avalonia.Themes.Fluent 12.1.0
+  Avalonia.Win32 12.1.0
+  Avalonia.X11 12.1.0
+  BouncyCastle.Cryptography 2.6.2
+  HarfBuzzSharp and native assets 8.3.1.3
+  MicroCom.Runtime 0.11.6
+  Microsoft.Extensions.DependencyInjection.Abstractions 8.0.2
+  Microsoft.Extensions.Logging.Abstractions 8.0.3
+  SkiaSharp and native assets 3.119.4
+  SSH.NET 2025.1.0
+  Tmds.DBus.Protocol 0.94.1
+
+Avalonia and related packages
+  Copyright (c) .NET Foundation and Contributors
+  License: MIT
+
+SSH.NET
+  Copyright (c) 2010-2026 SSH.NET contributors
+  License: MIT
+
+Inter font
+  Copyright (c) 2016-2026 The Inter Project Authors
+  License: SIL Open Font License 1.1
+  The font may be used, studied, modified, and redistributed under the OFL.
+
+Microsoft .NET runtime and libraries
+  Copyright (c) .NET Foundation and Contributors
+  License: MIT
+  The Windows About page appends the complete third-party notices from the
+  pinned Microsoft.NETCore.App.Runtime.win-x64 10.0.10 package.
+
+SkiaSharp and HarfBuzzSharp native assets
+  The Windows About page appends the complete third-party notices shipped in
+  the pinned SkiaSharp.NativeAssets.Win32 3.119.4 package. The corresponding
+  HarfBuzzSharp notice file is byte-for-byte identical in the locked graph.
+
+Avalonia.Angle.Windows.Natives 2.1.27548.20260419
+  Copyright 2018 The ANGLE Project Authors. All rights reserved.
+  License: BSD-3-Clause
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice,
+   this list of conditions and the following disclaimer.
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+3. Neither the name of TransGaming Inc., Google Inc., 3DLabs Inc. Ltd., nor
+   the names of their contributors may be used to endorse or promote products
+   derived from this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE
+LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+POSSIBILITY OF SUCH DAMAGE.
+
+PYTHON WEB APPLICATION
+----------------------
+
+Python
+  Copyright (c) Python Software Foundation
+  License: Python Software Foundation License Version 2
+
+Flask, Werkzeug, Jinja2, ItsDangerous, Click, Blinker, MarkupSafe
+  Copyright (c) Pallets
+  Licenses: BSD-3-Clause (Click is BSD-3-Clause)
+
+Flask-WTF and WTForms
+  Copyright (c) WTForms contributors
+  License: BSD-3-Clause
+
+Flask-Limiter and limits
+  Copyright (c) Flask-Limiter contributors
+  License: MIT
+
+Gunicorn
+  Copyright (c) 2009-2026 Benoit Chesneau and contributors
+  License: MIT
+
+Deprecated, ordered-set
+  Copyright their respective contributors
+  License: MIT
+
+packaging
+  Copyright (c) PyPA contributors
+  Licenses: Apache License 2.0 or BSD-2-Clause
+
+typing-extensions
+  Copyright (c) Python Software Foundation
+  License: Python Software Foundation License Version 2
+
+wrapt
+  Copyright (c) 2013-2026 Graham Dumpleton
+  License: BSD-2-Clause
+
+The Web About page appends the original license files installed by every
+locked Python wheel to this notice at image-build time.
+
+ALPINE LINUX RUNTIME
+--------------------
+
+The runtime is based on Alpine Linux 3.23.5 and includes dynamically linked
+runtime packages such as musl, BusyBox, libdrm, ALSA lib, Avahi libraries,
+OpenSSL, ICU, Python, libgcc, libstdc++, zlib, bash, coreutils, and util-linux.
+Each package remains governed by the license recorded in its Alpine package
+metadata. These include MIT/BSD/Apache-style licenses and copyleft licenses
+including GPL and LGPL.
+
+The exact installed package name, version, and license expression are recorded
+in the shipped SBOM. Corresponding source and build recipes for copyleft
+packages are distributed in the release third-party-source bundle. See
+THIRD_PARTY_SOURCE.md.
+
+NO LEGACY NDI SOFTWARE
+----------------------
+
+The shipped OMT Client artifacts do not contain the NDI SDK, libndi,
+gst-plugin-ndi, or other NDI binaries. Consequently no NDI SDK license or
+trademark notice applies to these artifacts.
+
+SIL OPEN FONT LICENSE 1.1
+-------------------------
+
+Version 1.1 - 26 February 2007
+
+PREAMBLE
+
+The goals of the Open Font License (OFL) are to stimulate worldwide
+development of collaborative font projects, to support the font creation
+efforts of academic and linguistic communities, and to provide a free and open
+framework in which fonts may be shared and improved in partnership with
+others.
+
+The OFL allows the licensed fonts to be used, studied, modified and
+redistributed freely as long as they are not sold by themselves. The fonts,
+including any derivative works, can be bundled, embedded, redistributed and/or
+sold with any software provided that any reserved names are not used by
+derivative works. The fonts and derivatives, however, cannot be released under
+any other type of license. The requirement for fonts to remain under this
+license does not apply to any document created using the fonts or their
+derivatives.
+
+DEFINITIONS
+
+"Font Software" refers to the set of files released by the Copyright Holder(s)
+under this license and clearly marked as such. This may include source files,
+build scripts and documentation.
+
+"Reserved Font Name" refers to any names specified as such after the copyright
+statement(s).
+
+"Original Version" refers to the collection of Font Software components as
+distributed by the Copyright Holder(s).
+
+"Modified Version" refers to any derivative made by adding to, deleting, or
+substituting -- in part or in whole -- any of the components of the Original
+Version, by changing formats or by porting the Font Software to a new
+environment.
+
+"Author" refers to any designer, engineer, programmer, technical writer or
+other person who contributed to the Font Software.
+
+PERMISSION & CONDITIONS
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of the Font Software, to use, study, copy, merge, embed, modify, redistribute,
+and sell modified and unmodified copies of the Font Software, subject to the
+following conditions:
+
+1) Neither the Font Software nor any of its individual components, in Original
+or Modified Versions, may be sold by itself.
+
+2) Original or Modified Versions of the Font Software may be bundled,
+redistributed and/or sold with any software, provided that each copy contains
+the above copyright notice and this license. These can be included either as
+stand-alone text files, human-readable headers or in the appropriate
+machine-readable metadata fields within text or binary files as long as those
+fields can be easily viewed by the user.
+
+3) No Modified Version of the Font Software may use the Reserved Font Name(s)
+unless explicit written permission is granted by the corresponding Copyright
+Holder. This restriction only applies to the primary font name as presented to
+the users.
+
+4) The name(s) of the Copyright Holder(s) or the Author(s) of the Font Software
+shall not be used to promote, endorse or advertise any Modified Version, except
+to acknowledge the contribution(s) of the Copyright Holder(s) and the
+Author(s) or with their explicit written permission.
+
+5) The Font Software, modified or unmodified, in part or in whole, must be
+distributed entirely under this license, and must not be distributed under any
+other license. The requirement for fonts to remain under this license does not
+apply to any document created using the Font Software.
+
+TERMINATION
+
+This license becomes null and void if any of the above conditions are not met.
+
+DISCLAIMER
+
+THE FONT SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+OR IMPLIED, INCLUDING BUT NOT LIMITED TO ANY WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT OF COPYRIGHT, PATENT,
+TRADEMARK, OR OTHER RIGHT. IN NO EVENT SHALL THE COPYRIGHT HOLDER BE LIABLE FOR
+ANY CLAIM, DAMAGES OR OTHER LIABILITY, INCLUDING ANY GENERAL, SPECIAL,
+INDIRECT, INCIDENTAL, OR CONSEQUENTIAL DAMAGES, WHETHER IN AN ACTION OF
+CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF THE USE OR INABILITY TO USE
+THE FONT SOFTWARE OR FROM OTHER DEALINGS IN THE FONT SOFTWARE.
+
+GENERAL
+-------
+
+SPDX license identifiers above are descriptive; the accompanying full license
+and package-specific notice text controls.

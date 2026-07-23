@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}About — {{ hostname }} OMT Client{% endblock %}
+{% block content %}
+<h1>About</h1>
+<section class="card" aria-labelledby="product-heading">
+    <h2 id="product-heading">Raspberry Pi OMT Client</h2>
+    <dl class="details-list">
+        <dt>Version</dt>
+        <dd>{{ app_version }}</dd>
+        <dt>Copyright</dt>
+        <dd>Copyright © 2026 Matthew David Miller. All rights reserved.</dd>
+    </dl>
+</section>
+<section class="card legal-card" aria-labelledby="license-heading">
+    <h2 id="license-heading">Project license</h2>
+    <pre class="legal-text">{{ project_license }}</pre>
+</section>
+<section class="card legal-card" aria-labelledby="notices-heading">
+    <h2 id="notices-heading">Third-party notices</h2>
+    <pre class="legal-text">{{ third_party_notices }}</pre>
+</section>
+{% endblock %}

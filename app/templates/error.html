@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} — {{ hostname }} OMT Client{% endblock %}
+{% block content %}
+<h1>{{ title }}</h1>
+<section class="card">
+    <p class="notice notice-danger" role="alert">{{ message }}</p>
+    <p><a class="button button-secondary" href="{{ url_for('dashboard.dashboard') }}">Return to dashboard</a></p>
+</section>
+{% endblock %}

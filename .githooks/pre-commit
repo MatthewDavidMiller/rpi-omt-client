@@ -1,0 +1,21 @@
+#!/bin/bash
+# Full local gate run before every commit.
+
+set -euo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+cd "${REPO_ROOT}"
+
+echo "=== Pre-commit checks ==="
+
+# scripts/test-local.sh owns the shared syntax, lint, unit, Docker-build, and
+# smoke/network test sequence so Make, manual runs, and this hook cannot drift.
+./scripts/test-local.sh --full
+
+echo "Running Python dependency audit..."
+./scripts/audit-python-deps.sh
+
+echo "Running security scans..."
+./scripts/security-scan.sh
+
+echo "=== Pre-commit checks passed ==="

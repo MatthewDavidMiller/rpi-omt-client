@@ -1,0 +1,139 @@
+#!/bin/bash
+# Verify test-local rejects options that could silently select a smaller suite.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+RUNNER="${PROJECT_ROOT}/scripts/test-local.sh"
+
+if "${RUNNER}" --ful >/dev/null 2>&1; then
+    echo "FAIL: misspelled mode was accepted" >&2
+    exit 1
+fi
+if "${RUNNER}" --quick extra >/dev/null 2>&1; then
+    echo "FAIL: extra mode argument was accepted" >&2
+    exit 1
+fi
+if ! "${RUNNER}" --help | grep -q '^Usage:'; then
+    echo "FAIL: help output is unavailable" >&2
+    exit 1
+fi
+
+echo "PASS: test-local accepts only documented modes"
+
+case_dir=$(mktemp -d)
+trap 'rm -rf "${case_dir}"' EXIT
+fixture_root="${case_dir}/project"
+outside_dir="${case_dir}/outside"
+mkdir -p \
+    "${fixture_root}/scripts" \
+    "${fixture_root}/tests/integration" \
+    "${fixture_root}/tests/unit" \
+    "${fixture_root}/tests/.venv/bin" \
+    "${fixture_root}/test-bin" \
+    "${outside_dir}"
+cp "${RUNNER}" "${fixture_root}/scripts/test-local.sh"
+cp "${PROJECT_ROOT}/scripts/docker-test-env.sh" \
+    "${fixture_root}/scripts/docker-test-env.sh"
+
+stub_paths=(
+    tests/unit/test_flask_app_syntax.sh
+    tests/unit/test_control_omt.sh
+    tests/unit/test_entrypoint_logic.sh
+    tests/unit/test_start_omt.sh
+    tests/unit/test_host_debug.sh
+    tests/unit/test_host_reboot.sh
+    tests/unit/test_deployment_transactions.sh
+    tests/unit/test_compose_config.sh
+    tests/unit/test_install.sh
+    tests/unit/test_uninstall.sh
+    tests/unit/test_detect_version.sh
+    tests/unit/test_container_engine.sh
+    tests/unit/test_setup_hooks.sh
+    tests/unit/test_test_runner_args.sh
+    tests/unit/test_supply_chain.sh
+    scripts/lint.sh
+    tests/unit/test_dockerfile_lint.sh
+    tests/integration/test_docker_build.sh
+    tests/integration/test_container_smoke.sh
+    tests/integration/test_omt_network.sh
+)
+for stub_path in "${stub_paths[@]}"; do
+    ln -s /bin/true "${fixture_root}/${stub_path}"
+done
+
+cat > "${fixture_root}/scripts/check-deployer.sh" <<'EOF'
+#!/bin/bash
+set -euo pipefail
+printf '%s\n' "$*" >> "${CHECK_DEPLOYER_LOG}"
+EOF
+chmod +x "${fixture_root}/scripts/check-deployer.sh"
+
+cat > "${fixture_root}/test-bin/docker" <<'EOF'
+#!/bin/bash
+exit 0
+EOF
+chmod +x "${fixture_root}/test-bin/docker"
+
+cat > "${fixture_root}/tests/.venv/bin/pytest" <<'EOF'
+#!/bin/bash
+set -euo pipefail
+[[ "${PWD}" == "${EXPECTED_PROJECT_ROOT}" ]]
+[[ "${1:-}" == "tests/unit" ]]
+printf '%s\n' "${PWD}" > "${PROBE_RESULT}"
+EOF
+chmod +x "${fixture_root}/tests/.venv/bin/pytest"
+
+probe_result="${case_dir}/pytest-cwd"
+if (
+    cd "${outside_dir}"
+    EXPECTED_PROJECT_ROOT="${fixture_root}" \
+        PROBE_RESULT="${probe_result}" \
+        CHECK_DEPLOYER_LOG="${case_dir}/quick-deployer" \
+        "${fixture_root}/scripts/test-local.sh" --quick \
+        > "${case_dir}/runner-output" 2>&1
+) && grep -Fxq "${fixture_root}" "${probe_result}"; then
+    echo "PASS: test-local resolves relative test paths from its project root"
+else
+    echo "FAIL: test-local depends on the caller's working directory" >&2
+    cat "${case_dir}/runner-output" >&2
+    exit 1
+fi
+
+if [[ "$(wc -l < "${case_dir}/quick-deployer")" -eq 1 ]] &&
+   [[ -z "$(< "${case_dir}/quick-deployer")" ]]; then
+    echo "PASS: quick mode runs the deployer gate without publishing"
+else
+    echo "FAIL: quick mode deployer contract changed" >&2
+    exit 1
+fi
+
+run_container_mode() {
+    local mode="$1"
+    local log_file="${case_dir}/${mode}-deployer"
+    local -a mode_args=()
+    [[ "${mode}" == "full" ]] && mode_args=(--full)
+    (
+        cd "${outside_dir}"
+        PATH="${fixture_root}/test-bin:${PATH}" \
+            CONTAINER_ENGINE=docker \
+            EXPECTED_PROJECT_ROOT="${fixture_root}" \
+            PROBE_RESULT="${probe_result}" \
+            CHECK_DEPLOYER_LOG="${log_file}" \
+            "${fixture_root}/scripts/test-local.sh" "${mode_args[@]}" \
+            > "${case_dir}/${mode}-output" 2>&1
+    )
+    if [[ "$(wc -l < "${log_file}")" -eq 2 ]] &&
+       grep -Fxq -- '--publish' "${log_file}" &&
+       grep -Fxq -- '--integration-only' "${log_file}"; then
+        echo "PASS: ${mode} mode publishes and runs Pi-userland integration"
+    else
+        echo "FAIL: ${mode} mode deployer contract changed" >&2
+        cat "${case_dir}/${mode}-output" >&2
+        exit 1
+    fi
+}
+
+run_container_mode default
+run_container_mode full

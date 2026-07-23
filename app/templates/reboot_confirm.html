@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Confirm reboot — {{ hostname }} OMT Client{% endblock %}
+{% block content %}
+<h1>Confirm OS reboot</h1>
+<section class="card danger-zone">
+    <p><strong>The Raspberry Pi will stop playback and go offline.</strong></p>
+    <p>It should return after the operating system and OMT Client service finish starting.</p>
+    <div class="button-row">
+        <form method="POST" action="{{ url_for('system.reboot') }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="button button-danger">Confirm reboot</button>
+        </form>
+        <a class="button button-secondary" href="{{ url_for('system.system') }}">Cancel</a>
+    </div>
+</section>
+{% endblock %}

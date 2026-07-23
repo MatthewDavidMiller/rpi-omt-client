@@ -1,0 +1,130 @@
+#!/bin/bash
+# Local test runner
+# Usage: ./scripts/test-local.sh [--quick|--full]
+#
+# Options:
+#   --quick   Run unit tests only (no container engine required, ~30 sec)
+#   --full    Run unit tests + image build + container smoke + OMT network tests
+#   (default) Run unit tests + image build (no smoke tests)
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+# shellcheck source=scripts/docker-test-env.sh
+source "${SCRIPT_DIR}/docker-test-env.sh"
+cd "${PROJECT_ROOT}"
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+NC='\033[0m'
+
+echo "=== RPi OMT Client Local Test Runner ==="
+echo "Project root: ${PROJECT_ROOT}"
+echo ""
+
+QUICK_MODE=false
+FULL_MODE=false
+if [[ $# -gt 1 ]]; then
+    echo "Usage: $0 [--quick|--full]" >&2
+    exit 2
+fi
+case "${1:-}" in
+    "") ;;
+    --quick)
+        QUICK_MODE=true
+        echo "Running in quick mode (unit tests only, no container engine)"
+        ;;
+    --full)
+        FULL_MODE=true
+        echo "Running in full mode (unit + image build + container smoke + OMT network tests)"
+        ;;
+    -h|--help)
+        echo "Usage: $0 [--quick|--full]"
+        exit 0
+        ;;
+    *)
+        echo "Usage: $0 [--quick|--full]" >&2
+        exit 2
+        ;;
+esac
+
+run_test() {
+    local label="$1"
+    local script="$2"
+    echo "=== ${label} ==="
+    if "${script}"; then
+        echo -e "${GREEN}PASSED${NC}: ${label}"
+    else
+        echo -e "${RED}FAILED${NC}: ${label}"
+        exit 1
+    fi
+    echo ""
+}
+
+# ─── Unit Tests ───────────────────────────────────────────────
+run_test "Flask App Syntax" "${PROJECT_ROOT}/tests/unit/test_flask_app_syntax.sh"
+run_test "OMT Controller" "${PROJECT_ROOT}/tests/unit/test_control_omt.sh"
+run_test "Entrypoint Logic" "${PROJECT_ROOT}/tests/unit/test_entrypoint_logic.sh"
+run_test "Start OMT Script" "${PROJECT_ROOT}/tests/unit/test_start_omt.sh"
+run_test "Host Debug Budget" "${PROJECT_ROOT}/tests/unit/test_host_debug.sh"
+run_test "Host Reboot Bridge" "${PROJECT_ROOT}/tests/unit/test_host_reboot.sh"
+run_test "Deployment Transactions" "${PROJECT_ROOT}/tests/unit/test_deployment_transactions.sh"
+run_test "Compose Config" "${PROJECT_ROOT}/tests/unit/test_compose_config.sh"
+run_test "Install Script" "${PROJECT_ROOT}/tests/unit/test_install.sh"
+run_test "Uninstall Script" "${PROJECT_ROOT}/tests/unit/test_uninstall.sh"
+run_test "Version Detection" "${PROJECT_ROOT}/tests/unit/test_detect_version.sh"
+run_test "Container Engine Selection" "${PROJECT_ROOT}/tests/unit/test_container_engine.sh"
+run_test "Git Hook Setup" "${PROJECT_ROOT}/tests/unit/test_setup_hooks.sh"
+run_test "Test Runner Arguments" "${PROJECT_ROOT}/tests/unit/test_test_runner_args.sh"
+run_test "Supply Chain Guardrails" "${PROJECT_ROOT}/tests/unit/test_supply_chain.sh"
+run_test "Lint and syntax" "${PROJECT_ROOT}/scripts/lint.sh"
+
+# ─── Avalonia Unit and Headless Tests ────────────────────────
+if [[ "${QUICK_MODE}" == "true" ]]; then
+    "${PROJECT_ROOT}/scripts/check-deployer.sh"
+else
+    "${PROJECT_ROOT}/scripts/check-deployer.sh" --publish
+fi
+
+# ─── Python Unit Tests ────────────────────────────────────────
+echo "=== Python Unit Tests ==="
+PYTEST_VENV="${PROJECT_ROOT}/tests/.venv"
+if [[ ! -x "${PYTEST_VENV}/bin/pytest" ]]; then
+    echo -e "${RED}FAILED${NC}: pytest venv not set up. Run: make test-setup"
+    exit 1
+fi
+if "${PYTEST_VENV}/bin/pytest" tests/unit \
+    --cov=app --cov-report=term-missing --cov-fail-under=85 -q --tb=short; then
+    echo -e "${GREEN}PASSED${NC}: Python unit tests"
+else
+    echo -e "${RED}FAILED${NC}: Python unit tests"
+    exit 1
+fi
+echo ""
+
+if [[ "${QUICK_MODE}" == "true" ]]; then
+    echo -e "${GREEN}=== Quick tests completed successfully ===${NC}"
+    exit 0
+fi
+
+# ─── Live Container Tests ─────────────────────────────────────
+# shellcheck disable=SC2310
+if ! ensure_test_container_engine; then
+    echo -e "${RED}FAILED${NC}: Docker or Podman is required for live container tests"
+    exit 1
+fi
+
+run_test "Dockerfile lint" "${PROJECT_ROOT}/tests/unit/test_dockerfile_lint.sh"
+echo "=== Pi OS Userland Integration ==="
+"${PROJECT_ROOT}/scripts/check-deployer.sh" --integration-only
+echo -e "${GREEN}PASSED${NC}: Pi OS userland integration"
+echo ""
+run_test "Container Image Build" "${PROJECT_ROOT}/tests/integration/test_docker_build.sh"
+
+if [[ "${FULL_MODE}" == "true" ]]; then
+    run_test "Container Smoke Tests" "${PROJECT_ROOT}/tests/integration/test_container_smoke.sh"
+    run_test "OMT Network Tests" "${PROJECT_ROOT}/tests/integration/test_omt_network.sh"
+fi
+
+echo -e "${GREEN}=== All tests completed successfully ===${NC}"

@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}System — {{ hostname }} OMT Client{% endblock %}
+{% block content %}
+<h1>System</h1>
+<section class="card danger-zone" aria-labelledby="reboot-heading">
+    <p class="eyebrow">Danger zone</p>
+    <h2 id="reboot-heading">Reboot operating system</h2>
+    <p>Rebooting stops playback and disconnects this Web GUI until the Raspberry Pi starts again.</p>
+    <a class="button button-danger" href="{{ url_for('system.confirm_reboot') }}">Reboot OS…</a>
+</section>
+{% endblock %}

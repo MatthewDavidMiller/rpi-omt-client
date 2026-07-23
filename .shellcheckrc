@@ -1,0 +1,15 @@
+# ShellCheck configuration for rpi-ndi-client
+# https://github.com/koalaman/shellcheck/wiki/Directive
+
+# Default shell is bash
+shell=bash
+
+# Enable all checks by default
+enable=all
+
+# Disable specific checks as needed:
+# SC2034: Variable appears unused (template vars are used after substitution)
+disable=SC2034
+
+# External sources that shellcheck should follow
+external-sources=true

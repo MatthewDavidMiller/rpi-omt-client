@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}Reboot scheduled — {{ hostname }} OMT Client{% endblock %}
+{% block content %}
+<h1>Reboot scheduled</h1>
+<section class="card">
+    <p role="status">{{ message }}</p>
+    <p>Wait for the Raspberry Pi to restart, then reconnect to this page.</p>
+</section>
+{% endblock %}

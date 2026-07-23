@@ -1,0 +1,33 @@
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+extend-exclude = [
+    "tests/.venv",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests/unit"]
+addopts = "-q --tb=short"
+
+[tool.coverage.run]
+branch = true
+source = ["app"]
+omit = [
+    "app/omt_client/discovery.py",
+    "app/omt_client/network_config.py",
+    "app/omt_client/settings.py",
+    "app/omt_client/state_store.py",
+    "app/omt_client/wsgi.py",
+]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+exclude_also = [
+    "if __name__ == .__main__.:",
+    "def main\\(",
+    "except Exception as exc:",
+]

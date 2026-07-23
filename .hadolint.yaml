@@ -1,0 +1,23 @@
+# Hadolint configuration for Dockerfile linting
+# https://github.com/hadolint/hadolint#configure
+
+# Set failure threshold
+failure-threshold: warning
+
+# Ignore specific rules
+ignored:
+  - DL3008  # Pin versions in apt-get (we use --no-install-recommends instead)
+  - DL3013  # Pin versions in pip install (requirements.txt uses lower bounds)
+  - DL3015  # Avoid additional packages with apt-get install
+  - DL3018  # Alpine package revisions are captured in the final-image SBOM
+
+# Trusting specific registries
+trustedRegistries:
+  - docker.io
+  - ghcr.io
+  - mcr.microsoft.com
+
+# Override rule severity
+override:
+  warning:
+    - DL3059  # Multiple consecutive RUN instructions

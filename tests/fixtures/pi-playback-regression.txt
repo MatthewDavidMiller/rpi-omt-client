@@ -1,0 +1,8 @@
+2026-07-18T12:00:00Z Starting OMT supervisor source=SANITIZED-SOURCE direct_connect=no session=100-200 requested_connector=auto
+2026-07-18T12:00:01Z Selected HDMI connector=HDMI-A-1 card=card1 connector_id=32 driver=vc4 alsa=plughw:CARD=vc4hdmi0,DEV=0
+2026-07-18T12:00:02Z [video] ERROR kmssink failed to open DRM device
+2026-07-18T12:00:02Z Video pipeline exited; retrying in 2s
+2026-07-18T12:00:03Z [audio] ALSA lib pcm.c: sanitized HDMI device unavailable
+2026-07-18T12:00:03Z Audio pipeline exited; retrying in 2s
+2026-07-18T12:00:04Z Video pipeline exited; retrying in 2s
+2026-07-18T12:00:05Z Audio pipeline exited; retrying in 2s

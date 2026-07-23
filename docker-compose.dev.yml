@@ -1,0 +1,11 @@
+services:
+  omt-client:
+    build: .
+    container_name: omt-client-dev
+    ports:
+      - "5000:5000"
+    volumes:
+      - omt-config-dev:/etc/omt
+
+volumes:
+  omt-config-dev:

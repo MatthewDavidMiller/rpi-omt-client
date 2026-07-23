@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Network Settings — {{ hostname }} OMT Client{% endblock %}
+{% block content %}
+<h1>Network Settings</h1>
+<div class="content-grid">
+    <section class="card" aria-labelledby="discovery-heading">
+        <h2 id="discovery-heading">OMT discovery</h2>
+        <p>mDNS discovery remains enabled. Configure one optional Discovery Server for routed networks.</p>
+        {% if network.error %}
+        <p class="notice notice-warning" role="status">{{ network.error }}</p>
+        {% endif %}
+        <form method="POST" action="{{ url_for('network.network_settings') }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <label for="discovery_server">Discovery Server</label>
+            <input id="discovery_server" name="discovery_server"
+                   value="{{ network.discovery_server_text }}"
+                   placeholder="omt://discovery.example:6399">
+            <p class="field-help">Enter a host, host:port, or omt://host:port. Port 6399 is used by default.</p>
+            <button type="submit" class="button">Save discovery settings</button>
+        </form>
+    </section>
+    <section class="card" aria-labelledby="direct-heading">
+        <h2 id="direct-heading">Direct target</h2>
+        <p>Connect directly when discovery is unavailable.</p>
+        <form method="POST" action="{{ url_for('network.save_direct_source') }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <label for="direct_address">OMT target</label>
+            <input id="direct_address" name="direct_address" required
+                   placeholder="omt://source.example:6400"
+                   value="{{ current_address if current_address else '' }}">
+            <p class="field-help">An explicit omt://host:port target is required.</p>
+            <button type="submit" class="button">Save &amp; play direct target</button>
+        </form>
+    </section>
+</div>
+{% endblock %}

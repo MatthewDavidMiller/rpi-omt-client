@@ -1,0 +1,43 @@
+# Secrets
+.env
+vars.yml
+
+# Docker build artifacts
+ndi-client-arm64.tar.gz
+*.tar.gz
+
+# Build directories
+output/
+build/
+dist/
+.build/
+work/
+env/
+vm-files/
+ndi_debug/
+.codex
+**/bin/
+**/obj/
+TestResults/
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.coverage
+htmlcov/
+*.egg-info/
+tests/.venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.log
