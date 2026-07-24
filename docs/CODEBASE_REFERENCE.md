@@ -4,23 +4,26 @@
 
 | Area | Files |
 |---|---|
-| Native receiver | `receiver/RpiOmt.Receiver/Program.cs` |
+| Native receiver | `src/receiver/RpiOmt.Receiver/Program.cs` |
+| Receiver policy/status core | `src/receiver/RpiOmt.Receiver.Core` |
 | Audited OMT source | `third_party/omt/PROVENANCE.md`, `third_party/omt/libomtnet`, `third_party/omt/libvmx`, `third_party/omt/omtplayer` |
-| Flask composition | `app/omt_client/factory.py`, `app/omt_client/wsgi.py` |
-| Service boundary | `app/omt_client/services.py` |
-| Routes | `app/omt_client/routes/` |
-| Persistent state | `app/state_store.py` |
-| Discovery and URI validation | `app/discovery.py` |
-| OMT XML settings | `app/network_config.py` |
-| Templates and CSS | `app/templates/`, `app/static/` |
-| Shell process lifecycle | `omt/runtime-lib.sh`, `omt/start-omt.sh`, `omt/control-omt.sh`, `omt/entrypoint.sh` |
-| Container | `Dockerfile`, `docker-compose.yml` |
+| Flask composition | `src/omt_client/factory.py`, `src/omt_client/wsgi.py` |
+| Service composition | `src/omt_client/services/composition.py` |
+| Typed service protocols | `src/omt_client/services/protocols.py` |
+| Authentication, playback, network, diagnostics, host system | `src/omt_client/services/` |
+| Routes | `src/omt_client/routes/` |
+| Safe I/O and persistent state | `src/omt_client/safe_io.py`, `src/omt_client/state_store.py` |
+| Discovery and URI validation | `src/omt_client/discovery.py` |
+| OMT XML settings | `src/omt_client/network_config.py` |
+| Templates and CSS | `src/omt_client/templates/`, `src/omt_client/static/` |
+| Shell process lifecycle | `deploy/container/runtime-lib.sh`, `deploy/container/start-omt.sh`, `deploy/container/control-omt.sh`, `deploy/container/entrypoint.sh` |
+| Container | `deploy/Dockerfile`, `deploy/compose.yml` |
 
 Public routes are `/login`, `/logout`, `/`, `/sources/select`,
 `/sources/refresh`, `/playback/restart`, `/playback/clear`,
 `/settings/network`, `/settings/direct-source`, `/diagnostics`,
 `/diagnostics/discovery`, `/diagnostics/runtime`, `/diagnostics/direct`,
-`/diagnostics/download`, `/debug`, `/system`, `/system/reboot`, and `/about`.
+`/diagnostics/download`, `/system`, `/system/reboot`, and `/about`.
 All routes other than login require a current persistent session. Mutations
 are POST and CSRF protected.
 
@@ -28,15 +31,17 @@ are POST and CSRF protected.
 
 | Area | Files |
 |---|---|
-| Installer/uninstaller | `install.sh`, `uninstall.sh` |
-| Host diagnostics | `host-debug.sh` |
-| Reboot validator | `host-reboot.sh` |
-| Deployment contract | `deploy-artifacts.txt`, `deploy-transaction.sh` |
+| Installer/uninstaller | `deploy/host/install.sh`, `deploy/host/uninstall.sh` |
+| Host diagnostics | `deploy/host/host-diagnostics.sh` |
+| Reboot validator | `deploy/host/host-reboot.sh` |
+| Shared host helpers | `deploy/lib/host-validation.sh`, `deploy/lib/publication.sh`, `deploy/lib/service-install.sh` |
+| Deployment contract | `deploy/manifest-v2.txt`, `deploy/transaction.sh` |
 | CLI deployment | `scripts/deploy.sh` |
-| Windows models/validation | `deployer/RpiOmt.Deployer.Core/Models.cs` |
-| Windows action state | `deployer/RpiOmt.Deployer.Core/ActionController.cs` |
-| Windows deployment | `deployer/RpiOmt.Deployer.Core/DeploymentOperations.cs` |
-| Windows About UI | `deployer/RpiOmt.Deployer.App/BuildInformation.cs`, `deployer/RpiOmt.Deployer.App/Views/MainWindow.axaml` |
+| Windows models/validation | `src/deployer/RpiOmt.Deployer.Core/Models.cs` |
+| Windows action state | `src/deployer/RpiOmt.Deployer.Core/ActionController.cs` |
+| Windows deployment facade | `src/deployer/RpiOmt.Deployer.Core/DeploymentOperations.cs` |
+| Windows view models | `src/deployer/RpiOmt.Deployer.App/ViewModels/MainViewModel.cs`, `src/deployer/RpiOmt.Deployer.App/ViewModels/SectionViewModels.cs` |
+| Windows About UI | `src/deployer/RpiOmt.Deployer.App/BuildInformation.cs`, `src/deployer/RpiOmt.Deployer.App/Views/MainWindow.axaml` |
 
 ## Legal and release
 

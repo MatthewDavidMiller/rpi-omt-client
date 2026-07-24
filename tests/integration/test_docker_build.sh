@@ -45,6 +45,7 @@ fi
 cd "${PROJECT_ROOT}"
 # shellcheck disable=SC2310
 container_engine_build \
+    -f deploy/Dockerfile \
     --build-arg RPI_OMT_CLIENT_VERSION=vtest \
     -t "${IMAGE_TAG}" . || fail "amd64 container image build failed"
 pass "amd64 container image built"
@@ -103,7 +104,7 @@ checks=(
     "test -x /usr/local/bin/omt-receiver"
     "test -s /usr/local/lib/libvmx.so"
     "test -x /usr/local/bin/entrypoint.sh && test -x /usr/local/bin/control-omt.sh && test -x /usr/local/bin/start-omt.sh"
-    "test -f /app/omt_client/factory.py && test -f /app/templates/about.html && test -f /app/templates/system.html && test -f /app/templates/reboot_confirm.html"
+    "test -f /app/omt_client/factory.py && test -f /app/omt_client/templates/about.html && test -f /app/omt_client/templates/system.html && test -f /app/omt_client/templates/reboot_confirm.html"
     "test \"\$(cat /app/RPI_OMT_CLIENT_VERSION)\" = vtest"
     "test -s /app/legal/LICENSE && test -s /app/legal/THIRD_PARTY_NOTICES.txt"
     "grep -Fq 'PYTHON PACKAGE LICENSE FILE: flask-3.1.3.dist-info/licenses/LICENSE.txt' /app/legal/THIRD_PARTY_NOTICES.txt"
@@ -152,6 +153,7 @@ if timeout 30 "${CONTAINER_ENGINE}" run --rm --platform linux/arm64 \
             --platform linux/arm64
             --target receiver-builder
             --load
+            -f deploy/Dockerfile
             -t "${ARM64_BUILDER_TAG}" .
         )
     else
@@ -160,6 +162,7 @@ if timeout 30 "${CONTAINER_ENGINE}" run --rm --platform linux/arm64 \
             --format docker
             --platform linux/arm64
             --target receiver-builder
+            -f deploy/Dockerfile
             -t "${ARM64_BUILDER_TAG}" .
         )
     fi

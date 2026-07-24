@@ -1,0 +1,15 @@
+version=2
+omt-client-arm64.tar.gz
+deploy/compose.yml
+deploy/host/install.sh
+deploy/host/uninstall.sh
+deploy/host/host-diagnostics.sh
+deploy/host/host-reboot.sh
+deploy/lib/host-validation.sh
+deploy/lib/publication.sh
+deploy/lib/service-install.sh
+deploy/transaction.sh
+deploy/manifest-v2.txt
+LICENSE
+THIRD_PARTY_NOTICES.txt
+THIRD_PARTY_SOURCE.md

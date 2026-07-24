@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>RpiOmt.Deployer.App</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+    <AssemblyTitle>Raspberry Pi OMT Client Deployer</AssemblyTitle>
+    <Product>Raspberry Pi OMT Client</Product>
+    <Copyright>Copyright © 2026 Matthew David Miller. All rights reserved.</Copyright>
+    <Version>0.0.0</Version>
+    <InformationalVersion Condition="'$(RPI_OMT_CLIENT_VERSION)' == ''">unknown</InformationalVersion>
+    <InformationalVersion Condition="'$(RPI_OMT_CLIENT_VERSION)' != ''">$(RPI_OMT_CLIENT_VERSION)</InformationalVersion>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Avalonia.Desktop" />
+    <PackageReference Include="Avalonia.Fonts.Inter" />
+    <PackageReference Include="Avalonia.Themes.Fluent" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../RpiOmt.Deployer.Core/RpiOmt.Deployer.Core.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="../../../LICENSE" LogicalName="RpiOmt.ProjectLicense.txt" />
+    <EmbeddedResource Include="../../../THIRD_PARTY_NOTICES.txt" LogicalName="RpiOmt.ThirdPartyNotices.txt" />
+    <EmbeddedResource Include="$(NuGetPackageRoot)/microsoft.netcore.app.runtime.win-x64/10.0.10/THIRD-PARTY-NOTICES.TXT"
+                      LogicalName="RpiOmt.DotNetThirdPartyNotices.txt" />
+    <EmbeddedResource Include="$(NuGetPackageRoot)/skiasharp.nativeassets.win32/3.119.4/THIRD-PARTY-NOTICES.txt"
+                      LogicalName="RpiOmt.SkiaHarfBuzzThirdPartyNotices.txt" />
+  </ItemGroup>
+</Project>

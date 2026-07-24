@@ -23,11 +23,10 @@ The ARM64 build creates `omt-client-arm64.tar.gz`. The Windows build creates
 
 ## Install
 
-Copy the nine files named in `deploy-artifacts.txt` plus
-`deploy-transaction.sh` to the Pi, then run:
+Copy the nested files named in `deploy/manifest-v2.txt` to the Pi, then run:
 
 ```bash
-sudo ./install.sh
+sudo ./deploy/host/install.sh
 ```
 
 Or deploy over SSH:
@@ -62,7 +61,7 @@ third-party notices on its About tab.
 - [Setup](docs/SETUP.md)
 - [Operations](docs/OPERATIONS.md)
 - [Testing](docs/TESTING.md)
-- [Debug bundle](docs/DEBUG_BUNDLE.md)
+- [Diagnostics bundle](docs/DIAGNOSTICS_BUNDLE.md)
 
 ## License
 

@@ -14,7 +14,7 @@ echo "====================="
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-DOCKERFILE="${PROJECT_ROOT}/Dockerfile"
+DOCKERFILE="${PROJECT_ROOT}/deploy/Dockerfile"
 
 if [[ ! -f "${DOCKERFILE}" ]]; then
     echo -e "${RED}FAIL${NC}: Dockerfile not found"

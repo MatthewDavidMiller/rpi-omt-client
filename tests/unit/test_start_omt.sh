@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)"
-START="${ROOT}/omt/start-omt.sh"
+START="${ROOT}/deploy/container/start-omt.sh"
 CASE_DIR="$(mktemp -d)"
 trap 'rm -rf "${CASE_DIR}"' EXIT
 mkdir -p "${CASE_DIR}/config/run"

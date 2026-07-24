@@ -6,7 +6,7 @@ set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=scripts/docker-test-env.sh
 source "${PROJECT_ROOT}/scripts/docker-test-env.sh"
-DOCKERFILE="${PROJECT_ROOT}/Dockerfile"
+DOCKERFILE="${PROJECT_ROOT}/deploy/Dockerfile"
 DEBIAN_DIGEST="$(awk -F= '/^ARG DEBIAN_BOOKWORM_SLIM_DIGEST=/{print $2; exit}' "${DOCKERFILE}")"
 CHECK_IMAGE="debian:bookworm-slim@${DEBIAN_DIGEST}"
 

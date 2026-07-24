@@ -31,6 +31,7 @@ mkdir -p \
     "${fixture_root}/tests/integration" \
     "${fixture_root}/tests/unit" \
     "${fixture_root}/tests/.venv/bin" \
+    "${fixture_root}/tools" \
     "${fixture_root}/test-bin" \
     "${outside_dir}"
 cp "${RUNNER}" "${fixture_root}/scripts/test-local.sh"
@@ -42,8 +43,9 @@ stub_paths=(
     tests/unit/test_control_omt.sh
     tests/unit/test_entrypoint_logic.sh
     tests/unit/test_start_omt.sh
-    tests/unit/test_host_debug.sh
+    tests/unit/test_host_diagnostics.sh
     tests/unit/test_host_reboot.sh
+    tests/unit/test_host_install_helpers.sh
     tests/unit/test_deployment_transactions.sh
     tests/unit/test_compose_config.sh
     tests/unit/test_install.sh
@@ -51,9 +53,11 @@ stub_paths=(
     tests/unit/test_detect_version.sh
     tests/unit/test_container_engine.sh
     tests/unit/test_setup_hooks.sh
+    tests/unit/test_python_tooling.sh
     tests/unit/test_test_runner_args.sh
     tests/unit/test_supply_chain.sh
     scripts/lint.sh
+    tools/test-receiver.sh
     tests/unit/test_dockerfile_lint.sh
     tests/integration/test_docker_build.sh
     tests/integration/test_container_smoke.sh
@@ -76,14 +80,16 @@ exit 0
 EOF
 chmod +x "${fixture_root}/test-bin/docker"
 
-cat > "${fixture_root}/tests/.venv/bin/pytest" <<'EOF'
+cat > "${fixture_root}/tests/.venv/bin/python" <<'EOF'
 #!/bin/bash
 set -euo pipefail
 [[ "${PWD}" == "${EXPECTED_PROJECT_ROOT}" ]]
-[[ "${1:-}" == "tests/unit" ]]
+[[ "${1:-}" == "-m" ]]
+[[ "${2:-}" == "pytest" ]]
+[[ "${3:-}" == "tests/unit" ]]
 printf '%s\n' "${PWD}" > "${PROBE_RESULT}"
 EOF
-chmod +x "${fixture_root}/tests/.venv/bin/pytest"
+chmod +x "${fixture_root}/tests/.venv/bin/python"
 
 probe_result="${case_dir}/pytest-cwd"
 if (

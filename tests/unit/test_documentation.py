@@ -3,7 +3,7 @@ from pathlib import Path
 
 from omt_client import create_app
 from omt_client.preview import preview_services
-from settings import ENVIRONMENT_SPECS, load_settings
+from omt_client.settings import ENVIRONMENT_SPECS, load_settings
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -20,7 +20,7 @@ def test_local_markdown_links_resolve():
 
 def test_public_application_settings_are_documented():
     configuration = (ROOT / "docs" / "CONFIGURATION.md").read_text(encoding="utf-8")
-    settings_source = (ROOT / "app" / "settings.py").read_text(encoding="utf-8")
+    settings_source = (ROOT / "src" / "omt_client" / "settings.py").read_text(encoding="utf-8")
     public_names = {spec.name for spec in ENVIRONMENT_SPECS}
     public_names.update(re.findall(r'env\.get\("([A-Z][A-Z0-9_]+)"', settings_source))
     missing = [name for name in sorted(public_names) if f"`{name}`" not in configuration]
@@ -28,7 +28,8 @@ def test_public_application_settings_are_documented():
 
 
 def test_deployment_manifest_names_existing_files():
-    names = (ROOT / "deploy-artifacts.txt").read_text(encoding="ascii").splitlines()
+    names = (ROOT / "deploy" / "manifest-v2.txt").read_text(encoding="ascii").splitlines()
+    assert names.pop(0) == "version=2"
     assert names
     assert all(name == "omt-client-arm64.tar.gz" or (ROOT / name).is_file() for name in names)
 
@@ -36,16 +37,17 @@ def test_deployment_manifest_names_existing_files():
 def test_high_value_paths_are_documented_and_exist():
     reference = (ROOT / "docs" / "CODEBASE_REFERENCE.md").read_text(encoding="utf-8")
     paths = (
-        "app/omt_client/factory.py",
-        "app/omt_client/services.py",
-        "app/state_store.py",
-        "omt/runtime-lib.sh",
-        "omt/entrypoint.sh",
-        "deployer/RpiOmt.Deployer.Core/Models.cs",
-        "deployer/RpiOmt.Deployer.Core/ActionController.cs",
-        "deployer/RpiOmt.Deployer.Core/DeploymentOperations.cs",
-        "deploy-artifacts.txt",
-        "deploy-transaction.sh",
+        "src/omt_client/factory.py",
+        "src/omt_client/services/composition.py",
+        "src/omt_client/state_store.py",
+        "deploy/container/runtime-lib.sh",
+        "deploy/container/entrypoint.sh",
+        "src/receiver/RpiOmt.Receiver.Core",
+        "src/deployer/RpiOmt.Deployer.Core/Models.cs",
+        "src/deployer/RpiOmt.Deployer.Core/ActionController.cs",
+        "src/deployer/RpiOmt.Deployer.Core/DeploymentOperations.cs",
+        "deploy/manifest-v2.txt",
+        "deploy/transaction.sh",
     )
     assert all((ROOT / path).exists() and f"`{path}`" in reference for path in paths)
 
@@ -63,10 +65,12 @@ def test_public_factory_routes_are_documented():
     assert not missing
 
 
-def test_manifest_contract_and_flat_capsule_boundary_are_documented():
-    manifest_names = (ROOT / "deploy-artifacts.txt").read_text(encoding="ascii").splitlines()
+def test_manifest_v2_nested_capsule_boundary_is_documented():
+    manifest_names = (
+        (ROOT / "deploy" / "manifest-v2.txt").read_text(encoding="ascii").splitlines()[1:]
+    )
     architecture = (ROOT / "docs" / "ARCHITECTURE.md").read_text(encoding="utf-8")
     setup = (ROOT / "docs" / "SETUP.md").read_text(encoding="utf-8")
-    assert "nine-file capsule" in architecture
-    assert "flat and self-contained" in architecture
+    assert "manifest version 2" in architecture
+    assert "nested paths" in architecture
     assert all(name in setup or name == "omt-client-arm64.tar.gz" for name in manifest_names)

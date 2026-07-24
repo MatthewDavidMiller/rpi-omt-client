@@ -1,0 +1,31 @@
+{
+  "source_names": [
+    {"value": "Camera 1", "valid": true},
+    {"value": "Cámara", "valid": true},
+    {"value": "Camera 😀", "valid": true},
+    {"value": "", "valid": false},
+    {"value": " Camera", "valid": false},
+    {"value": "Camera ", "valid": false},
+    {"value": "Café", "valid": false},
+    {"value": "Camera\nTwo", "valid": false},
+    {"value": "Camera​Two", "valid": false},
+    {"value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "valid": false}
+  ],
+  "direct_targets": [
+    {"value": "omt://camera.local:6400", "valid": true},
+    {"value": "omt://192.0.2.10:1", "valid": true},
+    {"value": "omt://[2001:db8::10]:65535", "valid": true},
+    {"value": "OMT://camera.local:6400", "valid": false},
+    {"value": "omt://camera.local", "valid": false},
+    {"value": "omt://camera.local:0", "valid": false},
+    {"value": "omt://camera.local:65536", "valid": false},
+    {"value": "omt://user@camera.local:6400", "valid": false},
+    {"value": "omt://camera.local:6400/", "valid": false},
+    {"value": "omt://camera.local:6400?x=1", "valid": false},
+    {"value": "omt://camera.local:6400#x", "valid": false},
+    {"value": "omt://bad host:6400", "valid": false},
+    {"value": "omt://-camera.local:6400", "valid": false},
+    {"value": "omt://camera..local:6400", "valid": false},
+    {"value": "omt://2001:db8::10:6400", "valid": false}
+  ]
+}

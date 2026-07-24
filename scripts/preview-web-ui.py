@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(PROJECT_ROOT / "app"))
+sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from omt_client import create_app  # noqa: E402
 from omt_client.preview import preview_services  # noqa: E402

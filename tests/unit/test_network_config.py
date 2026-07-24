@@ -1,5 +1,6 @@
 import pytest
-from network_config import (
+
+from omt_client.network_config import (
     OmtNetworkConfigurationError,
     empty_settings_xml,
     network_configuration_from_xml,
@@ -13,7 +14,7 @@ def test_network_configuration_round_trip_preserves_unmanaged_nodes():
     updated = update_network_configuration_xml(document, "Discovery.EXAMPLE")
     parsed = network_configuration_from_xml(updated)
     assert parsed["discovery_server"] == "omt://discovery.example:6399"
-    assert b"<Keep value=\"yes\"" in updated
+    assert b'<Keep value="yes"' in updated
 
 
 @pytest.mark.parametrize(

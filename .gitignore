@@ -1,21 +1,19 @@
-# Secrets
+# Secrets and local environment
 .env
+.env.*
+!.env.example
+!.env.template
 vars.yml
 
-# Docker build artifacts
-ndi-client-arm64.tar.gz
-*.tar.gz
+# Published build artifacts
+/omt-client-arm64.tar.gz
+/dist/
 
-# Build directories
-output/
+# Build and test directories
 build/
-dist/
 .build/
-work/
-env/
-vm-files/
-ndi_debug/
-.codex
+/vm-files/
+/.codex/
 **/bin/
 **/obj/
 TestResults/
@@ -24,14 +22,25 @@ TestResults/
 __pycache__/
 *.pyc
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
 .coverage
+.coverage.*
 htmlcov/
 *.egg-info/
 tests/.venv/
+/.venv/
+/venv/
+/env/
 
 # IDE
 .vscode/
 .idea/
+.vs/
+.claude/settings.local.json
+*.rsuser
+*.suo
+*.user
 *.swp
 
 # OS

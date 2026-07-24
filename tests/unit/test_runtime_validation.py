@@ -6,7 +6,7 @@ import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-RUNTIME_LIBRARY = ROOT / "omt" / "runtime-lib.sh"
+RUNTIME_LIBRARY = ROOT / "deploy" / "container" / "runtime-lib.sh"
 
 
 def run_shell(script: str, *arguments: str) -> subprocess.CompletedProcess[str]:

@@ -1,13 +1,14 @@
 # Raspberry Pi OMT Client Build System
 # Usage: make [target]
 
-.PHONY: help install build build-arm64 build-amd64 build-windows-deployer deploy up down logs lint test test-quick test-py test-deployer test-setup security-scan clean
+.PHONY: help install build build-arm64 build-amd64 build-windows-deployer deploy up down logs lint test test-quick test-py test-receiver test-deployer test-setup security-scan clean
 
 IMAGE_NAME   := omt-client
 ARM64_TARBALL := omt-client-arm64.tar.gz
 DEV_COMPOSE  := docker-compose.dev.yml
 BUILD_METADATA_DIR := .build
 RPI_OMT_CLIENT_VERSION ?= $(shell ./scripts/detect-version.sh "$(CURDIR)")
+TEST_PYTHON := tests/.venv/bin/python
 
 # Default target
 help:
@@ -33,6 +34,7 @@ help:
 	@echo "  test          Run all tests (unit + live container build)"
 	@echo "  test-quick    Run unit tests only, no container engine (~30s)"
 	@echo "  test-py       Run Python unit tests only (requires test-setup)"
+	@echo "  test-receiver Run receiver-core analyzers, tests, and coverage gate"
 	@echo "  test-deployer Run locked C# build, unit/headless tests, and coverage gate"
 	@echo "  test-setup    Bootstrap Python and pinned repo-local .NET tooling"
 	@echo "  security-scan Run Trivy filesystem + image scans"
@@ -59,7 +61,8 @@ build-arm64:
 build-amd64:
 	@echo "Building amd64 image..."
 	@mkdir -p $(BUILD_METADATA_DIR)
-	docker build --build-arg RPI_OMT_CLIENT_VERSION="$(RPI_OMT_CLIENT_VERSION)" \
+	docker build -f deploy/Dockerfile \
+		--build-arg RPI_OMT_CLIENT_VERSION="$(RPI_OMT_CLIENT_VERSION)" \
 		--iidfile "$(BUILD_METADATA_DIR)/amd64.iid" -t $(IMAGE_NAME):dev .
 	@echo "Image digest: $$(cat $(BUILD_METADATA_DIR)/amd64.iid)"
 	@echo "Built: $(IMAGE_NAME):dev"
@@ -108,10 +111,13 @@ test-quick:
 
 # Run Python unit tests only (requires 'make test-setup' first)
 test-py:
-	@if [ ! -f "tests/.venv/bin/pytest" ]; then \
-		echo "Run 'make test-setup' first to install pytest"; exit 1; fi
-	tests/.venv/bin/pytest tests/unit \
-		--cov=app --cov-report=term-missing --cov-fail-under=85 -v
+	@if [ ! -x "$(TEST_PYTHON)" ]; then \
+		echo "Run 'make test-setup' first to install Python test tools"; exit 1; fi
+	$(TEST_PYTHON) -m pytest tests/unit \
+		--cov=src/omt_client --cov-report=term-missing --cov-fail-under=90 -v
+
+test-receiver:
+	./tools/test-receiver.sh
 
 test-deployer:
 	./scripts/check-deployer.sh
@@ -123,14 +129,14 @@ security-scan:
 test-setup:
 	@echo "Setting up Python test venv..."
 	python3 -m venv tests/.venv
-	tests/.venv/bin/pip install --upgrade pip -q
-	tests/.venv/bin/pip install -r tests/requirements-dev.txt
+	$(TEST_PYTHON) -m pip install --upgrade pip -q
+	$(TEST_PYTHON) -m pip install -r tests/requirements-dev.txt
 	./scripts/install-dotnet-sdk.sh
 	@mkdir -p .build/dotnet-home .build/nuget-packages
 	DOTNET_CLI_HOME="$(CURDIR)/.build/dotnet-home" \
 	NUGET_PACKAGES="$(CURDIR)/.build/nuget-packages" \
 	DOTNET_NOLOGO=1 \
-		.build/dotnet/dotnet restore deployer/RpiOmt.Deployer.slnx --locked-mode --runtime win-x64 \
+		.build/dotnet/dotnet restore src/deployer/RpiOmt.Deployer.slnx --locked-mode --runtime win-x64 \
 		-p:NuGetAudit=true -p:NuGetAuditMode=all -p:TreatWarningsAsErrors=true
 	@echo "Done. Run: make test-py test-deployer"
 

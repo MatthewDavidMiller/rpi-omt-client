@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)"
-HELPER="${ROOT}/host-reboot.sh"
+HELPER="${ROOT}/deploy/host/host-reboot.sh"
 
 bash -n "${HELPER}"
 

@@ -14,14 +14,7 @@ addopts = "-q --tb=short"
 
 [tool.coverage.run]
 branch = true
-source = ["app"]
-omit = [
-    "app/omt_client/discovery.py",
-    "app/omt_client/network_config.py",
-    "app/omt_client/settings.py",
-    "app/omt_client/state_store.py",
-    "app/omt_client/wsgi.py",
-]
+source = ["src/omt_client"]
 
 [tool.coverage.report]
 show_missing = true
@@ -29,5 +22,19 @@ skip_covered = true
 exclude_also = [
     "if __name__ == .__main__.:",
     "def main\\(",
-    "except Exception as exc:",
 ]
+
+[tool.mypy]
+python_version = "3.11"
+files = ["src/omt_client"]
+strict = true
+warn_unreachable = true
+exclude = ["tests/.venv"]
+
+[[tool.mypy.overrides]]
+module = ["flask_limiter.*", "flask_wtf.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["omt_client.factory", "omt_client.routes.*"]
+disable_error_code = ["assignment", "no-untyped-def", "no-untyped-call"]

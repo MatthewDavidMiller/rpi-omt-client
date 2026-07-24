@@ -29,33 +29,41 @@ make build-arm64
 make deploy HOST=pi@192.168.1.50
 ```
 
-The flat deployment set contains:
+Manifest version 2 contains a variable number of normalized relative paths,
+including:
 
 - `omt-client-arm64.tar.gz`
-- `docker-compose.yml`
-- `install.sh`
-- `uninstall.sh`
-- `host-debug.sh`
-- `host-reboot.sh`
+- `deploy/compose.yml`
+- `deploy/host/install.sh`
+- `deploy/host/uninstall.sh`
+- `deploy/host/host-diagnostics.sh`
+- `deploy/host/host-reboot.sh`
+- `deploy/lib/host-validation.sh`
+- `deploy/lib/publication.sh`
+- `deploy/lib/service-install.sh`
+- `deploy/transaction.sh`
+- `deploy/manifest-v2.txt`
 - `LICENSE`
 - `THIRD_PARTY_NOTICES.txt`
 - `THIRD_PARTY_SOURCE.md`
 
-`deploy-artifacts.txt` is the authoritative manifest and
-`deploy-transaction.sh` provides crash recovery.
+`deploy/manifest-v2.txt` is the authoritative manifest and
+`deploy/transaction.sh` provides durable nested-path crash recovery.
 
 ## Installer behavior
 
-Run `sudo ./install.sh`. Before changing the host it rejects non-ARM64 systems,
-unsafe install paths, missing capsule files, and any detected legacy NDI
-service/state/container/volume. Legacy state is neither deleted nor migrated.
+Run `sudo ./deploy/host/install.sh`. Before changing the host it rejects
+non-ARM64 systems, unsafe install paths, missing capsule files, and any
+detected legacy NDI service/state/container/volume. Legacy NDI state is neither
+deleted nor migrated.
 
 The installer:
 
 1. configures headless boot and Docker;
 2. loads the pinned OMT image and creates the external `omt-config` volume;
 3. resolves container UID/GID and DRM/ALSA groups;
-4. installs a filtered Avahi proxy and request-triggered diagnostics;
+4. creates separate Avahi, diagnostics, and host-action directories and
+   installs the filtered Avahi proxy plus request-triggered diagnostics;
 5. pre-creates protected reboot request/result files and installs their
    root-owned systemd validator;
 6. configures DRM/KMS and optional connector mode;
@@ -69,14 +77,18 @@ from the container log as shown in the installer summary.
 Sign in, select a discovered source on Dashboard, or save a direct target such
 as `omt://192.168.1.60:6400` on Network Settings. An optional Discovery Server
 defaults to port 6399. Diagnostics can verify discovery, direct reachability,
-receiver/controller state, and bundle contents.
+receiver/controller state, and bundle contents. Raw packet capture is disabled
+unless selected for an individual diagnostics download.
 
 ## Upgrade and uninstall
 
-Deploy a complete newer nine-file capsule to the same OMT install directory.
-The promotion journal prevents mixing artifact generations. Persistent OMT
-state remains in `omt-config`.
+Deploy a complete newer manifest-v2 capsule to the same OMT install directory.
+The clients first recover an installed v1 transaction with its own v1 manifest,
+then use the staged v2 helper. The v2 journal stores its own manifest, so
+rollback never depends on the next release's artifact list. Persistent OMT
+state remains in `omt-config`; credentials, sessions, TLS material, and source
+target schema 1 are preserved.
 
-Run `sudo ./uninstall.sh` to remove services and image. The script asks before
-removing the install directory and `omt-config`. It does not remove any legacy
-NDI installation or data.
+Run `sudo ./deploy/host/uninstall.sh` to remove services and image. The script
+asks before removing the install directory and `omt-config`. It does not
+remove any legacy NDI installation or data.

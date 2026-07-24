@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)"
-INSTALL="${ROOT}/install.sh"
+INSTALL="${ROOT}/deploy/host/install.sh"
 
 bash -n "${INSTALL}"
 

@@ -1,6 +1,8 @@
 services:
   omt-client:
-    build: .
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile
     container_name: omt-client-dev
     ports:
       - "5000:5000"

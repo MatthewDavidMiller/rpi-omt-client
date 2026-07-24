@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)"
-UNINSTALL="${ROOT}/uninstall.sh"
+UNINSTALL="${ROOT}/deploy/host/uninstall.sh"
 
 bash -n "${UNINSTALL}"
 
@@ -25,8 +25,8 @@ require 'docker compose.*down --remove-orphans' "Compose workload must be stoppe
 require 'docker rmi omt-client' "OMT image must be removed"
 require 'omt-client-reboot\.path omt-client-reboot\.service' "reboot units must be stopped"
 require 'HOST_REBOOT_INSTALLED_SCRIPT' "root-owned reboot helper must be removed"
-require 'HOST_DEBUG_STATE_DIR="/var/lib/omt-client"' "host state target must be fixed"
-require 'rm -rf "\$\{HOST_DEBUG_STATE_DIR\}"' "OMT host state must be removed"
+require 'HOST_STATE_DIR="/var/lib/omt-client"' "host state target must be fixed"
+require 'rm -rf "\$\{HOST_STATE_DIR\}"' "OMT host state must be removed"
 require 'docker volume rm omt-config' "only the OMT volume may be removed"
 forbid 'omt-client_omt-config' "uninstaller must not touch a legacy/migration volume"
 require 'read -r -p "Remove \$\{INSTALL_DIR\} and all OMT Client volume data\?' \

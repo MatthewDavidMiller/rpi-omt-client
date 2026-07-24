@@ -18,6 +18,16 @@ cd "${PROJECT_ROOT}"
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 NC='\033[0m'
+PYTEST_VENV="${PROJECT_ROOT}/tests/.venv"
+PYTHON_TEST_BIN="${PYTEST_VENV}/bin/python"
+if [[ ! -x "${PYTHON_TEST_BIN}" ]]; then
+    echo -e "${RED}FAILED${NC}: Python test venv not set up. Run: make test-setup"
+    exit 1
+fi
+# Shell integration tests execute application commands such as Werkzeug's
+# password helper. Keep all repo-local Python tools resolvable after a checkout
+# is moved without relying on generated console-script shebangs.
+export PATH="${PYTEST_VENV}/bin:${PATH}"
 
 echo "=== RPi OMT Client Local Test Runner ==="
 echo "Project root: ${PROJECT_ROOT}"
@@ -67,8 +77,9 @@ run_test "Flask App Syntax" "${PROJECT_ROOT}/tests/unit/test_flask_app_syntax.sh
 run_test "OMT Controller" "${PROJECT_ROOT}/tests/unit/test_control_omt.sh"
 run_test "Entrypoint Logic" "${PROJECT_ROOT}/tests/unit/test_entrypoint_logic.sh"
 run_test "Start OMT Script" "${PROJECT_ROOT}/tests/unit/test_start_omt.sh"
-run_test "Host Debug Budget" "${PROJECT_ROOT}/tests/unit/test_host_debug.sh"
+run_test "Host Diagnostics" "${PROJECT_ROOT}/tests/unit/test_host_diagnostics.sh"
 run_test "Host Reboot Bridge" "${PROJECT_ROOT}/tests/unit/test_host_reboot.sh"
+run_test "Host Install Helpers" "${PROJECT_ROOT}/tests/unit/test_host_install_helpers.sh"
 run_test "Deployment Transactions" "${PROJECT_ROOT}/tests/unit/test_deployment_transactions.sh"
 run_test "Compose Config" "${PROJECT_ROOT}/tests/unit/test_compose_config.sh"
 run_test "Install Script" "${PROJECT_ROOT}/tests/unit/test_install.sh"
@@ -76,9 +87,11 @@ run_test "Uninstall Script" "${PROJECT_ROOT}/tests/unit/test_uninstall.sh"
 run_test "Version Detection" "${PROJECT_ROOT}/tests/unit/test_detect_version.sh"
 run_test "Container Engine Selection" "${PROJECT_ROOT}/tests/unit/test_container_engine.sh"
 run_test "Git Hook Setup" "${PROJECT_ROOT}/tests/unit/test_setup_hooks.sh"
+run_test "Python Tooling" "${PROJECT_ROOT}/tests/unit/test_python_tooling.sh"
 run_test "Test Runner Arguments" "${PROJECT_ROOT}/tests/unit/test_test_runner_args.sh"
 run_test "Supply Chain Guardrails" "${PROJECT_ROOT}/tests/unit/test_supply_chain.sh"
 run_test "Lint and syntax" "${PROJECT_ROOT}/scripts/lint.sh"
+run_test "Receiver Core" "${PROJECT_ROOT}/tools/test-receiver.sh"
 
 # ─── Avalonia Unit and Headless Tests ────────────────────────
 if [[ "${QUICK_MODE}" == "true" ]]; then
@@ -89,13 +102,8 @@ fi
 
 # ─── Python Unit Tests ────────────────────────────────────────
 echo "=== Python Unit Tests ==="
-PYTEST_VENV="${PROJECT_ROOT}/tests/.venv"
-if [[ ! -x "${PYTEST_VENV}/bin/pytest" ]]; then
-    echo -e "${RED}FAILED${NC}: pytest venv not set up. Run: make test-setup"
-    exit 1
-fi
-if "${PYTEST_VENV}/bin/pytest" tests/unit \
-    --cov=app --cov-report=term-missing --cov-fail-under=85 -q --tb=short; then
+if "${PYTHON_TEST_BIN}" -m pytest tests/unit \
+    --cov=src/omt_client --cov-report=term-missing --cov-fail-under=90 -q --tb=short; then
     echo -e "${GREEN}PASSED${NC}: Python unit tests"
 else
     echo -e "${RED}FAILED${NC}: Python unit tests"

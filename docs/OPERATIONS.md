@@ -4,8 +4,8 @@
 
 Dashboard lists OMT names returned by the native receiver. Selecting a source
 writes one atomic target record and restarts the controller. Playback states
-include playing, starting, waiting for HDMI, retrying, degraded, unsupported
-format, stopped, stale, and failed.
+include playing, starting, waiting for discovery, waiting for HDMI, retrying,
+degraded, unsupported format, stopped, stale, and failed.
 
 Stop & Clear first stops the managed process and only then removes the target.
 Restart requires an existing target. Controller process identity includes PID,
@@ -25,9 +25,13 @@ Direct playback requires `omt://host:port`.
 - `/diagnostics/runtime` — receiver version and controller state;
 - `/diagnostics/direct` — bounded direct-target probe;
 - `/diagnostics/download` — version, runtime, discovery, controller, playback,
-  OMT XML, integrity, and host diagnostic records.
+  current-target receive probe, OMT XML, integrity, and a freshly correlated
+  host report. An unchecked-by-default checkbox lets the operator opt into a
+  validated raw PCAP for that download only.
 
-The old `/debug` bookmark redirects to `/diagnostics`.
+`/debug` is removed. Bundles are named `omt-diagnostics-<UTC>.zip`; capture
+metadata is always present, while raw PCAP data is absent unless explicitly
+requested and successfully validated.
 
 ## About
 
@@ -55,7 +59,7 @@ sudo journalctl -u omt-client-reboot.service
 ```bash
 sudo systemctl status omt-client.service
 sudo systemctl restart omt-client.service
-docker compose -f /opt/omt-client/docker-compose.yml logs -f
+docker compose -f /opt/omt-client/deploy/compose.yml logs -f
 ```
 
 Inside the container, `control-omt.sh status|start|stop|restart` manages the

@@ -7,6 +7,7 @@ SDK, `libndi`, NDI plugin, or GStreamer runtime.
 OMT network
   └─ libomtnet discovery/receive
        └─ omt-receiver (NativeAOT .NET 10)
+            ├─ dependency-free parsing/status core
             ├─ VMX decoder (libvmx)
             ├─ DRM/KMS HDMI presenter
             ├─ ALSA audio worker
@@ -27,11 +28,14 @@ unprivileged container
 
 ## Receiver
 
-`receiver/RpiOmt.Receiver` builds against audited source snapshots in
-`third_party/omt`. `discover` emits bounded JSON, `probe` checks a direct OMT
-target, and `play` owns receive, DRM, ALSA, hotplug, retry, and status
-publication. Discovered names are NFC, have no control characters, and are at
-most 63 UTF-8 bytes. Direct targets must be exact `omt://host:port` URIs.
+`src/receiver/RpiOmt.Receiver` builds against audited source snapshots in
+`third_party/omt`. Its dependency-free
+`src/receiver/RpiOmt.Receiver.Core` owns typed CLI parsing, shared target
+validation, format policy, sanitization, and synchronized status projection.
+`discover` emits bounded JSON, `probe` checks a direct OMT target, and `play`
+owns receive, DRM, ALSA, hotplug, retry, and status publication. Discovered
+names are NFC, have no control characters, and are at most 63 UTF-8 bytes.
+Direct targets must be exact `omt://host:port` URIs.
 
 Playback supports either Pi HDMI connector. Frames over 1920×1080 or 60 fps are
 reported as `unsupported-format`. Interlaced input is presented progressively
@@ -44,6 +48,13 @@ the `omt` user, and receives only DRM/ALSA devices, the OMT config volume, a
 filtered Avahi D-Bus socket, diagnostics state, and the host-action directory.
 The container cannot invoke systemd or write the directory containing host
 action files.
+
+Fresh diagnostics use a separate fixed-inode request channel. The Web process
+writes a versioned nonce and `capture_pcap=0|1`, collects container-side data
+while the root-owned oneshot runs, and accepts only a stable bounded host
+report carrying that nonce. Raw capture is never started unless selected for
+that download. Avahi proxy state, diagnostics, and host actions use separate
+least-privilege bind mounts.
 
 `host-reboot.sh` is installed root-owned. It accepts only a four-line
 versioned reboot record from the pre-created mode-0600 request file. It checks
@@ -60,12 +71,14 @@ installer never migrates legacy NDI state.
 
 ## Deployment capsule
 
-`deploy-artifacts.txt` defines a flat and self-contained nine-file capsule:
-the image, Compose file, installer, uninstaller, host diagnostics helper, host
-reboot helper, project license, third-party notices, and source information.
-`deploy-transaction.sh` and the manifest are uploaded alongside it. CLI and
-Windows deployment hash every file, promote the set through a recoverable
-transaction, and only then invoke the installer.
+`deploy/manifest-v2.txt` defines manifest version 2: a bounded, variable-size
+capsule with normalized nested paths. `deploy/transaction.sh` stages the files
+under a nonce-specific directory, records the transaction's own manifest in a
+durable journal, rejects symlinked ancestors, and can roll back nested paths
+without trusting a later release's manifest. CLI and Windows deployment hash
+every stable local snapshot, verify every remote SHA-256, recover any v1
+journal with its installed v1 helper, promote the v2 set, and only then invoke
+`deploy/host/install.sh`.
 
 ## Trust and legal surfaces
 

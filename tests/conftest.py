@@ -8,11 +8,11 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO_ROOT / "app"))
+sys.path.insert(0, str(REPO_ROOT / "src"))
 
 from omt_client import create_app  # noqa: E402
 from omt_client.preview import preview_services  # noqa: E402
-from settings import load_settings  # noqa: E402
+from omt_client.settings import load_settings  # noqa: E402
 
 TEST_PASSWORD = "test-password-pytest"
 
@@ -24,9 +24,7 @@ def app(tmp_path):
             {
                 "OMT_CONFIG_DIR": str(tmp_path),
                 "OMT_PROJECT_LICENSE_FILE": str(REPO_ROOT / "LICENSE"),
-                "OMT_THIRD_PARTY_NOTICES_FILE": str(
-                    REPO_ROOT / "THIRD_PARTY_NOTICES.txt"
-                ),
+                "OMT_THIRD_PARTY_NOTICES_FILE": str(REPO_ROOT / "THIRD_PARTY_NOTICES.txt"),
             }
         ),
         preview_services(TEST_PASSWORD),

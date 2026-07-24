@@ -5,9 +5,10 @@ from __future__ import annotations
 import re
 
 import pytest
+
 from omt_client import create_app
 from omt_client.preview import preview_services
-from settings import load_settings
+from omt_client.settings import load_settings
 
 
 @pytest.fixture
@@ -155,14 +156,12 @@ def test_direct_diagnostic_and_bundle(factory_client):
     bundle = factory_client.post("/diagnostics/download")
     assert bundle.status_code == 200
     assert bundle.mimetype == "application/zip"
-    assert "omt-debug-preview.zip" in bundle.headers["Content-Disposition"]
+    assert "omt-diagnostics-preview.zip" in bundle.headers["Content-Disposition"]
 
 
-def test_legacy_debug_is_get_only_redirect_and_state_aliases_are_removed(factory_client):
-    response = factory_client.get("/debug")
-    assert response.status_code == 302
-    assert response.headers["Location"].endswith("/diagnostics")
-    assert factory_client.post("/debug").status_code == 405
+def test_legacy_debug_and_state_aliases_are_removed(factory_client):
+    assert factory_client.get("/debug").status_code == 404
+    assert factory_client.post("/debug").status_code == 404
     for path in ("/set_source", "/refresh", "/restart_service", "/debug/download"):
         assert factory_client.post(path).status_code == 404
 

@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 import pytest
-from state_store import (
-    ReadStatus,
+
+from omt_client.safe_io import ReadStatus, read_bytes, read_text
+from omt_client.state_store import (
     SourceConfigurationError,
     SourceTarget,
-    read_bytes,
     read_source_target,
-    read_text,
     save_source_target,
 )
 

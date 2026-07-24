@@ -1,9 +1,0 @@
-omt-client-arm64.tar.gz
-docker-compose.yml
-install.sh
-uninstall.sh
-host-debug.sh
-host-reboot.sh
-LICENSE
-THIRD_PARTY_NOTICES.txt
-THIRD_PARTY_SOURCE.md

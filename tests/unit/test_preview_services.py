@@ -1,9 +1,29 @@
 """Side-effect-free preview service behavior."""
 
+import subprocess
+import sys
 import zipfile
+from pathlib import Path
 
 from flask import Flask, session
+
 from omt_client.preview import preview_services
+
+
+def test_preview_launcher_imports_package_from_src(tmp_path):
+    launcher = Path(__file__).resolve().parents[2] / "scripts" / "preview-web-ui.py"
+    command = (
+        "import runpy; "
+        f"runpy.run_path({str(launcher)!r}, run_name='preview_import_test')"
+    )
+    completed = subprocess.run(
+        [sys.executable, "-I", "-c", command],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
 
 
 def test_preview_authentication_rotates_and_revokes_sessions():
@@ -32,15 +52,17 @@ def test_preview_source_network_diagnostics_and_bundle_are_in_memory():
     assert services.source.clear().ok is True
     assert services.source.playback().state == "unconfigured"
     assert services.source.restart().ok is False
-    assert services.source.save_direct("", "bad").ok is False
-    assert services.source.save_direct("CAM", "omt://host:6400").ok is True
+    assert services.source.save_direct("bad").ok is False
+    assert services.source.save_direct("omt://host:6400").ok is True
     assert services.network.save("omt://192.0.2.1:6399").ok is True
     assert services.network.read()["discovery_server"] == "omt://192.0.2.1:6399"
     assert services.diagnostics.version() == "preview"
     assert "running:" in services.diagnostics.status()
     assert services.diagnostics.discovery().command.sources
     assert services.diagnostics.runtime().command.returncode == 0
-    assert "omt://host:6400" in services.diagnostics.direct("CAM", "omt://host:6400").command.command
+    assert (
+        "omt://host:6400" in services.diagnostics.direct("omt://host:6400").command.command
+    )
     assert services.system.request_reboot().ok
     bundle, name = services.diagnostics.bundle()
     assert name.endswith(".zip")

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Static checks for production docker-compose.yml invariants.
+# Static checks for production deploy/compose.yml invariants.
 #
 # Run: ./tests/unit/test_compose_config.sh
 
@@ -7,7 +7,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-COMPOSE_FILE="${PROJECT_ROOT}/docker-compose.yml"
+COMPOSE_FILE="${PROJECT_ROOT}/deploy/compose.yml"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -19,7 +19,7 @@ FAIL=0
 pass() { echo -e "${GREEN}PASS${NC}: $1"; PASS=$((PASS + 1)); }
 fail() { echo -e "${RED}FAIL${NC}: $1"; FAIL=$((FAIL + 1)); }
 
-echo "=== docker-compose.yml Config Tests ==="
+echo "=== deploy/compose.yml Config Tests ==="
 
 assert_contains() {
     local pattern="$1"
@@ -59,13 +59,15 @@ assert_contains '^[[:space:]]*-[[:space:]]+/dev/snd:/dev/snd[[:space:]]*$' \
     "ALSA device is passed through"
 assert_contains '^[[:space:]]*-[[:space:]]+omt-config:/etc/omt[[:space:]]*$' \
     "persistent config volume is mounted at /etc/omt"
-assert_contains '^[[:space:]]*-[[:space:]]+/var/lib/omt-client:/host-debug[[:space:]]*$' \
-    "host diagnostics request directory is mounted"
+assert_contains '^[[:space:]]*-[[:space:]]+/var/lib/omt-client/diagnostics:/host-diagnostics[[:space:]]*$' \
+    "least-privilege host diagnostics directory is mounted"
+assert_contains '^[[:space:]]*-[[:space:]]+/var/lib/omt-client/avahi:/host-avahi:ro[[:space:]]*$' \
+    "least-privilege Avahi proxy directory is mounted read-only"
 assert_contains '^[[:space:]]*-[[:space:]]+/var/lib/omt-client/host-actions:/host-actions[[:space:]]*$' \
     "host reboot action directory is mounted"
 assert_not_contains '/run/dbus/system_bus_socket' \
     "raw host system D-Bus socket is not exposed to the container"
-assert_contains '^[[:space:]]+DBUS_SYSTEM_BUS_ADDRESS:[[:space:]]+unix:path=/host-debug/avahi-system-bus[[:space:]]*$' \
+assert_contains '^[[:space:]]+DBUS_SYSTEM_BUS_ADDRESS:[[:space:]]+unix:path=/host-avahi/system-bus[[:space:]]*$' \
     "container discovery points at the filtered Avahi proxy"
 assert_contains '^[[:space:]]+OMT_HDMI_CONNECTOR:[[:space:]]+"\$\{OMT_HDMI_CONNECTOR:-auto\}"[[:space:]]*$' \
     "installer-managed HDMI connector policy is propagated"

@@ -18,18 +18,18 @@
 | `OMT_SOURCE_CACHE_TTL_SECONDS` | `5` |
 | `OMT_SOURCE_TARGET_FILE` | `$OMT_CONFIG_DIR/source_target.json` |
 | `OMT_PLAYBACK_STATUS_FILE` | `$OMT_CONFIG_DIR/run/playback-status.json` |
-| `PIPELINE_STATUS_STALE_SECONDS` | `5` |
+| `OMT_PLAYBACK_STATUS_STALE_SECONDS` | `5` |
 | `OMT_HDMI_CONNECTOR` | `auto`, `HDMI-A-1`, or `HDMI-A-2` |
-| `OMT_HOST_DEBUG_FILE` | `/host-debug/host-debug.txt` |
-| `OMT_HOST_DEBUG_REQUEST_FILE` | `/host-debug/request` |
-| `OMT_HOST_DEBUG_PCAP_FILE` | `/host-debug/host-network.pcap` |
-| `OMT_HOST_DEBUG_PCAP_METADATA_FILE` | `/host-debug/host-network-pcap.txt` |
-| `OMT_HOST_DEBUG_TIMEOUT_SECONDS` | `30` |
-| `OMT_HOST_DEBUG_BUDGET_SECONDS` | `25` |
-| `OMT_DEBUG_BUNDLE_BUDGET_SECONDS` | `60` |
-| `OMT_DEBUG_RECEIVE_PROBE` | enabled |
-| `OMT_DEBUG_DOWNLOAD_LIMIT` | `10 per hour` |
-| `OMT_DEBUG_ACTION_LIMIT` | `30 per hour` |
+| `OMT_DIAGNOSTICS_HOST_REPORT_FILE` | `/host-diagnostics/host-report.txt` |
+| `OMT_DIAGNOSTICS_HOST_REQUEST_FILE` | `/host-diagnostics/request` |
+| `OMT_DIAGNOSTICS_HOST_PCAP_FILE` | `/host-diagnostics/host-network.pcap` |
+| `OMT_DIAGNOSTICS_HOST_PCAP_METADATA_FILE` | `/host-diagnostics/host-network-pcap.txt` |
+| `OMT_DIAGNOSTICS_HOST_TIMEOUT_SECONDS` | `30` |
+| `OMT_DIAGNOSTICS_HOST_BUDGET_SECONDS` | `25` |
+| `OMT_DIAGNOSTICS_BUNDLE_BUDGET_SECONDS` | `60` |
+| `OMT_DIAGNOSTICS_RECEIVE_PROBE` | enabled |
+| `OMT_DIAGNOSTICS_DOWNLOAD_LIMIT` | `10 per hour` |
+| `OMT_DIAGNOSTICS_ACTION_LIMIT` | `30 per hour` |
 | `OMT_RUNTIME_INTEGRITY_MANIFEST` | `/app/runtime-sha256.manifest` |
 | `OMT_PROJECT_LICENSE_FILE` | `/app/legal/LICENSE` |
 | `OMT_THIRD_PARTY_NOTICES_FILE` | `/app/legal/THIRD_PARTY_NOTICES.txt` |
@@ -39,7 +39,8 @@
 | `OMT_REBOOT_ACTION_LIMIT` | `3 per hour` |
 
 Numeric settings reject malformed, non-finite, and out-of-range values during
-application creation.
+application creation. Legacy `OMT_DEBUG_*`, `OMT_HOST_DEBUG_*`, and
+`PIPELINE_STATUS_STALE_SECONDS` variables fail startup with migration guidance.
 
 ## Persistent files
 
@@ -66,6 +67,6 @@ and optional Discovery Server traffic selected for that installation.
 
 ## HDMI
 
-`install.sh --hdmi-video auto` leaves mode choice to DRM. A forced value has
+`deploy/host/install.sh --hdmi-video auto` leaves mode choice to DRM. A forced value has
 the form `HDMI-A-1:1920x1080@60`. Connector/mode state is retained in
 `/etc/omt-client/installer.conf`.

@@ -19,6 +19,7 @@ NC='\033[0m'
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 PYTEST_VENV="${PROJECT_ROOT}/tests/.venv"
+PYTEST_PYTHON="${PYTEST_VENV}/bin/python"
 
 echo "=== Installing Linters ==="
 echo ""
@@ -97,15 +98,17 @@ echo ""
 
 # Install yamllint into the test tooling venv
 echo "Installing yamllint..."
-if [[ -x "${PYTEST_VENV}/bin/yamllint" ]]; then
+if [[ -x "${PYTEST_PYTHON}" ]] && \
+   "${PYTEST_PYTHON}" -c 'import yamllint' 2>/dev/null; then
     # shellcheck disable=SC2312
-    echo -e "${GREEN}OK${NC}: yamllint already installed ($("${PYTEST_VENV}/bin/yamllint" --version))"
+    echo -e "${GREEN}OK${NC}: yamllint already installed ($("${PYTEST_PYTHON}" -m yamllint --version))"
 else
-    if [[ ! -x "${PYTEST_VENV}/bin/pip" ]]; then
+    if [[ ! -x "${PYTEST_PYTHON}" ]]; then
         python3 -m venv "${PYTEST_VENV}"
     fi
-    "${PYTEST_VENV}/bin/pip" install -r "${PROJECT_ROOT}/tests/requirements-dev.txt"
-    if [[ -x "${PYTEST_VENV}/bin/yamllint" ]]; then
+    "${PYTEST_PYTHON}" -m pip install \
+        -r "${PROJECT_ROOT}/tests/requirements-dev.txt"
+    if "${PYTEST_PYTHON}" -c 'import yamllint' 2>/dev/null; then
         echo -e "${GREEN}OK${NC}: yamllint installed"
     fi
 fi
@@ -155,15 +158,17 @@ echo ""
 
 # Install pip-audit into the test tooling venv
 echo "Installing pip-audit..."
-if [[ -x "${PYTEST_VENV}/bin/pip-audit" ]]; then
+if [[ -x "${PYTEST_PYTHON}" ]] && \
+   "${PYTEST_PYTHON}" -c 'import pip_audit' 2>/dev/null; then
     # shellcheck disable=SC2312
-    echo -e "${GREEN}OK${NC}: pip-audit already installed ($("${PYTEST_VENV}/bin/pip-audit" --version))"
+    echo -e "${GREEN}OK${NC}: pip-audit already installed ($("${PYTEST_PYTHON}" -m pip_audit --version))"
 else
-    if [[ ! -x "${PYTEST_VENV}/bin/pip" ]]; then
+    if [[ ! -x "${PYTEST_PYTHON}" ]]; then
         python3 -m venv "${PYTEST_VENV}"
     fi
-    "${PYTEST_VENV}/bin/pip" install -r "${PROJECT_ROOT}/tests/requirements-dev.txt"
-    if [[ -x "${PYTEST_VENV}/bin/pip-audit" ]]; then
+    "${PYTEST_PYTHON}" -m pip install \
+        -r "${PROJECT_ROOT}/tests/requirements-dev.txt"
+    if "${PYTEST_PYTHON}" -c 'import pip_audit' 2>/dev/null; then
         echo -e "${GREEN}OK${NC}: pip-audit installed"
     fi
 fi
@@ -186,7 +191,8 @@ else
 fi
 
 echo -n "  yamllint:   "
-if [[ -x "${PROJECT_ROOT}/tests/.venv/bin/yamllint" ]]; then
+if [[ -x "${PYTEST_PYTHON}" ]] && \
+   "${PYTEST_PYTHON}" -c 'import yamllint' 2>/dev/null; then
     echo -e "${GREEN}installed${NC}"
 else
     echo -e "${RED}not installed${NC}"
@@ -200,7 +206,8 @@ else
 fi
 
 echo -n "  pip-audit:  "
-if [[ -x "${PROJECT_ROOT}/tests/.venv/bin/pip-audit" ]]; then
+if [[ -x "${PYTEST_PYTHON}" ]] && \
+   "${PYTEST_PYTHON}" -c 'import pip_audit' 2>/dev/null; then
     echo -e "${GREEN}installed${NC}"
 else
     echo -e "${RED}not installed${NC}"

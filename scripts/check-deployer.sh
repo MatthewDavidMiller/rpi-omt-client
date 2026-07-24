@@ -7,10 +7,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 DOTNET_ROOT="${PROJECT_ROOT}/.build/dotnet"
 DOTNET="${DOTNET_ROOT}/dotnet"
-SOLUTION="${PROJECT_ROOT}/deployer/RpiOmt.Deployer.slnx"
-TEST_PROJECT="${PROJECT_ROOT}/deployer/RpiOmt.Deployer.Tests/RpiOmt.Deployer.Tests.csproj"
-INTEGRATION_PROJECT="${PROJECT_ROOT}/deployer/RpiOmt.Deployer.IntegrationTests/RpiOmt.Deployer.IntegrationTests.csproj"
-APP_PROJECT="${PROJECT_ROOT}/deployer/RpiOmt.Deployer.App/RpiOmt.Deployer.App.csproj"
+SOLUTION="${PROJECT_ROOT}/src/deployer/RpiOmt.Deployer.slnx"
+TEST_PROJECT="${PROJECT_ROOT}/src/deployer/RpiOmt.Deployer.Tests/RpiOmt.Deployer.Tests.csproj"
+INTEGRATION_PROJECT="${PROJECT_ROOT}/src/deployer/RpiOmt.Deployer.IntegrationTests/RpiOmt.Deployer.IntegrationTests.csproj"
+APP_PROJECT="${PROJECT_ROOT}/src/deployer/RpiOmt.Deployer.App/RpiOmt.Deployer.App.csproj"
 PUBLISHED_EXE="${PROJECT_ROOT}/dist/rpi-omt-client-deployer-windows-x64.exe"
 PUBLISHED_SBOM="${PROJECT_ROOT}/dist/rpi-omt-client-deployer-windows-x64.cdx.json"
 
@@ -61,7 +61,7 @@ fi
 
 echo "=== Locked NuGet restore and vulnerability audit ==="
 for project in \
-    "${PROJECT_ROOT}/deployer/RpiOmt.Deployer.Core/RpiOmt.Deployer.Core.csproj" \
+    "${PROJECT_ROOT}/src/deployer/RpiOmt.Deployer.Core/RpiOmt.Deployer.Core.csproj" \
     "${APP_PROJECT}" \
     "${TEST_PROJECT}" \
     "${INTEGRATION_PROJECT}"; do
@@ -90,7 +90,7 @@ trap cleanup EXIT
 
 echo "=== Core unit and Avalonia headless tests ==="
 "${DOTNET}" test "${TEST_PROJECT}" --configuration Release --no-restore --no-build \
-    --settings "${PROJECT_ROOT}/deployer/RpiOmt.Deployer.Tests/coverage.runsettings" \
+    --settings "${PROJECT_ROOT}/src/deployer/RpiOmt.Deployer.Tests/coverage.runsettings" \
     --results-directory "${coverage_root}" --collect "XPlat Code Coverage" \
     --logger "console;verbosity=normal"
 coverage_file="$(find "${coverage_root}" -name coverage.cobertura.xml -type f -print -quit)"
@@ -130,7 +130,7 @@ python3 "${SCRIPT_DIR}/verify-windows-pe.py" "${artifact_temp}"
 mv -f "${artifact_temp}" "${PUBLISHED_EXE}"
 artifact_temp=""
 python3 "${SCRIPT_DIR}/generate-windows-sbom.py" \
-    --lock-file "${PROJECT_ROOT}/deployer/RpiOmt.Deployer.App/packages.lock.json" \
+    --lock-file "${PROJECT_ROOT}/src/deployer/RpiOmt.Deployer.App/packages.lock.json" \
     --output "${PUBLISHED_SBOM}" \
     --version "${RPI_OMT_CLIENT_VERSION}"
 echo "Published atomically: ${PUBLISHED_EXE}"

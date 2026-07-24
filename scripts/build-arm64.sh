@@ -32,6 +32,7 @@ trap cleanup EXIT
 "${PROJECT_ROOT}/scripts/check-arm64-emulation.sh"
 echo "Building ARM64 image..."
 docker buildx build --platform linux/arm64 \
+    --file "${PROJECT_ROOT}/deploy/Dockerfile" \
     --build-arg "RPI_OMT_CLIENT_VERSION=${RPI_OMT_CLIENT_VERSION}" \
     --iidfile "${staged_iid}" \
     --output "type=docker,dest=${staged_artifact}" \

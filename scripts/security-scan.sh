@@ -37,14 +37,14 @@ echo "=== Trivy filesystem scan ==="
     --skip-dirs .git \
     --skip-dirs .build \
     --skip-dirs dist \
-    --skip-dirs deployer/RpiOmt.Deployer.App/bin \
-    --skip-dirs deployer/RpiOmt.Deployer.App/obj \
-    --skip-dirs deployer/RpiOmt.Deployer.Core/bin \
-    --skip-dirs deployer/RpiOmt.Deployer.Core/obj \
-    --skip-dirs deployer/RpiOmt.Deployer.Tests/bin \
-    --skip-dirs deployer/RpiOmt.Deployer.Tests/obj \
-    --skip-dirs deployer/RpiOmt.Deployer.IntegrationTests/bin \
-    --skip-dirs deployer/RpiOmt.Deployer.IntegrationTests/obj \
+    --skip-dirs src/deployer/RpiOmt.Deployer.App/bin \
+    --skip-dirs src/deployer/RpiOmt.Deployer.App/obj \
+    --skip-dirs src/deployer/RpiOmt.Deployer.Core/bin \
+    --skip-dirs src/deployer/RpiOmt.Deployer.Core/obj \
+    --skip-dirs src/deployer/RpiOmt.Deployer.Tests/bin \
+    --skip-dirs src/deployer/RpiOmt.Deployer.Tests/obj \
+    --skip-dirs src/deployer/RpiOmt.Deployer.IntegrationTests/bin \
+    --skip-dirs src/deployer/RpiOmt.Deployer.IntegrationTests/obj \
     --skip-dirs build \
     --skip-dirs output \
     --skip-dirs work \
@@ -57,7 +57,8 @@ echo "=== Trivy filesystem scan ==="
     .
 
 echo "=== Building image for security scan ==="
-container_engine_build --build-arg RPI_OMT_CLIENT_VERSION="vtest" -t "${SCAN_IMAGE_TAG}" .
+container_engine_build -f deploy/Dockerfile \
+    --build-arg RPI_OMT_CLIENT_VERSION="vtest" -t "${SCAN_IMAGE_TAG}" .
 
 SCAN_IMAGE_ARCHIVE="$(mktemp)"
 trap 'rm -f "${SCAN_IMAGE_ARCHIVE}"' EXIT

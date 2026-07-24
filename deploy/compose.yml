@@ -1,0 +1,41 @@
+services:
+  omt-client:
+    image: omt-client
+    container_name: omt-client
+    restart: unless-stopped
+    network_mode: host
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+      # Docker masks /proc/asound by default; ALSA needs it to enumerate cards.
+      - systempaths=unconfined
+    cap_drop:
+      - ALL
+    environment:
+      DBUS_SYSTEM_BUS_ADDRESS: unix:path=/host-avahi/system-bus
+      OMT_HDMI_CONNECTOR: "${OMT_HDMI_CONNECTOR:-auto}"
+      OMT_DIAGNOSTICS_HOST_REPORT_FILE: /host-diagnostics/host-report.txt
+      OMT_DIAGNOSTICS_HOST_REQUEST_FILE: /host-diagnostics/request
+      OMT_DIAGNOSTICS_HOST_PCAP_FILE: /host-diagnostics/host-network.pcap
+      OMT_DIAGNOSTICS_HOST_PCAP_METADATA_FILE: /host-diagnostics/host-network-pcap.txt
+      OMT_REBOOT_REQUEST_FILE: /host-actions/reboot.request
+      OMT_REBOOT_RESULT_FILE: /host-actions/reboot.result
+    devices:
+      - /dev/dri:/dev/dri
+      - /dev/snd:/dev/snd
+    volumes:
+      - omt-config:/etc/omt
+      - /var/lib/omt-client/avahi:/host-avahi:ro
+      - /var/lib/omt-client/diagnostics:/host-diagnostics
+      - /var/lib/omt-client/host-actions:/host-actions
+    tmpfs:
+      - /tmp
+    group_add:
+      - "${OMT_VIDEO_GID:-44}"    # video
+      - "${OMT_RENDER_GID:-106}"  # render
+      - "${OMT_AUDIO_GID:-29}"    # audio
+
+volumes:
+  omt-config:
+    name: omt-config
+    external: true

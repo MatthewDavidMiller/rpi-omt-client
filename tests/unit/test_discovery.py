@@ -1,5 +1,9 @@
+import json
+from pathlib import Path
+
 import pytest
-from discovery import (
+
+from omt_client.discovery import (
     OmtSourceChoice,
     choices_from_receiver,
     is_valid_direct_target,
@@ -7,6 +11,8 @@ from discovery import (
     parse_omt_sources,
     parse_source_selection,
 )
+
+VECTORS = Path(__file__).resolve().parents[1] / "schema" / "omt-target-vectors.json"
 
 
 def test_discovery_json_is_validated_deduplicated_and_sorted():
@@ -56,6 +62,7 @@ def test_source_names_require_nfc_bounded_printable_text():
     assert not is_valid_source_name(" Studio")
     assert not is_valid_source_name("e\u0301")
     assert not is_valid_source_name("x\n")
+    assert not is_valid_source_name("\ud800")
     assert parse_source_selection("discovered|Studio Camera") == (
         "Studio Camera",
         None,
@@ -63,3 +70,11 @@ def test_source_names_require_nfc_bounded_printable_text():
     )
     assert parse_source_selection("discovered|bad\n") is None
     assert parse_omt_sources("not json") == []
+
+
+def test_python_and_receiver_share_target_validation_vectors():
+    vectors = json.loads(VECTORS.read_text(encoding="utf-8"))
+    for vector in vectors["source_names"]:
+        assert is_valid_source_name(vector["value"]) is vector["valid"]
+    for vector in vectors["direct_targets"]:
+        assert is_valid_direct_target(vector["value"]) is vector["valid"]

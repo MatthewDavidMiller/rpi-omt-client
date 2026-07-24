@@ -2,8 +2,8 @@
 set -euo pipefail
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)"
-CONTROL="${ROOT}/omt/control-omt.sh"
-RUNTIME="${ROOT}/omt/runtime-lib.sh"
+CONTROL="${ROOT}/deploy/container/control-omt.sh"
+RUNTIME="${ROOT}/deploy/container/runtime-lib.sh"
 CASE_DIR="$(mktemp -d)"
 trap 'rm -rf "${CASE_DIR}"' EXIT
 

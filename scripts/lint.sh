@@ -61,31 +61,34 @@ fi
 
 if command -v hadolint >/dev/null 2>&1; then
     echo "Running Hadolint..."
-    hadolint Dockerfile
+    hadolint deploy/Dockerfile
 else
     missing_tool "hadolint"
 fi
 
-if [[ -x "${PYTHON_VENV}/bin/yamllint" ]]; then
-    YAMLLINT_BIN="${PYTHON_VENV}/bin/yamllint"
-elif command -v yamllint >/dev/null 2>&1; then
-    YAMLLINT_BIN="$(command -v yamllint)"
-else
-    YAMLLINT_BIN=""
-fi
-if [[ -n "${YAMLLINT_BIN}" ]]; then
+if [[ -x "${PYTHON_VENV}/bin/python" ]] && \
+   "${PYTHON_VENV}/bin/python" -c 'import yamllint' 2>/dev/null; then
     echo "Running yamllint..."
-    "${YAMLLINT_BIN}" -c .yamllint.yml \
-        docker-compose.yml docker-compose.dev.yml
+    "${PYTHON_VENV}/bin/python" -m yamllint -c .yamllint.yml \
+        deploy/compose.yml docker-compose.dev.yml
 else
     missing_tool "yamllint"
 fi
 
-if [[ -x "${PYTHON_VENV}/bin/ruff" ]]; then
+if [[ -x "${PYTHON_VENV}/bin/python" ]] && \
+   "${PYTHON_VENV}/bin/python" -c 'import ruff' 2>/dev/null; then
     echo "Running Ruff..."
-    "${PYTHON_VENV}/bin/ruff" check app scripts tests
+    "${PYTHON_VENV}/bin/python" -m ruff check src scripts tools tests
 else
     missing_tool "ruff"
+fi
+
+if [[ -x "${PYTHON_VENV}/bin/python" ]] && \
+   "${PYTHON_VENV}/bin/python" -c 'import mypy' 2>/dev/null; then
+    echo "Running mypy..."
+    "${PYTHON_VENV}/bin/python" -m mypy src/omt_client
+else
+    missing_tool "mypy"
 fi
 
 if ((${#MISSING_TOOLS[@]} > 0)); then

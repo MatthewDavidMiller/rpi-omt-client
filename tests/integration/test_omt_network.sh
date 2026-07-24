@@ -37,6 +37,7 @@ ensure_test_container_engine || fail "Docker or Podman is required"
 cd "${PROJECT_ROOT}"
 # shellcheck disable=SC2310
 container_engine_build \
+    -f deploy/Dockerfile \
     --build-arg RPI_OMT_CLIENT_VERSION=vtest \
     -t "${IMAGE_TAG}" . || fail "container image build failed"
 "${CONTAINER_ENGINE}" network create --driver bridge "${NETWORK_NAME}" >/dev/null ||

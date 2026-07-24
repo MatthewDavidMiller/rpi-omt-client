@@ -10,20 +10,21 @@ from pathlib import Path
 
 import pytest
 from flask import Flask, session
+from werkzeug.security import generate_password_hash
+
 from omt_client.models import CommandResult
+from omt_client.safe_io import atomic_replace
 from omt_client.services import (
     HostSystem,
     PersistentAuthentication,
     RuntimeDiagnostics,
     RuntimeNetwork,
     RuntimeSourcePlayback,
-    _atomic_write,
-    _run,
     controller_pid,
     production_services,
 )
-from settings import load_settings
-from werkzeug.security import generate_password_hash
+from omt_client.services.command import run_command
+from omt_client.settings import load_settings
 
 
 def settings_for(tmp_path: Path, **overrides: str):
@@ -36,7 +37,9 @@ def settings_for(tmp_path: Path, **overrides: str):
         "OMT_CONTROL_COMMAND": "/control",
         "RPI_OMT_CLIENT_VERSION_FILE": str(tmp_path / "version"),
         "OMT_RUNTIME_INTEGRITY_MANIFEST": str(tmp_path / "integrity"),
-        "OMT_HOST_DEBUG_FILE": str(tmp_path / "host-debug"),
+        "OMT_DIAGNOSTICS_HOST_REPORT_FILE": str(tmp_path / "host-diagnostics.txt"),
+        "OMT_DIAGNOSTICS_HOST_REQUEST_FILE": str(tmp_path / "host-diagnostics.request"),
+        "OMT_DIAGNOSTICS_HOST_TIMEOUT_SECONDS": "0.05",
         "OMT_REBOOT_REQUEST_FILE": str(tmp_path / "reboot.request"),
         "OMT_REBOOT_RESULT_FILE": str(tmp_path / "reboot.result"),
         "OMT_REBOOT_ACK_TIMEOUT_SECONDS": "0.1",
@@ -57,9 +60,7 @@ def command_result(returncode=0, stdout="", stderr="", error=""):
 
 def test_persistent_authentication_hash_sessions_rotation_and_revocation(tmp_path):
     (tmp_path / "flask_secret").write_text("a" * 64, encoding="utf-8")
-    (tmp_path / "web_password").write_text(
-        generate_password_hash("correct"), encoding="utf-8"
-    )
+    (tmp_path / "web_password").write_text(generate_password_hash("correct"), encoding="utf-8")
     auth = PersistentAuthentication(settings_for(tmp_path))
     assert auth.authenticate("wrong", None) is None
     first = auth.authenticate("correct", None)
@@ -95,33 +96,33 @@ def test_persistent_authentication_rejects_missing_secret_and_supports_env_passw
 
 
 def test_bounded_command_success_timeout_and_os_error(monkeypatch):
-    result = _run(["/bin/sh", "-c", "printf ok; printf err >&2"], 2)
+    result = run_command(["/bin/sh", "-c", "printf ok; printf err >&2"], 2)
     assert result.returncode == 0 and result.stdout == "ok" and result.stderr == "err"
 
     def timeout(*_args, **_kwargs):
         raise subprocess.TimeoutExpired("receiver", 1, output=b"partial")
 
     monkeypatch.setattr(subprocess, "run", timeout)
-    assert _run(["receiver"], 1).timed_out
+    assert run_command(["receiver"], 1).timed_out
 
     def missing(*_args, **_kwargs):
         raise FileNotFoundError("missing")
 
     monkeypatch.setattr(subprocess, "run", missing)
-    assert "missing" in _run(["receiver"], 1).error
+    assert "missing" in run_command(["receiver"], 1).error
 
 
 def test_atomic_write_is_private_bounded_and_rejects_unsafe_targets(tmp_path):
     target = tmp_path / "value"
-    _atomic_write(str(target), b"safe", 4)
+    atomic_replace(str(target), b"safe", 4)
     assert target.read_bytes() == b"safe"
     assert target.stat().st_mode & 0o777 == 0o600
     with pytest.raises(OSError, match="exceeds"):
-        _atomic_write(str(target), b"large", 4)
+        atomic_replace(str(target), b"large", 4)
     target.unlink()
     target.symlink_to("elsewhere")
     with pytest.raises(OSError, match="regular"):
-        _atomic_write(str(target), b"x", 4)
+        atomic_replace(str(target), b"x", 4)
 
 
 def test_source_discovery_cache_selection_direct_clear_and_restart(tmp_path, monkeypatch):
@@ -136,7 +137,7 @@ def test_source_discovery_cache_selection_direct_clear_and_restart(tmp_path, mon
             )
         return command_result()
 
-    monkeypatch.setattr("omt_client.services._run", run)
+    monkeypatch.setattr("omt_client.services.playback.run_command", run)
     service = RuntimeSourcePlayback(settings)
     assert [choice.name for choice in service.sources()] == ["Camera"]
     assert [choice.name for choice in service.sources()] == ["Camera"]
@@ -145,8 +146,8 @@ def test_source_discovery_cache_selection_direct_clear_and_restart(tmp_path, mon
     assert service.select("discovered|Camera").ok
     assert service.configuration() == ("Camera", "")
     assert service.restart().ok
-    assert not service.save_direct("", "host:6400").ok
-    assert service.save_direct("", "omt://192.0.2.1:6400").ok
+    assert not service.save_direct("host:6400").ok
+    assert service.save_direct("omt://192.0.2.1:6400").ok
     assert service.configuration() == (
         "omt://192.0.2.1:6400",
         "omt://192.0.2.1:6400",
@@ -180,13 +181,22 @@ def test_playback_status_mapping(tmp_path, monkeypatch, runtime_state, public_st
             {
                 "schema": 1,
                 "state": runtime_state,
+                "video_state": "running" if runtime_state == "degraded" else runtime_state,
+                "audio_state": "failed" if runtime_state == "degraded" else "running",
+                "target": "Camera",
                 "detail": "detail",
+                "connector": "HDMI-A-1",
+                "drm_device": "/dev/dri/card1",
+                "alsa_device": "plughw:0",
                 "updated_at": datetime.now(UTC).isoformat(),
             }
         ),
         encoding="utf-8",
     )
-    monkeypatch.setattr("omt_client.services._run", lambda *_args: command_result())
+    monkeypatch.setattr(
+        "omt_client.services.playback.run_command",
+        lambda *_args: command_result(),
+    )
     assert service.playback().state == public_state
 
 
@@ -222,16 +232,16 @@ def test_diagnostics_version_commands_direct_and_bundle(tmp_path, monkeypatch):
             return command_result(stdout='[{"name":"Camera","target":"Camera"}]')
         return command_result(stdout="ok\n")
 
-    monkeypatch.setattr("omt_client.services._run", run)
+    monkeypatch.setattr("omt_client.services.diagnostics.run_command", run)
     diagnostics = RuntimeDiagnostics(settings, source)
     assert diagnostics.version() == "v2.0.0"
     assert diagnostics.status() == "ok"
     assert diagnostics.discovery().command.sources == ("Camera",)
     assert diagnostics.runtime().command.returncode == 0
-    assert diagnostics.direct("", "bad").command.skipped
-    assert diagnostics.direct("", "omt://host:6400").command.returncode == 0
+    assert diagnostics.direct("bad").command.skipped
+    assert diagnostics.direct("omt://host:6400").command.returncode == 0
     bundle, filename = diagnostics.bundle()
-    assert filename.startswith("omt-debug-")
+    assert filename.startswith("omt-diagnostics-")
     assert bundle.read(2) == b"PK"
 
 
@@ -245,9 +255,7 @@ def test_host_system_accept_reject_timeout_and_unsafe_request(tmp_path, monkeypa
     original_write_request = HostSystem._write_request
 
     def acknowledge(_path: str, record: bytes):
-        request_id = dict(
-            line.split("=", 1) for line in record.decode().splitlines()
-        )["request_id"]
+        request_id = dict(line.split("=", 1) for line in record.decode().splitlines())["request_id"]
         result.write_text(
             f"version=1\nrequest_id={request_id}\nstatus=accepted\ndetail=scheduled\n",
             encoding="utf-8",
@@ -257,9 +265,7 @@ def test_host_system_accept_reject_timeout_and_unsafe_request(tmp_path, monkeypa
     assert HostSystem(settings).request_reboot().ok
 
     def reject(_path: str, record: bytes):
-        request_id = dict(
-            line.split("=", 1) for line in record.decode().splitlines()
-        )["request_id"]
+        request_id = dict(line.split("=", 1) for line in record.decode().splitlines())["request_id"]
         result.write_text(
             f"version=1\nrequest_id={request_id}\nstatus=rejected\ndetail=cooldown\n",
             encoding="utf-8",
@@ -267,9 +273,7 @@ def test_host_system_accept_reject_timeout_and_unsafe_request(tmp_path, monkeypa
 
     monkeypatch.setattr(HostSystem, "_write_request", staticmethod(reject))
     assert "cooldown" in HostSystem(settings).request_reboot().error
-    monkeypatch.setattr(
-        HostSystem, "_write_request", staticmethod(lambda *_args: None)
-    )
+    monkeypatch.setattr(HostSystem, "_write_request", staticmethod(lambda *_args: None))
     result.write_text("", encoding="utf-8")
     assert "did not acknowledge" in HostSystem(settings).request_reboot().error
     request.chmod(0o644)
@@ -279,9 +283,7 @@ def test_host_system_accept_reject_timeout_and_unsafe_request(tmp_path, monkeypa
 
 def test_production_container_and_controller_pid(tmp_path, monkeypatch):
     (tmp_path / "flask_secret").write_text("secret", encoding="utf-8")
-    (tmp_path / "web_password").write_text(
-        generate_password_hash("password"), encoding="utf-8"
-    )
+    (tmp_path / "web_password").write_text(generate_password_hash("password"), encoding="utf-8")
     services = production_services(settings_for(tmp_path))
     assert isinstance(services.auth, PersistentAuthentication)
     assert controller_pid("running:42 state=running") == 42

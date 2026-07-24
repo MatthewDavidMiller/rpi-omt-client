@@ -1,0 +1,34 @@
+# Diagnostics Bundle
+
+The authenticated Diagnostics page creates a bounded ZIP named
+`omt-diagnostics-<UTC>.zip`. It contains:
+
+- `version.txt`
+- `runtime-settings.txt`
+- `runtime.txt`
+- `discovery.json`
+- `controller-status.txt`
+- `current-target-receive-probe.json`
+- `playback-status.json`
+- `omt-settings.xml`
+- `runtime-sha256.manifest`
+- `host-report.txt`
+- `host-network-pcap.txt`
+- optionally, `host-network.pcap`
+
+Missing, unsafe, or oversized inputs are represented by an `unavailable`
+record. Commands have fixed argument shapes and timeouts. The bundle may reveal
+source names, network addresses, device details, configuration, and—when
+explicitly selected—raw network packets, so inspect it before sharing.
+
+Host diagnostics are collected by the root-owned
+`deploy/host/host-diagnostics.sh`. The Web process writes a bounded versioned
+request with a random request ID and `capture_pcap=0|1` to a pre-created
+fixed-inode channel. It starts container-side checks immediately and accepts
+only a stable bounded host report carrying the same request ID.
+
+Raw PCAP is unchecked by default. An unchecked request removes stale capture
+output and never starts the unfiltered capture. A checked request retains the
+64 MiB cap; before streaming the PCAP into the spooled archive, the Web service
+validates metadata version, request ID, status, declared size, magic, stable
+inode, and SHA-256. Capture metadata is included for both choices.

@@ -10,6 +10,7 @@ Use the narrowest relevant gate:
 
 ```bash
 make test-py
+make test-receiver
 make test-deployer
 make test-quick
 make test
@@ -18,8 +19,10 @@ make test
 
 `make test-py` covers validation, atomic state, persistent auth, Flask routes,
 About/System workflows, reboot request correlation, and runtime adapters.
+`make test-receiver` performs locked restore, analyzer-enabled build, shared
+validation vectors, event-ordering tests, and a 95% receiver-core branch gate.
 `make test-deployer` performs locked restore, formatting/analyzers, unit and
-headless Avalonia tests, and coverage. Shell tests exercise entrypoint,
+headless Avalonia tests, and 95% coverage. Shell tests exercise entrypoint,
 controller, deployment transactions, install/uninstall contracts, host helpers,
 Compose, and supply-chain pins.
 

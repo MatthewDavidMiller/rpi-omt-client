@@ -23,7 +23,7 @@ def require_text(path: Path, value: str) -> None:
 
 
 def python_packages() -> set[str]:
-    text = (ROOT / "app/requirements.txt").read_text(encoding="utf-8")
+    text = (ROOT / "requirements/runtime.txt").read_text(encoding="utf-8")
     return {
         match.group(1).lower().replace("_", "-")
         for match in re.finditer(r"^([A-Za-z0-9_.-]+)==", text, re.MULTILINE)
@@ -32,9 +32,7 @@ def python_packages() -> set[str]:
 
 def windows_packages() -> set[str]:
     document = json.loads(
-        (ROOT / "deployer/RpiOmt.Deployer.App/packages.lock.json").read_text(
-            encoding="utf-8"
-        )
+        (ROOT / "src/deployer/RpiOmt.Deployer.App/packages.lock.json").read_text(encoding="utf-8")
     )
     return {
         name.lower()
@@ -55,8 +53,8 @@ def main() -> int:
 
     for path in (
         ROOT / "LICENSE",
-        ROOT / "app/templates/about.html",
-        ROOT / "deployer/RpiOmt.Deployer.App/BuildInformation.cs",
+        ROOT / "src/omt_client/templates/about.html",
+        ROOT / "src/deployer/RpiOmt.Deployer.App/BuildInformation.cs",
     ):
         require_text(path, COPYRIGHT)
 
@@ -65,7 +63,7 @@ def main() -> int:
         require_text(license_path, "MIT License")
         require_text(ROOT / "third_party/omt/PROVENANCE.md", component)
 
-    dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8").lower()
+    dockerfile = (ROOT / "deploy/Dockerfile").read_text(encoding="utf-8").lower()
     for required in (
         "third_party/omt",
         "third_party_notices.txt",
@@ -80,11 +78,15 @@ def main() -> int:
             fail(f"Dockerfile still references legacy software: {forbidden}")
 
     deployer_project = (
-        ROOT / "deployer/RpiOmt.Deployer.App/RpiOmt.Deployer.App.csproj"
-    ).read_text(encoding="utf-8").lower()
+        (ROOT / "src/deployer/RpiOmt.Deployer.App/RpiOmt.Deployer.App.csproj")
+        .read_text(encoding="utf-8")
+        .lower()
+    )
     deployer_build_info = (
-        ROOT / "deployer/RpiOmt.Deployer.App/BuildInformation.cs"
-    ).read_text(encoding="utf-8").lower()
+        (ROOT / "src/deployer/RpiOmt.Deployer.App/BuildInformation.cs")
+        .read_text(encoding="utf-8")
+        .lower()
+    )
     for required in (
         "microsoft.netcore.app.runtime.win-x64",
         "skiasharp.nativeassets.win32",
@@ -98,9 +100,7 @@ def main() -> int:
         if resource not in deployer_build_info:
             fail(f"Windows About does not render required notice resource: {resource}")
 
-    manifest = (
-        ROOT / "deploy-artifacts.txt"
-    ).read_text(encoding="ascii").splitlines()
+    manifest = (ROOT / "deploy/manifest-v2.txt").read_text(encoding="ascii").splitlines()[1:]
     required_artifacts = {
         "LICENSE",
         "THIRD_PARTY_NOTICES.txt",

@@ -14,7 +14,7 @@ echo "============================"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-APP_PACKAGE="${PROJECT_ROOT}/app/omt_client"
+APP_PACKAGE="${PROJECT_ROOT}/src/omt_client"
 
 if [[ ! -f "${APP_PACKAGE}/factory.py" || ! -f "${APP_PACKAGE}/wsgi.py" ]]; then
     echo -e "${RED}FAIL${NC}: omt_client application package not found"

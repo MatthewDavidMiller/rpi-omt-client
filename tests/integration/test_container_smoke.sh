@@ -66,6 +66,7 @@ chmod 777 "${CONFIG_DIR}" "${HOST_ACTIONS_DIR}"
 cd "${PROJECT_ROOT}"
 # shellcheck disable=SC2310
 container_engine_build \
+    -f deploy/Dockerfile \
     --build-arg RPI_OMT_CLIENT_VERSION=vtest \
     -t "${IMAGE_TAG}" . || fail "container image build failed"
 pass "amd64 appliance image built"

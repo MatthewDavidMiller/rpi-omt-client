@@ -179,6 +179,10 @@ DocProject/Help/html
 # Click-Once directory
 publish/
 
+# This project has checked-in platform source in this otherwise ignored name.
+!src/win32/
+!src/win32/*.cs
+
 # Publish Web Output
 *.[Pp]ublish.xml
 *.azurePubxml
