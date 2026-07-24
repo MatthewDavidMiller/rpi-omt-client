@@ -2,8 +2,8 @@ import re
 from pathlib import Path
 
 from omt_client import create_app
-from omt_client.preview import preview_services
 from omt_client.settings import ENVIRONMENT_SPECS, load_settings
+from omt_client_preview import preview_services
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -50,6 +50,21 @@ def test_high_value_paths_are_documented_and_exist():
         "deploy/transaction.sh",
     )
     assert all((ROOT / path).exists() and f"`{path}`" in reference for path in paths)
+
+
+def test_agent_guides_reference_existing_paths():
+    """AGENTS.md and CLAUDE.md are the entry map for humans and agents. Their
+    file maps silently rotted through the v0.9.27 src/ + deploy/ reorganisation;
+    this keeps every backticked repo path honest."""
+    path_pattern = re.compile(r"`([A-Za-z0-9_.][A-Za-z0-9_./-]*/[A-Za-z0-9_./-]*)`")
+    missing = []
+    for guide in (ROOT / "AGENTS.md", ROOT / "CLAUDE.md"):
+        for candidate in path_pattern.findall(guide.read_text(encoding="utf-8")):
+            if candidate.endswith("/*") or "<" in candidate:
+                continue
+            if not (ROOT / candidate.rstrip("/")).exists():
+                missing.append(f"{guide.name} -> {candidate}")
+    assert not missing, "Agent guides name paths that do not exist: " + ", ".join(missing)
 
 
 def test_public_factory_routes_are_documented():

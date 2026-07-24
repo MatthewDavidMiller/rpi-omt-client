@@ -27,10 +27,6 @@ class SourceTarget:
     kind: str
     value: str
 
-    @property
-    def display_name(self) -> str:
-        return self.value
-
 
 SOURCE_TARGET_MAX_BYTES = 1024
 

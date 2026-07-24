@@ -1,0 +1,178 @@
+{
+  "comment": [
+    "Shared contract between the C# status producer and the Python status consumer.",
+    "Producer: src/receiver/RpiOmt.Receiver.Core/PlaybackState.cs",
+    "Consumer: src/omt_client/services/playback.py",
+    "Python requires set(document) == fields exactly, so a field added on only one",
+    "side would make every status record unparseable and pin the dashboard to",
+    "'Playback status stale'. Both test suites assert against this file.",
+    "'events' names PlaybackStateModel methods, applied in order.",
+    "receiver_states/video_states are the consumer accept-lists. 'failed' is",
+    "accepted for forward compatibility but no producer path emits it today, so",
+    "it carries no projection row."
+  ],
+  "schema": 1,
+  "fields": [
+    "schema",
+    "state",
+    "video_state",
+    "audio_state",
+    "target",
+    "detail",
+    "connector",
+    "drm_device",
+    "alsa_device",
+    "updated_at"
+  ],
+  "receiver_states": [
+    "running",
+    "waiting-for-discovery",
+    "waiting-for-hdmi",
+    "retrying",
+    "degraded",
+    "unsupported-format",
+    "starting",
+    "stopped",
+    "failed"
+  ],
+  "video_states": [
+    "running",
+    "waiting-for-discovery",
+    "waiting-for-hdmi",
+    "retrying",
+    "unsupported-format",
+    "starting",
+    "stopped",
+    "failed"
+  ],
+  "audio_states": ["stopped", "running", "failed"],
+  "connectors": ["none", "HDMI-A-1", "HDMI-A-2"],
+  "projections": [
+    {
+      "name": "initial state is stopped",
+      "events": [],
+      "state": "stopped",
+      "video_state": "stopped",
+      "audio_state": "stopped",
+      "public_state": "stopped",
+      "tone": "neutral"
+    },
+    {
+      "name": "audio alone never promotes the overall state",
+      "events": ["AudioRunning"],
+      "state": "stopped",
+      "video_state": "stopped",
+      "audio_state": "running",
+      "public_state": "stopped",
+      "tone": "neutral"
+    },
+    {
+      "name": "starting",
+      "events": ["VideoStarting"],
+      "state": "starting",
+      "video_state": "starting",
+      "audio_state": "stopped",
+      "public_state": "starting",
+      "tone": "warning"
+    },
+    {
+      "name": "waiting for discovery",
+      "events": ["WaitingForDiscovery"],
+      "state": "waiting-for-discovery",
+      "video_state": "waiting-for-discovery",
+      "audio_state": "stopped",
+      "public_state": "waiting-for-discovery",
+      "tone": "warning"
+    },
+    {
+      "name": "waiting for hdmi",
+      "events": ["WaitingForHdmi"],
+      "state": "waiting-for-hdmi",
+      "video_state": "waiting-for-hdmi",
+      "audio_state": "stopped",
+      "public_state": "waiting-for-hdmi",
+      "tone": "warning"
+    },
+    {
+      "name": "retrying",
+      "events": ["VideoRetrying"],
+      "state": "retrying",
+      "video_state": "retrying",
+      "audio_state": "stopped",
+      "public_state": "retrying",
+      "tone": "warning"
+    },
+    {
+      "name": "unsupported format",
+      "events": ["UnsupportedFormat"],
+      "state": "unsupported-format",
+      "video_state": "unsupported-format",
+      "audio_state": "stopped",
+      "public_state": "unsupported-format",
+      "tone": "danger"
+    },
+    {
+      "name": "video running with audio stopped is still running",
+      "events": ["VideoRunning"],
+      "state": "running",
+      "video_state": "running",
+      "audio_state": "stopped",
+      "public_state": "playing",
+      "tone": "success"
+    },
+    {
+      "name": "video and audio running",
+      "events": ["VideoRunning", "AudioRunning"],
+      "state": "running",
+      "video_state": "running",
+      "audio_state": "running",
+      "public_state": "playing",
+      "tone": "success"
+    },
+    {
+      "name": "audio failure degrades playback while video continues",
+      "events": ["VideoRunning", "AudioFailed"],
+      "state": "degraded",
+      "video_state": "running",
+      "audio_state": "failed",
+      "public_state": "degraded",
+      "tone": "warning"
+    },
+    {
+      "name": "audio recovery clears the degraded projection",
+      "events": ["VideoRunning", "AudioFailed", "AudioRunning"],
+      "state": "running",
+      "video_state": "running",
+      "audio_state": "running",
+      "public_state": "playing",
+      "tone": "success"
+    },
+    {
+      "name": "audio shutdown leaves video authoritative",
+      "events": ["VideoRunning", "AudioFailed", "AudioStopped"],
+      "state": "running",
+      "video_state": "running",
+      "audio_state": "stopped",
+      "public_state": "playing",
+      "tone": "success"
+    },
+    {
+      "name": "video loss outranks a healthy audio worker",
+      "events": ["VideoRunning", "AudioRunning", "VideoRetrying"],
+      "state": "retrying",
+      "video_state": "retrying",
+      "audio_state": "running",
+      "public_state": "retrying",
+      "tone": "warning"
+    },
+    {
+      "name": "stopping resets both workers",
+      "events": ["VideoRunning", "AudioRunning", "Stopped"],
+      "state": "stopped",
+      "video_state": "stopped",
+      "audio_state": "stopped",
+      "public_state": "stopped",
+      "tone": "neutral"
+    }
+  ]
+}

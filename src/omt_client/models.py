@@ -12,7 +12,6 @@ class ActionResult:
     ok: bool
     message: str = ""
     error: str = ""
-    details: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

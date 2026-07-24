@@ -1,5 +1,6 @@
 """Side-effect-free preview service behavior."""
 
+import re
 import subprocess
 import sys
 import zipfile
@@ -7,15 +8,55 @@ from pathlib import Path
 
 from flask import Flask, session
 
-from omt_client.preview import preview_services
+from omt_client_preview import preview_services
+
+ROOT = Path(__file__).resolve().parents[2]
+SHIPPED_PACKAGE = ROOT / "src" / "omt_client"
+
+
+def test_shipped_package_never_depends_on_the_preview_fakes():
+    """deploy/Dockerfile copies only src/omt_client/, so nothing there may import
+    the dev-only fakes — that would break the appliance image at runtime."""
+    dockerfile = (ROOT / "deploy" / "Dockerfile").read_text(encoding="utf-8")
+    assert "COPY src/omt_client/ /app/omt_client/" in dockerfile
+    assert "omt_client_preview" not in dockerfile
+
+    offenders = [
+        module.relative_to(ROOT).as_posix()
+        for module in SHIPPED_PACKAGE.rglob("*.py")
+        if "omt_client_preview" in module.read_text(encoding="utf-8")
+    ]
+    assert not offenders, f"Preview fakes leaked into the shipped package: {offenders}"
+
+
+def test_dockerignore_excludes_bytecode_at_every_depth():
+    """An unanchored `__pycache__/` only matches the build-context root, so
+    nested bytecode was copied into the image and hashed into
+    runtime-sha256.manifest, making the manifest depend on whatever the build
+    machine had compiled locally."""
+    patterns = [
+        line.strip()
+        for line in (ROOT / ".dockerignore").read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.startswith("#")
+    ]
+    assert "**/__pycache__/" in patterns
+    assert "**/*.pyc" in patterns
+    assert "__pycache__/" not in patterns
+    assert "*.pyc" not in patterns
+
+
+def test_preview_password_digest_matches_the_production_binding():
+    """routes/auth.py stores auth.password_digest with no fallback, so every
+    AuthenticationService implementation must supply a real one."""
+    services = preview_services("secret")
+    digest = services.auth.password_digest
+    assert re.fullmatch(r"[0-9a-f]{64}", digest)
+    assert digest != preview_services("other").auth.password_digest
 
 
 def test_preview_launcher_imports_package_from_src(tmp_path):
     launcher = Path(__file__).resolve().parents[2] / "scripts" / "preview-web-ui.py"
-    command = (
-        "import runpy; "
-        f"runpy.run_path({str(launcher)!r}, run_name='preview_import_test')"
-    )
+    command = f"import runpy; runpy.run_path({str(launcher)!r}, run_name='preview_import_test')"
     completed = subprocess.run(
         [sys.executable, "-I", "-c", command],
         cwd=tmp_path,
@@ -60,9 +101,7 @@ def test_preview_source_network_diagnostics_and_bundle_are_in_memory():
     assert "running:" in services.diagnostics.status()
     assert services.diagnostics.discovery().command.sources
     assert services.diagnostics.runtime().command.returncode == 0
-    assert (
-        "omt://host:6400" in services.diagnostics.direct("omt://host:6400").command.command
-    )
+    assert "omt://host:6400" in services.diagnostics.direct("omt://host:6400").command.command
     assert services.system.request_reboot().ok
     bundle, name = services.diagnostics.bundle()
     assert name.endswith(".zip")

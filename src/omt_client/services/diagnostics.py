@@ -78,10 +78,9 @@ class RuntimeDiagnostics:
         return result.text.strip() if result.ok and result.text.strip() else "unknown"
 
     def status(self) -> str:
-        result = _run_before_deadline(
+        result = run_command(
             [self._settings.control_command, "status"],
             self._settings.control_timeout_seconds,
-            time.monotonic() + self._settings.control_timeout_seconds,
         )
         return result.stdout.strip() or result.error or result.stderr.strip() or "unavailable"
 

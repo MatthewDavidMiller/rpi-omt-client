@@ -119,12 +119,10 @@ class PlaybackStatusRecord:
         ):
             raise ValueError("status fields are invalid")
         if (
-            state == "degraded"
-            and (video_state != "running" or audio_state != "failed")
-        ) or (
-            state == "running"
-            and (video_state != "running" or audio_state == "failed")
-        ) or (state not in {"running", "degraded"} and state != video_state):
+            (state == "degraded" and (video_state != "running" or audio_state != "failed"))
+            or (state == "running" and (video_state != "running" or audio_state == "failed"))
+            or (state not in {"running", "degraded"} and state != video_state)
+        ):
             raise ValueError("status state projection is invalid")
         try:
             updated = datetime.fromisoformat(updated_raw.replace("Z", "+00:00"))

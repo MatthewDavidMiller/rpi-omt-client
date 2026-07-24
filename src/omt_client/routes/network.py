@@ -1,6 +1,9 @@
 """OMT Discovery Server and direct-target settings routes."""
 
+from __future__ import annotations
+
 from flask import Blueprint, redirect, render_template, request, url_for
+from flask.typing import ResponseReturnValue
 
 from .common import login_required, publish_action, services
 
@@ -9,8 +12,8 @@ network_blueprint = Blueprint("network", __name__)
 
 @network_blueprint.route("/settings/network", methods=["GET", "POST"])
 @login_required
-def network_settings():
-    submitted = None
+def network_settings() -> ResponseReturnValue:
+    submitted: dict[str, str] | None = None
     if request.method == "POST":
         submitted = {
             "discovery_server_text": request.form.get("discovery_server", ""),
@@ -33,7 +36,7 @@ def network_settings():
 
 @network_blueprint.post("/settings/direct-source")
 @login_required
-def save_direct_source():
+def save_direct_source() -> ResponseReturnValue:
     result = services().source.save_direct(request.form.get("direct_address", "").strip())
     publish_action(result)
     return redirect(url_for("network.network_settings"))

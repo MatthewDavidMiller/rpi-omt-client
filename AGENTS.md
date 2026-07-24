@@ -61,7 +61,7 @@ make lint
 
 # Deploy
 make deploy HOST=pi@<ip>
-sudo ./install.sh
+sudo ./install.sh   # on the Pi, from the deployed capsule
 ```
 
 ## Validation Expectations
@@ -70,6 +70,8 @@ Run the narrowest relevant checks for the files you touched, then broaden if the
 
 - Flask app or templates: `make test-py` and, when behavior changes materially, `make test`
 - Shell scripts or installer logic: `make test-quick`
+- Receiver core or the playback-status contract: `make test-receiver` and `make test-py`; both
+  suites assert against `tests/schema/playback-status-vectors.json` and must be updated together
 - Dockerfile, entrypoint, or image contents: `make test` or `./scripts/test-local.sh --full` when feasible
 - Documentation-only changes: no test run required, but keep commands and paths accurate
 
@@ -77,16 +79,21 @@ If you cannot run a relevant validation step, say so explicitly in your final ha
 
 ## High-Value File Map
 
-- `app/omt_client/factory.py` and `app/omt_client/routes/`: Flask composition and public routes
-- `app/omt_client/services.py`: injected domain boundary and playback/source operations
-- `app/state_store.py`: bounded state and atomic OMT target persistence
-- `app/templates/` and `app/static/`: web UI
-- `omt/runtime-lib.sh`: shared shell validation, bounded reads, and process identity
-- `omt/entrypoint.sh`: container bootstrap, secret/cert generation, gunicorn startup
-- `omt/start-omt.sh`: validated native OMT receiver launcher
-- `install.sh`: Pi install, Docker/bootstrap, HDMI config, systemd integration
-- `Dockerfile`: cross-build and runtime image assembly
+- `src/omt_client/factory.py` and `src/omt_client/routes/`: Flask composition and public routes
+- `src/omt_client/services/`: injected domain boundary and playback/source operations
+- `src/omt_client/services/composition.py`: production composition root
+- `src/omt_client/state_store.py`: bounded state and atomic OMT target persistence
+- `src/omt_client/templates/` and `src/omt_client/static/`: web UI
+- `src/omt_client_preview/`: dev-only in-memory fakes; deliberately outside the shipped package
+- `src/receiver/RpiOmt.Receiver.Core/`: dependency-free CLI parsing, validation, and status core
+- `src/deployer/`: Windows Avalonia deployer and its core
+- `deploy/container/runtime-lib.sh`: shared shell validation, bounded reads, and process identity
+- `deploy/container/entrypoint.sh`: container bootstrap, secret/cert generation, gunicorn startup
+- `deploy/container/start-omt.sh`: validated native OMT receiver launcher
+- `deploy/host/install.sh`: Pi install, Docker/bootstrap, HDMI config, systemd integration
+- `deploy/Dockerfile`: cross-build and runtime image assembly
 - `tests/unit/` and `tests/integration/`: main safety net
+- `tests/schema/`: vectors shared by the Python and C# suites
 
 ## Agent Handoff
 

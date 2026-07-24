@@ -16,8 +16,15 @@
 | Discovery and URI validation | `src/omt_client/discovery.py` |
 | OMT XML settings | `src/omt_client/network_config.py` |
 | Templates and CSS | `src/omt_client/templates/`, `src/omt_client/static/` |
+| Dev-only preview fakes | `src/omt_client_preview/` |
 | Shell process lifecycle | `deploy/container/runtime-lib.sh`, `deploy/container/start-omt.sh`, `deploy/container/control-omt.sh`, `deploy/container/entrypoint.sh` |
 | Container | `deploy/Dockerfile`, `deploy/compose.yml` |
+
+`deploy/Dockerfile` copies only `src/omt_client/`, so `src/omt_client_preview/`
+(the in-memory fakes behind `scripts/preview-web-ui.py` and the route tests)
+never reaches the appliance image or `runtime-sha256.manifest`. Nothing under
+`src/omt_client/` may import it; `tests/unit/test_preview_services.py` enforces
+that.
 
 Public routes are `/login`, `/logout`, `/`, `/sources/select`,
 `/sources/refresh`, `/playback/restart`, `/playback/clear`,

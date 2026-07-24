@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 import pytest
 
 from omt_client import create_app
-from omt_client.preview import preview_services
+from omt_client.models import ActionResult
 from omt_client.settings import load_settings
+from omt_client_preview import preview_services
 
 
 @pytest.fixture
@@ -34,6 +36,13 @@ def test_factory_stores_explicit_dependencies_and_defers_environment(factory_app
     assert factory_app.extensions["omt_client.services"].auth.secret_key == "preview-dev-secret"
     assert factory_app.extensions["omt_client.settings"].config_dir == "/etc/omt"
     assert factory_app.config["SESSION_COOKIE_SECURE"] is False
+
+
+def test_login_page_is_reachable_without_a_session(factory_app):
+    response = factory_app.test_client().get("/login")
+    assert response.status_code == 200
+    assert b'name="password"' in response.data
+    assert b"Invalid password" not in response.data
 
 
 def test_login_failure_success_and_logout(factory_app):
@@ -209,6 +218,65 @@ def test_authenticated_csrf_error_uses_operator_error_view():
     assert b"Return to dashboard" in response.data
 
 
+def test_diagnostics_landing_page_renders_without_a_check(factory_client):
+    response = factory_client.get("/diagnostics")
+    assert response.status_code == 200
+    assert b"running:4242" in response.data
+    assert b"Standard output" not in response.data
+
+
+def test_reboot_failure_reports_the_error_instead_of_scheduling(factory_client, factory_app):
+    system = factory_app.extensions["omt_client.services"].system
+    system.request_reboot = lambda: ActionResult(False, error="The host rejected the request.")
+    response = factory_client.post("/system/reboot", follow_redirects=True)
+    assert response.status_code == 200
+    assert b"The host rejected the request." in response.data
+    assert b"reboot scheduled" not in response.data.lower()
+
+
+def test_network_save_failure_retains_the_submitted_value(factory_client, factory_app):
+    network = factory_app.extensions["omt_client.services"].network
+    network.save = lambda _server: ActionResult(False, error="Discovery Server is invalid.")
+    response = factory_client.post(
+        "/settings/network",
+        data={"discovery_server": "not a host"},
+    )
+    assert response.status_code == 200
+    assert b"Discovery Server is invalid." in response.data
+    assert b"not a host" in response.data
+
+
+def test_about_renders_the_shipped_legal_texts():
+    """The About page is the product's license surface, so it must render the
+    real LICENSE and THIRD_PARTY_NOTICES.txt that ship in the image."""
+    root = Path(__file__).resolve().parents[2]
+    settings = load_settings(
+        {
+            "OMT_PROJECT_LICENSE_FILE": str(root / "LICENSE"),
+            "OMT_THIRD_PARTY_NOTICES_FILE": str(root / "THIRD_PARTY_NOTICES.txt"),
+        }
+    )
+    application = create_app(settings, preview_services("about-password"))
+    application.config.update(TESTING=True, WTF_CSRF_ENABLED=False, SESSION_COOKIE_SECURE=False)
+    client = application.test_client()
+    assert client.post("/login", data={"password": "about-password"}).status_code == 302
+
+    html = client.get("/about").get_data(as_text=True)
+    assert (root / "LICENSE").read_text(encoding="utf-8").strip().splitlines()[0] in html
+    assert "unavailable in this image" not in html
+
+
+def test_about_reports_missing_legal_files_without_failing(factory_app):
+    settings = load_settings({"OMT_PROJECT_LICENSE_FILE": "/nonexistent/LICENSE"})
+    application = create_app(settings, preview_services("legal-password"))
+    application.config.update(TESTING=True, WTF_CSRF_ENABLED=False, SESSION_COOKIE_SECURE=False)
+    client = application.test_client()
+    assert client.post("/login", data={"password": "legal-password"}).status_code == 302
+    response = client.get("/about")
+    assert response.status_code == 200
+    assert b"Project license is unavailable in this image." in response.data
+
+
 def test_login_rate_limit_remains_context_specific():
     application = create_app(load_settings({}), preview_services("limit-password"))
     application.config.update(TESTING=True, WTF_CSRF_ENABLED=False, SESSION_COOKIE_SECURE=False)
@@ -218,6 +286,50 @@ def test_login_rate_limit_remains_context_specific():
     response = client.post("/login", data={"password": "bad"})
     assert response.status_code == 429
     assert b"Too many login attempts" in response.data
+
+
+def test_unauthenticated_oversized_request_falls_back_to_the_login_view():
+    application = create_app(load_settings({}), preview_services("anon-password"))
+    application.config.update(TESTING=True, WTF_CSRF_ENABLED=False, SESSION_COOKIE_SECURE=False)
+    response = application.test_client().post("/login", data={"password": "x" * (17 * 1024)})
+    assert response.status_code == 413
+    assert b"Request is too large." in response.data
+    assert b"Return to dashboard" not in response.data
+
+
+@pytest.mark.parametrize(
+    ("path", "form", "limit_setting", "limit"),
+    [
+        ("/diagnostics/discovery", {}, "OMT_DIAGNOSTICS_ACTION_LIMIT", 2),
+        ("/diagnostics/runtime", {}, "OMT_DIAGNOSTICS_ACTION_LIMIT", 2),
+        (
+            "/diagnostics/direct",
+            {"direct_address": "omt://192.0.2.4:6400"},
+            "OMT_DIAGNOSTICS_ACTION_LIMIT",
+            2,
+        ),
+        ("/diagnostics/download", {}, "OMT_DIAGNOSTICS_DOWNLOAD_LIMIT", 1),
+        ("/system/reboot", {}, "OMT_REBOOT_ACTION_LIMIT", 1),
+    ],
+)
+def test_expensive_endpoints_honour_their_configured_rate_limit(path, form, limit_setting, limit):
+    """factory.py attaches these limits by rewriting app.view_functions after
+    blueprint registration. Only /login was covered before, so a silent failure
+    of that mechanism would have left every costly endpoint unthrottled."""
+    application = create_app(
+        load_settings({limit_setting: f"{limit} per hour"}),
+        preview_services("throttle-password"),
+    )
+    application.config.update(TESTING=True, WTF_CSRF_ENABLED=False, SESSION_COOKIE_SECURE=False)
+    client = application.test_client()
+    assert client.post("/login", data={"password": "throttle-password"}).status_code == 302
+
+    for _attempt in range(limit):
+        assert client.post(path, data=form).status_code in (200, 202)
+    throttled = client.post(path, data=form)
+    assert throttled.status_code == 429
+    assert b"Too many requests" in throttled.data
+    assert b"Too many login attempts" not in throttled.data
 
 
 def _luminance(color: str) -> float:

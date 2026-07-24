@@ -9,9 +9,22 @@ from pathlib import Path
 import pytest
 
 from omt_client.models import CommandResult
-from omt_client.services.playback import PlaybackStatusRecord, RuntimeSourcePlayback
+from omt_client.services.playback import (
+    AUDIO_STATES,
+    RECEIVER_STATES,
+    STATUS_FIELDS,
+    VIDEO_STATES,
+    PlaybackStatusRecord,
+    RuntimeSourcePlayback,
+)
 from omt_client.settings import load_settings
 from omt_client.state_store import SourceConfigurationError
+
+VECTORS = json.loads(
+    (Path(__file__).resolve().parents[1] / "schema" / "playback-status-vectors.json").read_text(
+        encoding="utf-8"
+    )
+)
 
 
 def _status_document(**changes):
@@ -46,6 +59,48 @@ def _service(tmp_path: Path) -> RuntimeSourcePlayback:
         encoding="utf-8",
     )
     return RuntimeSourcePlayback(settings)
+
+
+def test_consumer_accept_lists_match_the_shared_receiver_contract():
+    """The C# producer asserts against the same file. If these drift, Python's
+    exact `set(document) == STATUS_FIELDS` check rejects every real status
+    record and the dashboard silently pins to 'Playback status stale'."""
+    assert STATUS_FIELDS == set(VECTORS["fields"])
+    assert RECEIVER_STATES == set(VECTORS["receiver_states"])
+    assert VIDEO_STATES == set(VECTORS["video_states"])
+    assert AUDIO_STATES == set(VECTORS["audio_states"])
+    assert _status_document()["schema"] == VECTORS["schema"]
+
+
+@pytest.mark.parametrize("vector", VECTORS["projections"], ids=lambda case: case["name"])
+def test_every_producible_projection_parses_and_maps_to_a_public_state(
+    tmp_path: Path, vector: dict[str, str]
+):
+    service = _service(tmp_path)
+    document = _status_document(
+        state=vector["state"],
+        video_state=vector["video_state"],
+        audio_state=vector["audio_state"],
+        detail=vector["name"],
+    )
+    parsed = PlaybackStatusRecord.parse(json.dumps(document).encode())
+    assert (parsed.state, parsed.video_state, parsed.audio_state) == (
+        vector["state"],
+        vector["video_state"],
+        vector["audio_state"],
+    )
+
+    Path(service._settings.playback_status_file).write_text(json.dumps(document), encoding="utf-8")
+    summary = service.playback()
+    assert summary.state == vector["public_state"]
+    assert summary.tone == vector["tone"]
+    assert summary.detail == vector["name"]
+
+
+@pytest.mark.parametrize("connector", VECTORS["connectors"])
+def test_every_contracted_connector_is_accepted(connector: str):
+    document = _status_document(connector=connector)
+    assert PlaybackStatusRecord.parse(json.dumps(document).encode()).state == "running"
 
 
 @pytest.mark.parametrize(
@@ -117,6 +172,38 @@ def test_missing_status_uses_controlled_controller_fallback(
         lambda _action: CommandResult(command="control", returncode=returncode),
     )
     assert service.playback().state == expected
+
+
+def test_lone_surrogate_detail_is_rejected_rather_than_crashing():
+    """json.loads happily produces unpaired surrogates, which raise on UTF-8
+    encode. The bounded-text guard must treat that as an invalid field."""
+    raw = json.dumps(_status_document()).replace('"detail": "playing"', '"detail": "\\ud800"')
+    with pytest.raises(ValueError, match="fields"):
+        PlaybackStatusRecord.parse(raw.encode())
+
+
+def test_unreadable_saved_target_presents_as_unconfigured(tmp_path: Path):
+    service = _service(tmp_path)
+    Path(service._settings.source_target_file).write_text("not-json", encoding="utf-8")
+    assert service.configuration() == ("", "")
+    assert service.playback().state == "unconfigured"
+
+
+def test_restart_failures_surface_the_controller_detail(tmp_path: Path, monkeypatch):
+    service = _service(tmp_path)
+    monkeypatch.setattr(
+        service,
+        "_control",
+        lambda _action: CommandResult(command="control", returncode=1, stderr="no such device"),
+    )
+    restarted = service.restart()
+    assert not restarted.ok
+    assert "no such device" in restarted.error
+
+    saved = service.select("discovered|Camera")
+    assert not saved.ok
+    assert "was saved, but playback could not be restarted" in saved.error
+    assert "no such device" in saved.error
 
 
 def test_malformed_persisted_target_restart_is_a_controlled_error(tmp_path: Path):

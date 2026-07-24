@@ -27,7 +27,6 @@ class OmtSourceChoice:
 
     name: str
     backend: str = "OMT discovery"
-    target: str | None = None
 
     @property
     def address(self) -> str:
@@ -35,7 +34,7 @@ class OmtSourceChoice:
 
     @property
     def selection_value(self) -> str:
-        return f"discovered|{self.target or self.name}"
+        return f"discovered|{self.name}"
 
     @property
     def display_label(self) -> str:
@@ -150,7 +149,3 @@ def parse_omt_sources(output: object) -> list[str]:
             seen.add(name)
             sources.append(name)
     return sorted(sources)
-
-
-def choices_from_receiver(output: object) -> list[OmtSourceChoice]:
-    return [OmtSourceChoice(name) for name in parse_omt_sources(output)]

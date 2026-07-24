@@ -14,6 +14,8 @@ addopts = "-q --tb=short"
 
 [tool.coverage.run]
 branch = true
+# Only the package that ships in the appliance image. The preview fakes live in
+# src/omt_client_preview and must not inflate this number.
 source = ["src/omt_client"]
 
 [tool.coverage.report]
@@ -26,7 +28,8 @@ exclude_also = [
 
 [tool.mypy]
 python_version = "3.11"
-files = ["src/omt_client"]
+mypy_path = "src"
+files = ["src/omt_client", "src/omt_client_preview", "scripts"]
 strict = true
 warn_unreachable = true
 exclude = ["tests/.venv"]
@@ -35,6 +38,7 @@ exclude = ["tests/.venv"]
 module = ["flask_limiter.*", "flask_wtf.*"]
 ignore_missing_imports = true
 
-[[tool.mypy.overrides]]
-module = ["omt_client.factory", "omt_client.routes.*"]
-disable_error_code = ["assignment", "no-untyped-def", "no-untyped-call"]
+# scripts/lint.sh runs a second, relaxed mypy pass over tests/: real type errors
+# are caught, but pytest fixtures and cases need not be annotated. Tests are not
+# listed in `files` above because mypy resolves them as top-level modules (there
+# is no tests/__init__.py), so a `tests.*` override cannot select them.

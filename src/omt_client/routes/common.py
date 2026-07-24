@@ -4,13 +4,15 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from functools import wraps
-from typing import Any, TypeVar, cast
+from typing import ParamSpec, cast
 
-from flask import current_app, redirect, session, url_for
+from flask import current_app, flash, redirect, session, url_for
+from flask.typing import ResponseReturnValue
 
+from ..models import ActionResult
 from ..services import ServiceContainer
 
-F = TypeVar("F", bound=Callable[..., Any])
+P = ParamSpec("P")
 
 
 def services() -> ServiceContainer:
@@ -30,22 +32,20 @@ def authenticated() -> bool:
     return valid
 
 
-def login_required(function: F) -> F:
+def login_required(
+    function: Callable[P, ResponseReturnValue],
+) -> Callable[P, ResponseReturnValue]:
     @wraps(function)
-    def decorated(*args: Any, **kwargs: Any) -> Any:
+    def decorated(*args: P.args, **kwargs: P.kwargs) -> ResponseReturnValue:
         if not authenticated():
             return redirect(url_for("auth.login"))
         return function(*args, **kwargs)
 
-    return decorated  # type: ignore[return-value]
+    return decorated
 
 
-def publish_action(result: Any) -> None:
-    from flask import flash
-
+def publish_action(result: ActionResult) -> None:
     if result.ok:
         flash(result.message, "success")
     else:
         flash(result.error, "error")
-    for detail in result.details:
-        flash(detail, "warning" if not result.ok else "success")

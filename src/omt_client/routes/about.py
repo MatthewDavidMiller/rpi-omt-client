@@ -1,8 +1,12 @@
 """Authenticated product and legal information."""
 
+from __future__ import annotations
+
 from flask import Blueprint, current_app, render_template
+from flask.typing import ResponseReturnValue
 
 from ..safe_io import read_text
+from ..settings import AppSettings
 from .common import login_required, services
 
 about_blueprint = Blueprint("about", __name__)
@@ -24,8 +28,8 @@ def _legal_text(path: str, label: str) -> str:
 
 @about_blueprint.get("/about")
 @login_required
-def about():
-    settings = current_app.extensions["omt_client.settings"]
+def about() -> ResponseReturnValue:
+    settings: AppSettings = current_app.extensions["omt_client.settings"]
     return render_template(
         "about.html",
         app_version=services().diagnostics.version(),

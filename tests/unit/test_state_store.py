@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 import pytest
 
 from omt_client.safe_io import ReadStatus, read_bytes, read_text
@@ -97,6 +99,41 @@ def test_unsafe_directory_target_and_lock_fail_closed(tmp_path):
     lock.symlink_to(victim)
     with pytest.raises(SourceConfigurationError, match="lock"):
         save_source_target(target, SourceTarget("discovered", "A"))
+
+
+def test_clearing_a_target_that_is_already_absent_succeeds(tmp_path):
+    target = tmp_path / "source_target.json"
+    save_source_target(target, None)
+    assert not target.exists()
+    save_source_target(target, SourceTarget("discovered", "Camera"))
+    save_source_target(target, None)
+    assert not target.exists()
+    assert read_source_target(target) is None
+
+
+def test_unopenable_lock_and_nonregular_lock_fail_closed(tmp_path, monkeypatch):
+    target = tmp_path / "source_target.json"
+    fifo = tmp_path / "source_target.json.lock"
+    os.mkfifo(fifo)
+    with pytest.raises(SourceConfigurationError, match="lock"):
+        save_source_target(target, SourceTarget("discovered", "Camera"))
+    fifo.unlink()
+
+    monkeypatch.setattr(
+        os, "open", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("no descriptors"))
+    )
+    with pytest.raises(SourceConfigurationError, match="unable to lock"):
+        save_source_target(target, SourceTarget("discovered", "Camera"))
+
+
+def test_underlying_os_errors_surface_as_configuration_errors(tmp_path, monkeypatch):
+    target = tmp_path / "source_target.json"
+    monkeypatch.setattr(
+        "omt_client.state_store.atomic_replace",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("disk full")),
+    )
+    with pytest.raises(SourceConfigurationError, match="disk full"):
+        save_source_target(target, SourceTarget("discovered", "Camera"))
 
 
 def test_source_target_oversized_and_nonregular_reads(tmp_path):

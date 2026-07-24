@@ -179,7 +179,7 @@ public static class StatusSanitizer
             {
                 break;
             }
-            if (!Rune.IsControl(rune) || rune.Value == ' ')
+            if (!Rune.IsControl(rune))
             {
                 result.Append(rune);
             }

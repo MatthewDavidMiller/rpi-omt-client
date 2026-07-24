@@ -16,8 +16,13 @@ env/
 vm-files/
 .github/
 .githooks/
-__pycache__/
-*.pyc
+# Leading **/ is required: an unanchored "__pycache__/" only matches the build
+# context root, so nested bytecode such as src/omt_client/__pycache__ would be
+# copied into the image and hashed into runtime-sha256.manifest, making the
+# image depend on whatever the build machine happened to compile locally.
+**/__pycache__/
+**/*.pyc
+**/*.pyo
 .pytest_cache/
 .DS_Store
 Thumbs.db

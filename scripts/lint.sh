@@ -79,6 +79,7 @@ if [[ -x "${PYTHON_VENV}/bin/python" ]] && \
    "${PYTHON_VENV}/bin/python" -c 'import ruff' 2>/dev/null; then
     echo "Running Ruff..."
     "${PYTHON_VENV}/bin/python" -m ruff check src scripts tools tests
+    "${PYTHON_VENV}/bin/python" -m ruff format --check src scripts tools tests
 else
     missing_tool "ruff"
 fi
@@ -86,7 +87,11 @@ fi
 if [[ -x "${PYTHON_VENV}/bin/python" ]] && \
    "${PYTHON_VENV}/bin/python" -c 'import mypy' 2>/dev/null; then
     echo "Running mypy..."
-    "${PYTHON_VENV}/bin/python" -m mypy src/omt_client
+    "${PYTHON_VENV}/bin/python" -m mypy
+    echo "Running mypy over tests (relaxed)..."
+    MYPYPATH=src "${PYTHON_VENV}/bin/python" -m mypy \
+        --check-untyped-defs --allow-untyped-defs --allow-untyped-calls \
+        --allow-incomplete-defs --allow-untyped-decorators tests
 else
     missing_tool "mypy"
 fi

@@ -11,8 +11,8 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from omt_client import create_app  # noqa: E402
-from omt_client.preview import preview_services  # noqa: E402
 from omt_client.settings import load_settings  # noqa: E402
+from omt_client_preview import preview_services  # noqa: E402
 
 PASSWORD = os.environ.get("WEB_PASSWORD", "omt-client")
 app = create_app(

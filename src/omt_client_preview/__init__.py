@@ -1,7 +1,14 @@
-"""Side-effect-free services for the local production-template preview."""
+"""Side-effect-free services for the local production-template preview.
+
+This package is deliberately a sibling of ``omt_client`` rather than a module
+inside it: ``deploy/Dockerfile`` copies only ``src/omt_client/``, so keeping the
+fakes here guarantees they never reach the appliance image or its
+``runtime-sha256.manifest``.
+"""
 
 from __future__ import annotations
 
+import hashlib
 import hmac
 import io
 import secrets
@@ -11,8 +18,8 @@ from typing import Any
 
 from flask import session
 
-from .models import ActionResult, CommandResult, DiagnosticResult, PlaybackSummary
-from .services import ServiceContainer
+from omt_client.models import ActionResult, CommandResult, DiagnosticResult, PlaybackSummary
+from omt_client.services import ServiceContainer
 
 
 @dataclass(frozen=True)
@@ -37,6 +44,13 @@ class PreviewAuthentication:
     def __init__(self, password: str) -> None:
         self._password = password
         self._sessions: set[str] = set()
+
+    @property
+    def password_digest(self) -> str:
+        """Mirror the production session-to-password binding."""
+        return hmac.new(
+            self.secret_key.encode("utf-8"), self._password.encode("utf-8"), hashlib.sha256
+        ).hexdigest()
 
     def authenticate(self, password: str, previous_session_id: str | None) -> str | None:
         if not hmac.compare_digest(password.encode(), self._password.encode()):

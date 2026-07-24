@@ -15,5 +15,8 @@
     <None Include="../../../tests/schema/omt-target-vectors.json"
           Link="omt-target-vectors.json"
           CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../../../tests/schema/playback-status-vectors.json"
+          Link="playback-status-vectors.json"
+          CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

@@ -1,6 +1,9 @@
 """High-impact host-system actions."""
 
+from __future__ import annotations
+
 from flask import Blueprint, redirect, render_template, url_for
+from flask.typing import ResponseReturnValue
 
 from .common import login_required, publish_action, services
 
@@ -9,19 +12,19 @@ system_blueprint = Blueprint("system", __name__)
 
 @system_blueprint.get("/system")
 @login_required
-def system():
+def system() -> ResponseReturnValue:
     return render_template("system.html")
 
 
 @system_blueprint.get("/system/reboot")
 @login_required
-def confirm_reboot():
+def confirm_reboot() -> ResponseReturnValue:
     return render_template("reboot_confirm.html")
 
 
 @system_blueprint.post("/system/reboot")
 @login_required
-def reboot():
+def reboot() -> ResponseReturnValue:
     result = services().system.request_reboot()
     if result.ok:
         return render_template("reboot_scheduled.html", message=result.message), 202

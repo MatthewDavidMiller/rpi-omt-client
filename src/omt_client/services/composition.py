@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import re
-
 from ..settings import AppSettings, load_settings
 from .authentication import PersistentAuthentication
 from .diagnostics import RuntimeDiagnostics
@@ -23,8 +21,3 @@ def production_services(settings: AppSettings | None = None) -> ServiceContainer
         diagnostics=RuntimeDiagnostics(effective, source),
         system=HostSystem(effective),
     )
-
-
-def controller_pid(status: str) -> int | None:
-    match = re.match(r"^running:([1-9][0-9]*)(?:\s|$)", status.strip())
-    return int(match.group(1)) if match else None

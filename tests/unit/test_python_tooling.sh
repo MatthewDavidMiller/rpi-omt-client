@@ -60,7 +60,9 @@ chmod +x "${FIXTURE}/tests/.venv/bin/python"
         PYTHON_MODULE_LOG="${CASE_DIR}/module.log" \
         "${FIXTURE}/scripts/lint.sh" >/dev/null
 )
-printf 'yamllint\nruff\nmypy\n' > "${CASE_DIR}/expected.log"
+# ruff runs twice (check, then format --check) and mypy runs twice (strict over
+# src/ and scripts/, then relaxed over tests/).
+printf 'yamllint\nruff\nruff\nmypy\nmypy\n' > "${CASE_DIR}/expected.log"
 cmp "${CASE_DIR}/expected.log" "${CASE_DIR}/module.log"
 
 if (

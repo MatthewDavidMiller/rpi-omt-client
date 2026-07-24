@@ -1,3 +1,5 @@
+from typing import cast
+
 import pytest
 
 from omt_client.network_config import (
@@ -31,11 +33,55 @@ def test_discovery_server_normalization(value, expected):
 
 @pytest.mark.parametrize(
     "value",
-    ["bad host", "omt://user@host:6399", "omt://host:0", "omt://host:1/path"],
+    [
+        "bad host",
+        "omt://user@host:6399",
+        "omt://host:0",
+        "omt://host:1/path",
+        "omt://host:6399?x=1",
+        "omt://host:6399#x",
+        "host\x00name",
+        "host\x7fname",
+        "x" * 513,
+        "omt://host:99999999999999999999",
+        "cámara.local",
+        "-leading.example",
+        "double..dot",
+        "a" * 254,
+    ],
 )
 def test_invalid_server_values(value):
     with pytest.raises(OmtNetworkConfigurationError):
         normalize_discovery_server(value)
+
+
+def test_non_text_discovery_server_is_rejected():
+    """The guard is reachable from untyped XML content, not just the typed form."""
+    with pytest.raises(OmtNetworkConfigurationError, match="must be text"):
+        normalize_discovery_server(cast(str, None))
+
+
+def test_update_rejects_the_same_documents_as_read():
+    """update_network_configuration_xml re-validates independently of the read
+    path, so an unsafe stored document cannot be silently rewritten."""
+    for value in (
+        b"<Wrong />",
+        b"<Settings><DiscoveryServer>a</DiscoveryServer>"
+        b"<DiscoveryServer>b</DiscoveryServer></Settings>",
+        b"<Settings>",
+    ):
+        with pytest.raises(OmtNetworkConfigurationError):
+            update_network_configuration_xml(value, "192.0.2.1")
+
+    with pytest.raises(OmtNetworkConfigurationError):
+        update_network_configuration_xml(empty_settings_xml(), "bad host")
+
+
+def test_clearing_the_discovery_server_round_trips_to_empty():
+    configured = update_network_configuration_xml(empty_settings_xml(), "192.0.2.1")
+    cleared = update_network_configuration_xml(configured, "")
+    assert network_configuration_from_xml(cleared)["discovery_server"] == ""
+    assert network_configuration_from_xml(cleared)["error"] == ""
 
 
 def test_xml_rejects_wrong_root_duplicates_and_malformed_values():

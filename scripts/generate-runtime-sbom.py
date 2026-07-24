@@ -20,11 +20,24 @@ def command(*arguments: str) -> str:
     ).stdout
 
 
-def license_value(value: str) -> dict[str, str]:
+def license_value(value: str) -> dict[str, object]:
     normalized = value.strip() or "NOASSERTION"
     if re.fullmatch(r"[A-Za-z0-9.+()-]+", normalized):
         return {"expression": normalized}
     return {"license": {"name": normalized}}
+
+
+def metadata_value(distribution: importlib.metadata.Distribution, key: str) -> str:
+    """Read one optional distribution header without assuming a mapping API.
+
+    ``Distribution.metadata`` is typed as the ``PackageMetadata`` protocol, which
+    does not expose ``get``; missing headers read back as ``None``.
+    """
+    try:
+        value = distribution.metadata[key]
+    except KeyError:
+        return ""
+    return str(value) if value else ""
 
 
 def alpine_components() -> list[dict[str, object]]:
@@ -52,14 +65,14 @@ def python_components() -> list[dict[str, object]]:
     components: list[dict[str, object]] = []
     for distribution in sorted(
         importlib.metadata.distributions(),
-        key=lambda item: (item.metadata.get("Name") or "").casefold(),
+        key=lambda item: metadata_value(item, "Name").casefold(),
     ):
-        name = distribution.metadata.get("Name")
+        name = metadata_value(distribution, "Name")
         if not name:
             continue
         license_name = (
-            distribution.metadata.get("License-Expression")
-            or distribution.metadata.get("License")
+            metadata_value(distribution, "License-Expression")
+            or metadata_value(distribution, "License")
             or "NOASSERTION"
         )
         version = distribution.version

@@ -1,7 +1,7 @@
 """Typed service contracts and runtime implementations."""
 
 from .authentication import PersistentAuthentication
-from .composition import controller_pid, production_services
+from .composition import production_services
 from .diagnostics import RuntimeDiagnostics
 from .host_system import HostSystem
 from .network import RuntimeNetwork
@@ -28,6 +28,5 @@ __all__ = (
     "ServiceContainer",
     "SourcePlaybackService",
     "SystemService",
-    "controller_pid",
     "production_services",
 )

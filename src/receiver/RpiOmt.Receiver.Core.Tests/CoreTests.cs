@@ -229,4 +229,94 @@ public sealed class CoreTests
         Assert.Contains("\"video_state\":\"running\"", json);
         Assert.Contains("\"updated_at\":\"2026-01-01T00:00:00+00:00\"", json);
     }
+
+    [Fact]
+    public void SerializedFieldNamesMatchTheSharedConsumerContract()
+    {
+        // src/omt_client/services/playback.py requires set(document) == STATUS_FIELDS
+        // exactly. A field added or renamed here alone would make Python reject every
+        // status record and pin the dashboard to "Playback status stale".
+        using JsonDocument vectors = LoadPlaybackVectors();
+        string[] expected = vectors.RootElement.GetProperty("fields")
+            .EnumerateArray()
+            .Select(field => field.GetString()!)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+
+        byte[] encoded = StatusSerializer.Serialize(
+            new PlaybackStatusDocument(
+                vectors.RootElement.GetProperty("schema").GetInt32(),
+                "running",
+                "running",
+                "running",
+                "Camera",
+                "ok",
+                "HDMI-A-1",
+                "/dev/dri/card1",
+                "plughw:0",
+                DateTimeOffset.UtcNow));
+        using JsonDocument produced = JsonDocument.Parse(encoded);
+        string[] actual = produced.RootElement.EnumerateObject()
+            .Select(property => property.Name)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.Equal(expected, actual);
+    }
+
+    [Fact]
+    public void ProducedProjectionsMatchTheSharedConsumerContract()
+    {
+        using JsonDocument vectors = LoadPlaybackVectors();
+        HashSet<string> receiverStates = ReadStringSet(vectors, "receiver_states");
+        HashSet<string> videoStates = ReadStringSet(vectors, "video_states");
+        HashSet<string> audioStates = ReadStringSet(vectors, "audio_states");
+
+        foreach (JsonElement vector in vectors.RootElement.GetProperty("projections")
+                     .EnumerateArray())
+        {
+            string name = vector.GetProperty("name").GetString()!;
+            PlaybackStateModel model = new();
+            PlaybackProjection projection = model.Snapshot();
+            foreach (JsonElement step in vector.GetProperty("events").EnumerateArray())
+            {
+                projection = Apply(model, step.GetString()!);
+            }
+
+            Assert.Equal(vector.GetProperty("state").GetString(), projection.State);
+            Assert.Equal(vector.GetProperty("video_state").GetString(), projection.VideoState);
+            Assert.Equal(vector.GetProperty("audio_state").GetString(), projection.AudioState);
+            Assert.True(receiverStates.Contains(projection.State), name);
+            Assert.True(videoStates.Contains(projection.VideoState), name);
+            Assert.True(audioStates.Contains(projection.AudioState), name);
+            Assert.Equal(projection, model.Snapshot());
+        }
+    }
+
+    private static PlaybackProjection Apply(PlaybackStateModel model, string playbackEvent) =>
+        playbackEvent switch
+        {
+            "VideoStarting" => model.VideoStarting(),
+            "WaitingForDiscovery" => model.WaitingForDiscovery("no bus"),
+            "WaitingForHdmi" => model.WaitingForHdmi("no display"),
+            "VideoRetrying" => model.VideoRetrying("retrying"),
+            "UnsupportedFormat" => model.UnsupportedFormat("unsupported"),
+            "VideoRunning" => model.VideoRunning("playing"),
+            "AudioRunning" => model.AudioRunning(),
+            "AudioFailed" => model.AudioFailed("audio unavailable"),
+            "AudioStopped" => model.AudioStopped(),
+            "Stopped" => model.Stopped(),
+            _ => throw new ArgumentException($"Unknown vector event: {playbackEvent}"),
+        };
+
+    private static HashSet<string> ReadStringSet(JsonDocument vectors, string property) =>
+        vectors.RootElement.GetProperty(property)
+            .EnumerateArray()
+            .Select(value => value.GetString()!)
+            .ToHashSet(StringComparer.Ordinal);
+
+    private static JsonDocument LoadPlaybackVectors() =>
+        JsonDocument.Parse(
+            File.ReadAllText(
+                Path.Combine(AppContext.BaseDirectory, "playback-status-vectors.json")));
 }

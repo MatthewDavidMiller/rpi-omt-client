@@ -5,7 +5,6 @@ import pytest
 
 from omt_client.discovery import (
     OmtSourceChoice,
-    choices_from_receiver,
     is_valid_direct_target,
     is_valid_source_name,
     parse_omt_sources,
@@ -23,13 +22,11 @@ def test_discovery_json_is_validated_deduplicated_and_sorted():
         '{"name":"Mismatch","target":"Other"}]'
     )
     assert parse_omt_sources(output) == ["Camera", "Studio"]
-    assert [choice.name for choice in choices_from_receiver(output)] == [
-        "Camera",
-        "Studio",
-    ]
     choice = OmtSourceChoice("Camera")
     assert choice.selection_value == "discovered|Camera"
     assert "OMT discovery" in choice.display_label
+    # Discovered sources carry no address; the templates render this field.
+    assert choice.address == ""
 
 
 @pytest.mark.parametrize(
@@ -51,10 +48,46 @@ def test_direct_target_boundaries(value):
 
 @pytest.mark.parametrize(
     "value",
-    ["host:1", "omt://user@host:1", "omt://host:0", "omt://host:1/path"],
+    [
+        "host:1",
+        "omt://user@host:1",
+        "omt://host:0",
+        "omt://host:1/path",
+        "omt://ho\x00st:1",
+        "omt://host\x7f:1",
+        "omt://cámara.local:6400",
+        f"omt://{'a' * 250}.{'b' * 10}:6400",
+        "omt://" + "a" * 520,
+        "omt://host:99999999999999999999",
+        "",
+    ],
 )
 def test_invalid_direct_targets(value):
     assert not is_valid_direct_target(value)
+
+
+@pytest.mark.parametrize(
+    "output",
+    [
+        None,
+        b'[{"name":"Camera","target":"Camera"}]',
+        '["Camera"]',
+        '[{"name":"Camera"}]',
+        '{"name":"Camera"}',
+        "[" + ",".join(['{"name":"a","target":"a"}'] * 20000) + "]",
+    ],
+)
+def test_discovery_output_is_rejected_unless_it_is_a_bounded_typed_array(output):
+    parsed = parse_omt_sources(output)
+    assert parsed == ([] if not isinstance(output, bytes) else ["Camera"])
+
+
+def test_source_selection_rejects_malformed_prefixed_values():
+    assert parse_source_selection("direct|omt://host") is None
+    assert parse_source_selection("direct|") is None
+    assert parse_source_selection("discovered|") is None
+    assert parse_source_selection("Bare Name") == ("Bare Name", None, "OMT discovery")
+    assert parse_source_selection("bare\nname") is None
 
 
 def test_source_names_require_nfc_bounded_printable_text():
