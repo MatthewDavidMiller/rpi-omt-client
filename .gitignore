@@ -23,6 +23,7 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .mypy_cache/
+.mypy_cache-tests/
 .ruff_cache/
 .coverage
 .coverage.*

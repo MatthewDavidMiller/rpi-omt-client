@@ -89,7 +89,10 @@ if [[ -x "${PYTHON_VENV}/bin/python" ]] && \
     echo "Running mypy..."
     "${PYTHON_VENV}/bin/python" -m mypy
     echo "Running mypy over tests (relaxed)..."
+    # A separate cache: sharing .mypy_cache with the strict pass above makes each
+    # run invalidate the other's module metadata, so neither is ever warm.
     MYPYPATH=src "${PYTHON_VENV}/bin/python" -m mypy \
+        --cache-dir .mypy_cache-tests \
         --check-untyped-defs --allow-untyped-defs --allow-untyped-calls \
         --allow-incomplete-defs --allow-untyped-decorators tests
 else

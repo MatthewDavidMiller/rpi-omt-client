@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import re
-from pathlib import Path
 
 import pytest
+from conftest import REPO_ROOT, build_app, signed_in
 
-from omt_client import create_app
 from omt_client.models import ActionResult
 from omt_client.settings import load_settings
 from omt_client_preview import preview_services
@@ -15,21 +14,12 @@ from omt_client_preview import preview_services
 
 @pytest.fixture
 def factory_app():
-    services = preview_services("factory-password")
-    application = create_app(load_settings({}), services)
-    application.config.update(
-        TESTING=True,
-        WTF_CSRF_ENABLED=False,
-        SESSION_COOKIE_SECURE=False,
-    )
-    return application
+    return build_app(services=preview_services("factory-password"))
 
 
 @pytest.fixture
 def factory_client(factory_app):
-    client = factory_app.test_client()
-    assert client.post("/login", data={"password": "factory-password"}).status_code == 302
-    return client
+    return signed_in(factory_app, "factory-password")
 
 
 def test_factory_stores_explicit_dependencies_and_defers_environment(factory_app):
@@ -205,8 +195,7 @@ def test_security_headers_and_contextual_error_pages(factory_client):
 
 def test_authenticated_csrf_error_uses_operator_error_view():
     services = preview_services("csrf-password")
-    application = create_app(load_settings({}), services)
-    application.config.update(TESTING=True, SESSION_COOKIE_SECURE=False)
+    application = build_app(services=services, WTF_CSRF_ENABLED=True)
     session_id = services.auth.authenticate("csrf-password", None)
     client = application.test_client()
     with client.session_transaction() as browser_session:
@@ -249,37 +238,29 @@ def test_network_save_failure_retains_the_submitted_value(factory_client, factor
 def test_about_renders_the_shipped_legal_texts():
     """The About page is the product's license surface, so it must render the
     real LICENSE and THIRD_PARTY_NOTICES.txt that ship in the image."""
-    root = Path(__file__).resolve().parents[2]
     settings = load_settings(
         {
-            "OMT_PROJECT_LICENSE_FILE": str(root / "LICENSE"),
-            "OMT_THIRD_PARTY_NOTICES_FILE": str(root / "THIRD_PARTY_NOTICES.txt"),
+            "OMT_PROJECT_LICENSE_FILE": str(REPO_ROOT / "LICENSE"),
+            "OMT_THIRD_PARTY_NOTICES_FILE": str(REPO_ROOT / "THIRD_PARTY_NOTICES.txt"),
         }
     )
-    application = create_app(settings, preview_services("about-password"))
-    application.config.update(TESTING=True, WTF_CSRF_ENABLED=False, SESSION_COOKIE_SECURE=False)
-    client = application.test_client()
-    assert client.post("/login", data={"password": "about-password"}).status_code == 302
+    client = signed_in(build_app(settings, preview_services("about-password")), "about-password")
 
     html = client.get("/about").get_data(as_text=True)
-    assert (root / "LICENSE").read_text(encoding="utf-8").strip().splitlines()[0] in html
+    assert (REPO_ROOT / "LICENSE").read_text(encoding="utf-8").strip().splitlines()[0] in html
     assert "unavailable in this image" not in html
 
 
-def test_about_reports_missing_legal_files_without_failing(factory_app):
+def test_about_reports_missing_legal_files_without_failing():
     settings = load_settings({"OMT_PROJECT_LICENSE_FILE": "/nonexistent/LICENSE"})
-    application = create_app(settings, preview_services("legal-password"))
-    application.config.update(TESTING=True, WTF_CSRF_ENABLED=False, SESSION_COOKIE_SECURE=False)
-    client = application.test_client()
-    assert client.post("/login", data={"password": "legal-password"}).status_code == 302
+    client = signed_in(build_app(settings, preview_services("legal-password")), "legal-password")
     response = client.get("/about")
     assert response.status_code == 200
     assert b"Project license is unavailable in this image." in response.data
 
 
 def test_login_rate_limit_remains_context_specific():
-    application = create_app(load_settings({}), preview_services("limit-password"))
-    application.config.update(TESTING=True, WTF_CSRF_ENABLED=False, SESSION_COOKIE_SECURE=False)
+    application = build_app(services=preview_services("limit-password"))
     client = application.test_client()
     for _index in range(5):
         client.post("/login", data={"password": "bad"})
@@ -289,8 +270,7 @@ def test_login_rate_limit_remains_context_specific():
 
 
 def test_unauthenticated_oversized_request_falls_back_to_the_login_view():
-    application = create_app(load_settings({}), preview_services("anon-password"))
-    application.config.update(TESTING=True, WTF_CSRF_ENABLED=False, SESSION_COOKIE_SECURE=False)
+    application = build_app(services=preview_services("anon-password"))
     response = application.test_client().post("/login", data={"password": "x" * (17 * 1024)})
     assert response.status_code == 413
     assert b"Request is too large." in response.data
@@ -316,13 +296,13 @@ def test_expensive_endpoints_honour_their_configured_rate_limit(path, form, limi
     """factory.py attaches these limits by rewriting app.view_functions after
     blueprint registration. Only /login was covered before, so a silent failure
     of that mechanism would have left every costly endpoint unthrottled."""
-    application = create_app(
-        load_settings({limit_setting: f"{limit} per hour"}),
-        preview_services("throttle-password"),
+    client = signed_in(
+        build_app(
+            load_settings({limit_setting: f"{limit} per hour"}),
+            preview_services("throttle-password"),
+        ),
+        "throttle-password",
     )
-    application.config.update(TESTING=True, WTF_CSRF_ENABLED=False, SESSION_COOKIE_SECURE=False)
-    client = application.test_client()
-    assert client.post("/login", data={"password": "throttle-password"}).status_code == 302
 
     for _attempt in range(limit):
         assert client.post(path, data=form).status_code in (200, 202)

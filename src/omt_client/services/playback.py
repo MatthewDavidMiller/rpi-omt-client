@@ -58,6 +58,19 @@ STATUS_FIELDS = frozenset(
         "updated_at",
     }
 )
+# Must stay total over RECEIVER_STATES: playback() indexes this directly, so a
+# receiver state without a row would raise KeyError and 500 the dashboard.
+PUBLIC_STATES: dict[str, tuple[str, str, str]] = {
+    "running": ("playing", "Playing", "success"),
+    "waiting-for-discovery": ("waiting-for-discovery", "Waiting for discovery", "warning"),
+    "waiting-for-hdmi": ("waiting-for-hdmi", "Waiting for HDMI", "warning"),
+    "retrying": ("retrying", "Retrying playback", "warning"),
+    "degraded": ("degraded", "Playback degraded", "warning"),
+    "unsupported-format": ("unsupported-format", "Unsupported video format", "danger"),
+    "starting": ("starting", "Starting playback", "warning"),
+    "stopped": ("stopped", "Playback stopped", "neutral"),
+    "failed": ("failed", "Playback failed", "danger"),
+}
 
 
 def _bounded_utf8(value: object, maximum_bytes: int) -> TypeGuard[str]:
@@ -302,26 +315,7 @@ class RuntimeSourcePlayback:
                 source,
                 address,
             )
-        mapping = {
-            "running": ("playing", "Playing", "success"),
-            "waiting-for-discovery": (
-                "waiting-for-discovery",
-                "Waiting for discovery",
-                "warning",
-            ),
-            "waiting-for-hdmi": ("waiting-for-hdmi", "Waiting for HDMI", "warning"),
-            "retrying": ("retrying", "Retrying playback", "warning"),
-            "degraded": ("degraded", "Playback degraded", "warning"),
-            "unsupported-format": (
-                "unsupported-format",
-                "Unsupported video format",
-                "danger",
-            ),
-            "starting": ("starting", "Starting playback", "warning"),
-            "stopped": ("stopped", "Playback stopped", "neutral"),
-            "failed": ("failed", "Playback failed", "danger"),
-        }
-        public_state, label, tone = mapping[status.state]
+        public_state, label, tone = PUBLIC_STATES[status.state]
         return PlaybackSummary(
             public_state,
             label,

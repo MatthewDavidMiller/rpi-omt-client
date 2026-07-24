@@ -5,10 +5,10 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+from conftest import raises
 from flask import Flask, session
 from werkzeug.security import generate_password_hash
 
@@ -24,6 +24,20 @@ from omt_client.services import (
 )
 from omt_client.services.command import run_command
 from omt_client.settings import load_settings
+
+PASSWORD = "correct"
+# scrypt derivation costs ~85ms; the hash of a constant password is invariant, so
+# deriving it once per session instead of per test keeps the suite fast.
+PASSWORD_HASH = generate_password_hash(PASSWORD)
+
+
+@pytest.fixture
+def request_context():
+    """A minimal request context, so auth tests can drive `flask.session`."""
+    application = Flask(__name__)
+    application.secret_key = "test"
+    with application.test_request_context("/"):
+        yield
 
 
 def settings_for(tmp_path: Path, **overrides: str):
@@ -57,29 +71,24 @@ def command_result(returncode=0, stdout="", stderr="", error=""):
     )
 
 
-def test_persistent_authentication_hash_sessions_rotation_and_revocation(tmp_path):
-    (tmp_path / "flask_secret").write_text("a" * 64, encoding="utf-8")
-    (tmp_path / "web_password").write_text(generate_password_hash("correct"), encoding="utf-8")
-    auth = PersistentAuthentication(settings_for(tmp_path))
+def test_persistent_authentication_hash_sessions_rotation_and_revocation(tmp_path, request_context):
+    auth = _authentication(tmp_path)
     assert auth.authenticate("wrong", None) is None
-    first = auth.authenticate("correct", None)
-    second = auth.authenticate("correct", first)
+    first = auth.authenticate(PASSWORD, None)
+    second = auth.authenticate(PASSWORD, first)
     assert first and second and first != second
-    application = Flask(__name__)
-    application.secret_key = "test"
-    with application.test_request_context("/"):
-        session.update(
-            authenticated=True,
-            session_id=second,
-            password_digest=auth.password_digest,
-        )
-        assert auth.is_current()
-        session["password_digest"] = "bad"
-        assert not auth.is_current()
-        session["password_digest"] = auth.password_digest
-        auth.revoke(second)
-        assert not auth.is_current()
-        auth.revoke(None)
+    session.update(
+        authenticated=True,
+        session_id=second,
+        password_digest=auth.password_digest,
+    )
+    assert auth.is_current()
+    session["password_digest"] = "bad"
+    assert not auth.is_current()
+    session["password_digest"] = auth.password_digest
+    auth.revoke(second)
+    assert not auth.is_current()
+    auth.revoke(None)
 
 
 def test_persistent_authentication_rejects_missing_secret_and_supports_env_password(
@@ -94,31 +103,33 @@ def test_persistent_authentication_rejects_missing_secret_and_supports_env_passw
     assert auth.authenticate("environment-secret", None)
 
 
-def _authentication(tmp_path, password: str = "correct") -> PersistentAuthentication:
+def _authentication(tmp_path) -> PersistentAuthentication:
     (tmp_path / "flask_secret").write_text("a" * 64, encoding="utf-8")
-    (tmp_path / "web_password").write_text(generate_password_hash(password), encoding="utf-8")
+    (tmp_path / "web_password").write_text(PASSWORD_HASH, encoding="utf-8")
     return PersistentAuthentication(settings_for(tmp_path))
 
 
-def test_session_registry_evicts_the_oldest_entries_past_the_cap(tmp_path):
+def test_session_registry_evicts_the_oldest_entries_past_the_cap(
+    tmp_path, monkeypatch, request_context
+):
     """A bounded registry stops an attacker from growing the on-disk session
     file without limit by replaying logins."""
+    # The eviction rule reads the cap off the class, so a small cap exercises the
+    # same code without paying for 72 scrypt verifications.
+    cap = 4
+    monkeypatch.setattr(PersistentAuthentication, "_maximum_sessions", cap)
     auth = _authentication(tmp_path)
-    cap = PersistentAuthentication._maximum_sessions
-    issued = [auth.authenticate("correct", None) for _index in range(cap + 8)]
+    issued = [auth.authenticate(PASSWORD, None) for _index in range(cap + 8)]
     assert all(issued)
     registry = json.loads((tmp_path / "web_sessions.json").read_text(encoding="utf-8"))
     assert registry["version"] == 1
     assert len(registry["sessions"]) == cap
 
-    application = Flask(__name__)
-    application.secret_key = "test"
-    with application.test_request_context("/"):
-        session.update(authenticated=True, password_digest=auth.password_digest)
-        session["session_id"] = issued[-1]
-        assert auth.is_current()
-        session["session_id"] = issued[0]
-        assert not auth.is_current()
+    session.update(authenticated=True, password_digest=auth.password_digest)
+    session["session_id"] = issued[-1]
+    assert auth.is_current()
+    session["session_id"] = issued[0]
+    assert not auth.is_current()
 
 
 @pytest.mark.parametrize(
@@ -134,50 +145,41 @@ def test_session_registry_evicts_the_oldest_entries_past_the_cap(tmp_path):
         '{"version":1,"sessions":{"' + "a" * 64 + '":1e999}}',
     ],
 )
-def test_malformed_session_registry_reads_as_empty(tmp_path, document):
+def test_malformed_session_registry_reads_as_empty(tmp_path, document, request_context):
     auth = _authentication(tmp_path)
     (tmp_path / "web_sessions.json").write_text(document, encoding="utf-8")
-    application = Flask(__name__)
-    application.secret_key = "test"
-    with application.test_request_context("/"):
-        session.update(
-            authenticated=True,
-            session_id="any-session",
-            password_digest=auth.password_digest,
-        )
-        assert not auth.is_current()
-
-
-def test_is_current_requires_authenticated_typed_session_fields(tmp_path):
-    auth = _authentication(tmp_path)
-    session_id = auth.authenticate("correct", None)
-    application = Flask(__name__)
-    application.secret_key = "test"
-    with application.test_request_context("/"):
-        assert not auth.is_current()
-        session.update(authenticated=True, session_id=session_id, password_digest=1)
-        assert not auth.is_current()
-        session.update(password_digest=auth.password_digest, session_id=1)
-        assert not auth.is_current()
-        session["session_id"] = session_id
-        assert auth.is_current()
-
-
-def test_is_current_fails_closed_when_the_registry_lock_is_unusable(tmp_path, monkeypatch):
-    auth = _authentication(tmp_path)
-    session_id = auth.authenticate("correct", None)
-    application = Flask(__name__)
-    application.secret_key = "test"
-    monkeypatch.setattr(
-        os, "open", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("locked"))
+    session.update(
+        authenticated=True,
+        session_id="any-session",
+        password_digest=auth.password_digest,
     )
-    with application.test_request_context("/"):
-        session.update(
-            authenticated=True,
-            session_id=session_id,
-            password_digest=auth.password_digest,
-        )
-        assert not auth.is_current()
+    assert not auth.is_current()
+
+
+def test_is_current_requires_authenticated_typed_session_fields(tmp_path, request_context):
+    auth = _authentication(tmp_path)
+    session_id = auth.authenticate(PASSWORD, None)
+    assert not auth.is_current()
+    session.update(authenticated=True, session_id=session_id, password_digest=1)
+    assert not auth.is_current()
+    session.update(password_digest=auth.password_digest, session_id=1)
+    assert not auth.is_current()
+    session["session_id"] = session_id
+    assert auth.is_current()
+
+
+def test_is_current_fails_closed_when_the_registry_lock_is_unusable(
+    tmp_path, monkeypatch, request_context
+):
+    auth = _authentication(tmp_path)
+    session_id = auth.authenticate(PASSWORD, None)
+    session.update(
+        authenticated=True,
+        session_id=session_id,
+        password_digest=auth.password_digest,
+    )
+    monkeypatch.setattr(os, "open", raises(OSError("locked")))
+    assert not auth.is_current()
 
 
 def test_plaintext_password_file_is_compared_without_hashing(tmp_path):
@@ -204,7 +206,7 @@ def test_missing_password_file_is_a_startup_error(tmp_path):
 
 def test_revoking_an_unknown_session_leaves_the_registry_untouched(tmp_path):
     auth = _authentication(tmp_path)
-    auth.authenticate("correct", None)
+    auth.authenticate(PASSWORD, None)
     registry = tmp_path / "web_sessions.json"
     before = registry.read_bytes()
     auth.revoke("never-issued")
@@ -271,49 +273,6 @@ def test_source_discovery_cache_selection_direct_clear_and_restart(tmp_path, mon
     assert service.clear().ok
     assert service.configuration() == ("", "")
     assert not service.restart().ok
-
-
-@pytest.mark.parametrize(
-    ("runtime_state", "public_state"),
-    [
-        ("running", "playing"),
-        ("waiting-for-hdmi", "waiting-for-hdmi"),
-        ("retrying", "retrying"),
-        ("degraded", "degraded"),
-        ("unsupported-format", "unsupported-format"),
-        ("starting", "starting"),
-        ("stopped", "stopped"),
-        ("failed", "failed"),
-    ],
-)
-def test_playback_status_mapping(tmp_path, monkeypatch, runtime_state, public_state):
-    settings = settings_for(tmp_path)
-    service = RuntimeSourcePlayback(settings)
-    Path(settings.source_target_file).write_text(
-        '{"schema":1,"kind":"discovered","name":"Camera"}\n', encoding="utf-8"
-    )
-    Path(settings.playback_status_file).write_text(
-        json.dumps(
-            {
-                "schema": 1,
-                "state": runtime_state,
-                "video_state": "running" if runtime_state == "degraded" else runtime_state,
-                "audio_state": "failed" if runtime_state == "degraded" else "running",
-                "target": "Camera",
-                "detail": "detail",
-                "connector": "HDMI-A-1",
-                "drm_device": "/dev/dri/card1",
-                "alsa_device": "plughw:0",
-                "updated_at": datetime.now(UTC).isoformat(),
-            }
-        ),
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(
-        "omt_client.services.playback.run_command",
-        lambda *_args: command_result(),
-    )
-    assert service.playback().state == public_state
 
 
 def test_network_read_reports_unsafe_settings_instead_of_raising(tmp_path):
@@ -470,7 +429,7 @@ def test_reboot_request_write_failure_is_reported_with_host_wording(tmp_path, mo
     monkeypatch.setattr(
         HostSystem,
         "_write_request",
-        staticmethod(lambda *_args: (_ for _ in ()).throw(OSError("request file is missing"))),
+        staticmethod(raises(OSError("request file is missing"))),
     )
     outcome = HostSystem(settings).request_reboot()
     assert not outcome.ok
@@ -488,7 +447,7 @@ def test_unreadable_reboot_result_is_not_an_acknowledgement(tmp_path, monkeypatc
 
 def test_production_container_wires_every_runtime_service(tmp_path):
     (tmp_path / "flask_secret").write_text("secret", encoding="utf-8")
-    (tmp_path / "web_password").write_text(generate_password_hash("password"), encoding="utf-8")
+    (tmp_path / "web_password").write_text(PASSWORD_HASH, encoding="utf-8")
     services = production_services(settings_for(tmp_path))
     assert isinstance(services.auth, PersistentAuthentication)
     assert isinstance(services.source, RuntimeSourcePlayback)

@@ -16,13 +16,16 @@ import sys
 from pathlib import Path
 
 import pytest
+from conftest import build_app, raises
 from werkzeug.security import generate_password_hash
 
-from omt_client import create_app
 from omt_client.services import production_services
 from omt_client.settings import load_settings
 
 PASSWORD = "real-service-password"
+# scrypt derivation costs ~85ms; the hash of a constant password is invariant, so
+# deriving it once per session instead of per test keeps the suite fast.
+PASSWORD_HASH = generate_password_hash(PASSWORD)
 
 
 def _stub_command(path: Path, exit_code: int = 0, stdout: str = "") -> str:
@@ -37,7 +40,7 @@ def real_settings(tmp_path: Path):
     (config / "run").mkdir(parents=True)
     (config / "omt").mkdir()
     (config / "flask_secret").write_text("a" * 64, encoding="utf-8")
-    (config / "web_password").write_text(generate_password_hash(PASSWORD), encoding="utf-8")
+    (config / "web_password").write_text(PASSWORD_HASH, encoding="utf-8")
     return load_settings(
         {
             "OMT_CONFIG_DIR": str(config),
@@ -53,13 +56,7 @@ def real_settings(tmp_path: Path):
 
 @pytest.fixture
 def real_app(real_settings):
-    application = create_app(real_settings, production_services(real_settings))
-    application.config.update(
-        TESTING=True,
-        WTF_CSRF_ENABLED=False,
-        SESSION_COOKIE_SECURE=False,
-    )
-    return application
+    return build_app(real_settings, production_services(real_settings))
 
 
 def _login(client, password: str = PASSWORD):
@@ -89,8 +86,7 @@ def test_rotating_the_password_file_invalidates_live_sessions(real_app, real_set
     Path(real_settings.password_file).write_text(
         generate_password_hash("a-different-password"), encoding="utf-8"
     )
-    rotated = create_app(real_settings, production_services(real_settings))
-    rotated.config.update(TESTING=True, WTF_CSRF_ENABLED=False, SESSION_COOKIE_SECURE=False)
+    rotated = build_app(real_settings, production_services(real_settings))
     rotated.secret_key = real_app.secret_key
 
     with rotated.test_client() as stale_client:
@@ -118,16 +114,14 @@ def test_logout_revokes_the_persistent_registry_entry(real_app):
     assert replayed.headers["Location"].endswith("/login")
 
 
-def test_unreadable_session_registry_fails_closed(real_app, real_settings, monkeypatch):
+def test_unreadable_session_registry_fails_closed(real_app, monkeypatch):
     """authenticated() must clear the session and redirect when the registry
     cannot be validated, rather than trusting the cookie."""
     client = real_app.test_client()
     assert _login(client).status_code == 302
 
     auth = real_app.extensions["omt_client.services"].auth
-    monkeypatch.setattr(
-        auth, "is_current", lambda: (_ for _ in ()).throw(OSError("registry unavailable"))
-    )
+    monkeypatch.setattr(auth, "is_current", raises(OSError("registry unavailable")))
     response = client.get("/")
     assert response.status_code == 302
     assert response.headers["Location"].endswith("/login")
@@ -143,8 +137,7 @@ def test_session_registry_is_private_and_survives_a_second_container(real_app, r
     registry = Path(real_settings.config_dir) / "web_sessions.json"
     assert stat.S_IMODE(registry.stat().st_mode) == 0o600
 
-    second = create_app(real_settings, production_services(real_settings))
-    second.config.update(TESTING=True, WTF_CSRF_ENABLED=False, SESSION_COOKIE_SECURE=False)
+    second = build_app(real_settings, production_services(real_settings))
     second.secret_key = real_app.secret_key
     with second.test_client() as other_worker:
         other_worker.set_cookie("session", client.get_cookie("session").value)

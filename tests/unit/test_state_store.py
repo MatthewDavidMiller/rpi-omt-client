@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 
 import pytest
+from conftest import raises
 
 from omt_client.safe_io import ReadStatus, read_bytes, read_text
 from omt_client.state_store import (
@@ -119,9 +120,7 @@ def test_unopenable_lock_and_nonregular_lock_fail_closed(tmp_path, monkeypatch):
         save_source_target(target, SourceTarget("discovered", "Camera"))
     fifo.unlink()
 
-    monkeypatch.setattr(
-        os, "open", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("no descriptors"))
-    )
+    monkeypatch.setattr(os, "open", raises(OSError("no descriptors")))
     with pytest.raises(SourceConfigurationError, match="unable to lock"):
         save_source_target(target, SourceTarget("discovered", "Camera"))
 
@@ -130,7 +129,7 @@ def test_underlying_os_errors_surface_as_configuration_errors(tmp_path, monkeypa
     target = tmp_path / "source_target.json"
     monkeypatch.setattr(
         "omt_client.state_store.atomic_replace",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("disk full")),
+        raises(OSError("disk full")),
     )
     with pytest.raises(SourceConfigurationError, match="disk full"):
         save_source_target(target, SourceTarget("discovered", "Camera"))

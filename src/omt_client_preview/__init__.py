@@ -13,29 +13,13 @@ import hmac
 import io
 import secrets
 import zipfile
-from dataclasses import dataclass
 from typing import Any
 
 from flask import session
 
+from omt_client.discovery import OmtSourceChoice
 from omt_client.models import ActionResult, CommandResult, DiagnosticResult, PlaybackSummary
 from omt_client.services import ServiceContainer
-
-
-@dataclass(frozen=True)
-class PreviewSourceChoice:
-    name: str
-    backend: str = "OMT discovery"
-    address: str = ""
-
-    @property
-    def selection_value(self) -> str:
-        return f"discovered|{self.name}"
-
-    @property
-    def display_label(self) -> str:
-        suffix = f" · {self.backend}"
-        return f"{self.name}{suffix}"
 
 
 class PreviewAuthentication:
@@ -74,15 +58,16 @@ class PreviewSourcePlayback:
         self._source = "STUDIO-PC (OBS Studio)"
         self._address = ""
         self._playing = True
+        # The real discovery type, so the preview renders the production labels.
         self._sources = [
-            PreviewSourceChoice("STUDIO-PC (OBS Studio)"),
-            PreviewSourceChoice("MEDIA-SERVER (Channel 1)"),
-            PreviewSourceChoice("PRODUCER-MAC (OMT Virtual Input)"),
-            PreviewSourceChoice("GRAPHICS-PC (CasparCG)"),
-            PreviewSourceChoice("REMOTE-CAMERA"),
+            OmtSourceChoice("STUDIO-PC (OBS Studio)"),
+            OmtSourceChoice("MEDIA-SERVER (Channel 1)"),
+            OmtSourceChoice("PRODUCER-MAC (OMT Virtual Input)"),
+            OmtSourceChoice("GRAPHICS-PC (CasparCG)"),
+            OmtSourceChoice("REMOTE-CAMERA"),
         ]
 
-    def sources(self) -> list[PreviewSourceChoice]:
+    def sources(self) -> list[OmtSourceChoice]:
         return list(self._sources)
 
     def configuration(self) -> tuple[str, str]:

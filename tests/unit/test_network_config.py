@@ -10,6 +10,15 @@ from omt_client.network_config import (
     update_network_configuration_xml,
 )
 
+# The read and update paths validate independently; both must reject these, so a
+# case added here can never be covered on only one side.
+MALFORMED_DOCUMENTS = (
+    b"<Wrong />",
+    b"<Settings><DiscoveryServer>a</DiscoveryServer>"
+    b"<DiscoveryServer>b</DiscoveryServer></Settings>",
+    b"<Settings>",
+)
+
 
 def test_network_configuration_round_trip_preserves_unmanaged_nodes():
     document = b"<Settings><Keep value='yes' /></Settings>"
@@ -61,18 +70,15 @@ def test_non_text_discovery_server_is_rejected():
         normalize_discovery_server(cast(str, None))
 
 
-def test_update_rejects_the_same_documents_as_read():
+@pytest.mark.parametrize("document", MALFORMED_DOCUMENTS)
+def test_update_rejects_the_same_documents_as_read(document):
     """update_network_configuration_xml re-validates independently of the read
     path, so an unsafe stored document cannot be silently rewritten."""
-    for value in (
-        b"<Wrong />",
-        b"<Settings><DiscoveryServer>a</DiscoveryServer>"
-        b"<DiscoveryServer>b</DiscoveryServer></Settings>",
-        b"<Settings>",
-    ):
-        with pytest.raises(OmtNetworkConfigurationError):
-            update_network_configuration_xml(value, "192.0.2.1")
+    with pytest.raises(OmtNetworkConfigurationError):
+        update_network_configuration_xml(document, "192.0.2.1")
 
+
+def test_update_rejects_an_invalid_server_for_a_valid_document():
     with pytest.raises(OmtNetworkConfigurationError):
         update_network_configuration_xml(empty_settings_xml(), "bad host")
 
@@ -84,12 +90,11 @@ def test_clearing_the_discovery_server_round_trips_to_empty():
     assert network_configuration_from_xml(cleared)["error"] == ""
 
 
-def test_xml_rejects_wrong_root_duplicates_and_malformed_values():
+def test_an_empty_settings_document_reads_as_unconfigured():
     assert network_configuration_from_xml(empty_settings_xml())["discovery_server"] == ""
-    for value in (
-        b"<Wrong />",
-        b"<Settings><DiscoveryServer>a</DiscoveryServer><DiscoveryServer>b</DiscoveryServer></Settings>",
-        b"<Settings>",
-    ):
-        with pytest.raises(OmtNetworkConfigurationError):
-            network_configuration_from_xml(value)
+
+
+@pytest.mark.parametrize("document", MALFORMED_DOCUMENTS)
+def test_read_rejects_wrong_root_duplicates_and_malformed_values(document):
+    with pytest.raises(OmtNetworkConfigurationError):
+        network_configuration_from_xml(document)

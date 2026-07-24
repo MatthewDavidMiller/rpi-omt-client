@@ -7,10 +7,12 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
+from conftest import REPO_ROOT, raises
 
 from omt_client.models import CommandResult
 from omt_client.services.playback import (
     AUDIO_STATES,
+    PUBLIC_STATES,
     RECEIVER_STATES,
     STATUS_FIELDS,
     VIDEO_STATES,
@@ -21,9 +23,7 @@ from omt_client.settings import load_settings
 from omt_client.state_store import SourceConfigurationError
 
 VECTORS = json.loads(
-    (Path(__file__).resolve().parents[1] / "schema" / "playback-status-vectors.json").read_text(
-        encoding="utf-8"
-    )
+    (REPO_ROOT / "tests" / "schema" / "playback-status-vectors.json").read_text(encoding="utf-8")
 )
 
 
@@ -70,6 +70,9 @@ def test_consumer_accept_lists_match_the_shared_receiver_contract():
     assert VIDEO_STATES == set(VECTORS["video_states"])
     assert AUDIO_STATES == set(VECTORS["audio_states"])
     assert _status_document()["schema"] == VECTORS["schema"]
+    # playback() indexes PUBLIC_STATES directly. Only states with a projection row
+    # are exercised end to end, so totality has to be asserted rather than sampled.
+    assert set(PUBLIC_STATES) == RECEIVER_STATES
 
 
 @pytest.mark.parametrize("vector", VECTORS["projections"], ids=lambda case: case["name"])
@@ -232,7 +235,7 @@ def test_stop_and_persistence_failures_retain_or_report_state(tmp_path: Path, mo
     )
     monkeypatch.setattr(
         "omt_client.services.playback.save_source_target",
-        lambda *_args: (_ for _ in ()).throw(SourceConfigurationError("disk failed")),
+        raises(SourceConfigurationError("disk failed")),
     )
     assert "could not be cleared" in service.clear().error
     assert "disk failed" in service.select("discovered|Camera").error

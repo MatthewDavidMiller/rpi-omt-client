@@ -1,7 +1,7 @@
 import json
-from pathlib import Path
 
 import pytest
+from conftest import REPO_ROOT
 
 from omt_client.discovery import (
     OmtSourceChoice,
@@ -11,7 +11,7 @@ from omt_client.discovery import (
     parse_source_selection,
 )
 
-VECTORS = Path(__file__).resolve().parents[1] / "schema" / "omt-target-vectors.json"
+VECTORS = REPO_ROOT / "tests" / "schema" / "omt-target-vectors.json"
 
 
 def test_discovery_json_is_validated_deduplicated_and_sorted():
@@ -47,39 +47,19 @@ def test_direct_target_boundaries(value):
 
 
 @pytest.mark.parametrize(
-    "value",
+    ("output", "expected"),
     [
-        "host:1",
-        "omt://user@host:1",
-        "omt://host:0",
-        "omt://host:1/path",
-        "omt://ho\x00st:1",
-        "omt://host\x7f:1",
-        "omt://cámara.local:6400",
-        f"omt://{'a' * 250}.{'b' * 10}:6400",
-        "omt://" + "a" * 520,
-        "omt://host:99999999999999999999",
-        "",
+        (None, []),
+        (b'[{"name":"Camera","target":"Camera"}]', ["Camera"]),
+        ('["Camera"]', []),
+        ('[{"name":"Camera"}]', []),
+        ('{"name":"Camera"}', []),
+        ("[" + ",".join(['{"name":"a","target":"a"}'] * 20000) + "]", []),
     ],
+    ids=["none", "bytes", "bare-strings", "missing-target", "not-an-array", "oversized"],
 )
-def test_invalid_direct_targets(value):
-    assert not is_valid_direct_target(value)
-
-
-@pytest.mark.parametrize(
-    "output",
-    [
-        None,
-        b'[{"name":"Camera","target":"Camera"}]',
-        '["Camera"]',
-        '[{"name":"Camera"}]',
-        '{"name":"Camera"}',
-        "[" + ",".join(['{"name":"a","target":"a"}'] * 20000) + "]",
-    ],
-)
-def test_discovery_output_is_rejected_unless_it_is_a_bounded_typed_array(output):
-    parsed = parse_omt_sources(output)
-    assert parsed == ([] if not isinstance(output, bytes) else ["Camera"])
+def test_discovery_output_must_be_a_bounded_typed_array(output, expected):
+    assert parse_omt_sources(output) == expected
 
 
 def test_source_selection_rejects_malformed_prefixed_values():

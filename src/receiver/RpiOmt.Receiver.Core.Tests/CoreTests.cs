@@ -90,9 +90,7 @@ public sealed class CoreTests
     [Fact]
     public void SharedValidationVectorsAreEnforced()
     {
-        using JsonDocument document = JsonDocument.Parse(
-            File.ReadAllText(
-                Path.Combine(AppContext.BaseDirectory, "omt-target-vectors.json")));
+        using JsonDocument document = LoadVectors("omt-target-vectors.json");
         foreach (JsonElement vector in document.RootElement.GetProperty("source_names")
                      .EnumerateArray())
         {
@@ -236,7 +234,7 @@ public sealed class CoreTests
         // src/omt_client/services/playback.py requires set(document) == STATUS_FIELDS
         // exactly. A field added or renamed here alone would make Python reject every
         // status record and pin the dashboard to "Playback status stale".
-        using JsonDocument vectors = LoadPlaybackVectors();
+        using JsonDocument vectors = LoadVectors("playback-status-vectors.json");
         string[] expected = vectors.RootElement.GetProperty("fields")
             .EnumerateArray()
             .Select(field => field.GetString()!)
@@ -267,15 +265,11 @@ public sealed class CoreTests
     [Fact]
     public void ProducedProjectionsMatchTheSharedConsumerContract()
     {
-        using JsonDocument vectors = LoadPlaybackVectors();
-        HashSet<string> receiverStates = ReadStringSet(vectors, "receiver_states");
-        HashSet<string> videoStates = ReadStringSet(vectors, "video_states");
-        HashSet<string> audioStates = ReadStringSet(vectors, "audio_states");
+        using JsonDocument vectors = LoadVectors("playback-status-vectors.json");
 
         foreach (JsonElement vector in vectors.RootElement.GetProperty("projections")
                      .EnumerateArray())
         {
-            string name = vector.GetProperty("name").GetString()!;
             PlaybackStateModel model = new();
             PlaybackProjection projection = model.Snapshot();
             foreach (JsonElement step in vector.GetProperty("events").EnumerateArray())
@@ -286,9 +280,6 @@ public sealed class CoreTests
             Assert.Equal(vector.GetProperty("state").GetString(), projection.State);
             Assert.Equal(vector.GetProperty("video_state").GetString(), projection.VideoState);
             Assert.Equal(vector.GetProperty("audio_state").GetString(), projection.AudioState);
-            Assert.True(receiverStates.Contains(projection.State), name);
-            Assert.True(videoStates.Contains(projection.VideoState), name);
-            Assert.True(audioStates.Contains(projection.AudioState), name);
             Assert.Equal(projection, model.Snapshot());
         }
     }
@@ -309,14 +300,7 @@ public sealed class CoreTests
             _ => throw new ArgumentException($"Unknown vector event: {playbackEvent}"),
         };
 
-    private static HashSet<string> ReadStringSet(JsonDocument vectors, string property) =>
-        vectors.RootElement.GetProperty(property)
-            .EnumerateArray()
-            .Select(value => value.GetString()!)
-            .ToHashSet(StringComparer.Ordinal);
-
-    private static JsonDocument LoadPlaybackVectors() =>
+    private static JsonDocument LoadVectors(string fileName) =>
         JsonDocument.Parse(
-            File.ReadAllText(
-                Path.Combine(AppContext.BaseDirectory, "playback-status-vectors.json")));
+            File.ReadAllText(Path.Combine(AppContext.BaseDirectory, fileName)));
 }
