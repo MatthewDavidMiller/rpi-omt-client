@@ -7,7 +7,7 @@
     <div>
         <p class="eyebrow">Playback state</p>
         <h2 id="playback-heading">{{ playback.label }}</h2>
-        <p>{{ playback.detail }}</p>
+        <p class="detail">{{ playback.detail }}</p>
     </div>
     <span class="state-token">{{ playback.state }}</span>
 </section>
@@ -35,27 +35,32 @@
 
     <section class="card" aria-labelledby="selection-heading">
         <h2 id="selection-heading">Source selection</h2>
-        <form method="POST" action="{{ url_for('dashboard.select_source') }}">
+        {# The Play button lives outside its form so it can share a button row
+           with Refresh; forms cannot nest, so it is associated by id. #}
+        <form id="select-source-form" method="POST" action="{{ url_for('dashboard.select_source') }}">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <label for="source">Available source</label>
-            <select id="source" name="source" required>
-                <option value="">Select a source</option>
-                {% for src in sources %}
-                {% set source_value = src.selection_value if src.selection_value is defined else src %}
-                {% set source_name = src.name if src.name is defined else src %}
-                <option value="{{ source_value }}" {{ "selected" if source_name == current_source else "" }}>{{ src.display_label if src.display_label is defined else src }}</option>
-                {% endfor %}
-            </select>
-            <div class="button-row">
-                <button type="submit" class="button">Play selected source</button>
+            <div class="field">
+                <label for="source">Available source</label>
+                <select id="source" name="source" required>
+                    <option value="">Select a source</option>
+                    {% for src in sources %}
+                    {% set source_value = src.selection_value if src.selection_value is defined else src %}
+                    {% set source_name = src.name if src.name is defined else src %}
+                    <option value="{{ source_value }}" {{ "selected" if source_name == current_source else "" }}>{{ src.display_label if src.display_label is defined else src }}</option>
+                    {% endfor %}
+                </select>
             </div>
         </form>
-        <form method="POST" action="{{ url_for('dashboard.refresh_sources') }}">
+        <form id="refresh-sources-form" method="POST" action="{{ url_for('dashboard.refresh_sources') }}">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <button type="submit" class="button button-secondary">Refresh sources</button>
         </form>
+        <div class="button-row">
+            <button type="submit" form="select-source-form" class="button">Play selected source</button>
+            <button type="submit" form="refresh-sources-form" class="button button-secondary">Refresh sources</button>
+        </div>
         {% if sources %}
-        <ul class="badge-list" aria-label="Discovery backends">
+        <h3 id="discovered-heading">Discovered sources</h3>
+        <ul class="source-list" aria-labelledby="discovered-heading">
             {% for src in sources %}
             <li><span class="badge">{{ src.backend if src.backend is defined else "OMT discovery" }}</span> {{ src.name if src.name is defined else src }}</li>
             {% endfor %}

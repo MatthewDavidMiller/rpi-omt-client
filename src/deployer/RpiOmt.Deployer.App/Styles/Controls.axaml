@@ -1,0 +1,98 @@
+<Styles xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <!-- Shared control styling. Views only carry layout and bindings. -->
+  <Style Selector="Border.panel">
+    <Setter Property="Background" Value="{DynamicResource AppSurfaceBrush}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource AppBorderBrush}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CornerRadius" Value="{StaticResource AppCornerRadius}" />
+    <Setter Property="Padding" Value="{StaticResource AppPanelPadding}" />
+  </Style>
+
+  <Style Selector="Border.console">
+    <Setter Property="Background" Value="{DynamicResource ConsoleBackgroundBrush}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource AppBorderBrush}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CornerRadius" Value="{StaticResource AppCornerRadiusSmall}" />
+    <Setter Property="Padding" Value="8" />
+  </Style>
+
+  <Style Selector="Border.infobar">
+    <Setter Property="Background" Value="{DynamicResource AppDangerSoftBrush}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource AppDangerBrush}" />
+    <Setter Property="BorderThickness" Value="1,1,1,1" />
+    <Setter Property="CornerRadius" Value="{StaticResource AppCornerRadiusSmall}" />
+    <Setter Property="Padding" Value="10,8" />
+  </Style>
+
+  <Style Selector="Border.chip">
+    <Setter Property="Background" Value="{DynamicResource AppSurfaceAltBrush}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource AppBorderBrush}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CornerRadius" Value="999" />
+    <Setter Property="Padding" Value="10,3" />
+    <Setter Property="VerticalAlignment" Value="Center" />
+  </Style>
+
+  <Style Selector="TextBlock.section-title">
+    <Setter Property="FontWeight" Value="SemiBold" />
+    <Setter Property="Margin" Value="0,0,0,8" />
+  </Style>
+
+  <Style Selector="TextBlock.caption">
+    <Setter Property="Foreground" Value="{DynamicResource AppMutedBrush}" />
+    <Setter Property="FontSize" Value="12" />
+  </Style>
+
+  <Style Selector="TextBlock.title">
+    <Setter Property="FontSize" Value="22" />
+    <Setter Property="FontWeight" Value="SemiBold" />
+  </Style>
+
+  <Style Selector="TextBlock.field-label">
+    <Setter Property="VerticalAlignment" Value="Center" />
+    <Setter Property="Foreground" Value="{DynamicResource AppMutedBrush}" />
+  </Style>
+
+  <Style Selector="TextBox">
+    <Setter Property="MinWidth" Value="150" />
+    <Setter Property="CornerRadius" Value="{StaticResource AppCornerRadiusSmall}" />
+  </Style>
+
+  <Style Selector="Button.action">
+    <Setter Property="MinWidth" Value="130" />
+    <Setter Property="MinHeight" Value="34" />
+    <Setter Property="CornerRadius" Value="{StaticResource AppCornerRadiusSmall}" />
+  </Style>
+
+  <Style Selector="Button.primary">
+    <Setter Property="Background" Value="{DynamicResource AppAccentBrush}" />
+    <Setter Property="Foreground" Value="{DynamicResource AppSurfaceBrush}" />
+    <Setter Property="FontWeight" Value="SemiBold" />
+  </Style>
+
+  <Style Selector="Button.primary:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource AppAccentBrush}" />
+    <Setter Property="Foreground" Value="{DynamicResource AppSurfaceBrush}" />
+    <Setter Property="Opacity" Value="0.9" />
+  </Style>
+
+  <Style Selector="TextBlock.log">
+    <Setter Property="Foreground" Value="{DynamicResource LogInfoBrush}" />
+    <Setter Property="FontFamily" Value="{StaticResource AppMonoFontFamily}" />
+    <Setter Property="TextWrapping" Value="Wrap" />
+  </Style>
+
+  <Style Selector="TextBlock.log.warning">
+    <Setter Property="Foreground" Value="{DynamicResource LogWarningBrush}" />
+  </Style>
+
+  <Style Selector="TextBlock.log.error">
+    <Setter Property="Foreground" Value="{DynamicResource LogErrorBrush}" />
+  </Style>
+
+  <Style Selector="GridSplitter.section-splitter">
+    <Setter Property="Background" Value="{DynamicResource AppBorderBrush}" />
+    <Setter Property="Cursor" Value="SizeNorthSouth" />
+  </Style>
+</Styles>

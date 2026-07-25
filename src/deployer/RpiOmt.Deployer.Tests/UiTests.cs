@@ -3,6 +3,7 @@ using Avalonia.Controls;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Avalonia.LogicalTree;
+using Avalonia.Styling;
 using RpiOmt.Deployer.App;
 using RpiOmt.Deployer.App.ViewModels;
 using RpiOmt.Deployer.App.Views;
@@ -52,6 +53,16 @@ public sealed class AvaloniaUiTests
 
         Assert.False(window.FindControl<Button>("CancelButton")!.IsEffectivelyEnabled);
         Assert.StartsWith("Idle", viewModel.Activity, StringComparison.Ordinal);
+
+        // Feedback surfaces stay out of the way until they have something to say.
+        Assert.False(window.FindControl<Border>("ValidationInfoBar")!.IsVisible);
+        var progress = window.GetLogicalDescendants().OfType<ProgressBar>().Single();
+        Assert.False(progress.IsVisible);
+        Assert.True(progress.IsIndeterminate);
+
+        viewModel.DeployCommand.Execute(null);
+        Assert.NotEmpty(viewModel.ValidationMessage);
+        Assert.True(window.FindControl<Border>("ValidationInfoBar")!.IsVisible);
         window.Close();
     }
 
@@ -84,7 +95,9 @@ public sealed class AvaloniaUiTests
         operations.Report(new ProgressEventArgs("Installing", stage: "installer", cancellable: false));
         Assert.False(viewModel.CanCancel);
         Assert.False(viewModel.RequestWindowClose());
-        Assert.Contains(viewModel.ActivityLog, line => line.Message.Contains("close is disabled", StringComparison.Ordinal));
+        var warning = Assert.Single(viewModel.ActivityLog, line => line.Message.Contains("close is disabled", StringComparison.Ordinal));
+        Assert.True(warning.IsWarning);
+        Assert.False(warning.IsError);
         operations.Release.TrySetResult();
         await WaitUntilAsync(() => !viewModel.IsBusy);
     }
@@ -111,8 +124,14 @@ public sealed class AvaloniaUiTests
         using var viewModel = new MainViewModel(operations, "/missing");
         viewModel.DeployCommand.Execute(null);
         Assert.NotEmpty(viewModel.ValidationMessage);
-        viewModel.IsDark = true;
-        Assert.True(viewModel.IsDark);
+        Assert.Equal([AppTheme.System, AppTheme.Light, AppTheme.Dark], viewModel.ThemeOptions);
+        Assert.Equal(AppTheme.System, viewModel.Theme);
+        viewModel.Theme = AppTheme.Dark;
+        Assert.Equal(ThemeVariant.Dark, Application.Current!.RequestedThemeVariant);
+        viewModel.Theme = AppTheme.Light;
+        Assert.Equal(ThemeVariant.Light, Application.Current.RequestedThemeVariant);
+        viewModel.Theme = AppTheme.System;
+        Assert.Equal(ThemeVariant.Default, Application.Current.RequestedThemeVariant);
         using var valid = ValidViewModel(operations);
         operations.ProgressCount = 5005;
         valid.TestConnectionCommand.Execute(null);

@@ -5,49 +5,59 @@
 <h1>Diagnostics</h1>
 <p class="page-intro">Run bounded checks or download a support bundle without changing network configuration.</p>
 
-<section class="card" aria-labelledby="overview-heading">
-    <h2 id="overview-heading">Runtime overview</h2>
-    <dl class="details-list">
-        <dt>Version</dt><dd>{{ app_version }}</dd>
-        <dt>Current source</dt><dd>{{ current_source if current_source else "Not configured" }}</dd>
-        <dt>Direct address</dt><dd>{{ current_source_url_address if current_source_url_address else "Discovery" }}</dd>
-        <dt>Controller status</dt><dd><code>{{ omt_status }}</code></dd>
-    </dl>
-    <div class="button-row">
-        <form method="POST" action="{{ url_for('diagnostics.discovery_check') }}">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <button type="submit" class="button">Run discovery check</button>
-        </form>
-        <form method="POST" action="{{ url_for('diagnostics.runtime_check') }}">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <button type="submit" class="button button-secondary">Run runtime check</button>
-        </form>
-    </div>
-</section>
+<div class="content-grid">
+    <section class="card" aria-labelledby="overview-heading">
+        <h2 id="overview-heading">Runtime overview</h2>
+        <dl class="details-list">
+            <dt>Version</dt><dd>{{ app_version }}</dd>
+            <dt>Current source</dt><dd>{{ current_source if current_source else "Not configured" }}</dd>
+            <dt>Direct address</dt><dd>{{ current_source_url_address if current_source_url_address else "Discovery" }}</dd>
+            <dt>Controller status</dt><dd><code>{{ omt_status }}</code></dd>
+        </dl>
+        <div class="button-row">
+            <form method="POST" action="{{ url_for('diagnostics.discovery_check') }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="button">Run discovery check</button>
+            </form>
+            <form method="POST" action="{{ url_for('diagnostics.runtime_check') }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="button button-secondary">Run runtime check</button>
+            </form>
+        </div>
+    </section>
 
-<section class="card" aria-labelledby="direct-check-heading">
-    <h2 id="direct-check-heading">Direct-connect check</h2>
-    <form method="POST" action="{{ url_for('diagnostics.direct_check') }}">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <label for="direct_address">OMT target</label>
-        <input id="direct_address" name="direct_address" type="text" inputmode="url" value="{{ current_source_url_address }}" placeholder="omt://192.168.1.50:6400" required>
-        <button type="submit" class="button button-secondary">Test direct connect</button>
-    </form>
-</section>
+    <section class="card" aria-labelledby="direct-check-heading">
+        <h2 id="direct-check-heading">Direct-connect check</h2>
+        <form method="POST" action="{{ url_for('diagnostics.direct_check') }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div class="field">
+                <label for="direct_address">OMT target</label>
+                <input id="direct_address" name="direct_address" type="text" inputmode="url"
+                       aria-describedby="direct_address_help"
+                       value="{{ current_source_url_address }}" placeholder="omt://192.168.1.50:6400" required>
+                <p class="field-help" id="direct_address_help">The check is read-only and never changes the configured source.</p>
+            </div>
+            <button type="submit" class="button button-secondary">Test direct connect</button>
+        </form>
+    </section>
 
-<section class="card" aria-labelledby="bundle-heading">
-    <h2 id="bundle-heading">Support bundle</h2>
-    <p class="notice notice-warning"><strong>Privacy warning:</strong> The bundle includes appliance and host diagnostics that may reveal source names, addresses, and network configuration.</p>
-    <form method="POST" action="{{ url_for('diagnostics.download_bundle') }}">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <label class="checkbox-label" for="include_packet_capture">
-            <input id="include_packet_capture" name="include_packet_capture" type="checkbox" value="1">
-            Include raw packet capture
-        </label>
-        <p class="field-help">Raw traffic is off by default and may contain sensitive payload data.</p>
-        <button type="submit" class="button button-danger">Download diagnostic bundle</button>
-    </form>
-</section>
+    <section class="card" aria-labelledby="bundle-heading">
+        <h2 id="bundle-heading">Support bundle</h2>
+        <p class="notice notice-warning"><strong>Privacy warning:</strong> The bundle includes appliance and host diagnostics that may reveal source names, addresses, and network configuration.</p>
+        <form method="POST" action="{{ url_for('diagnostics.download_bundle') }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div class="field">
+                <label class="checkbox-label" for="include_packet_capture">
+                    <input id="include_packet_capture" name="include_packet_capture" type="checkbox" value="1"
+                           aria-describedby="include_packet_capture_help">
+                    Include raw packet capture
+                </label>
+                <p class="field-help" id="include_packet_capture_help">Raw traffic is off by default and may contain sensitive payload data.</p>
+            </div>
+            <button type="submit" class="button button-danger">Download diagnostic bundle</button>
+        </form>
+    </section>
+</div>
 
 {% if result %}
 <section class="card" aria-labelledby="result-heading">
@@ -61,7 +71,7 @@
     </dl>
     {% if result.command.sources %}
     <h3>Sources</h3>
-    <ul>{% for source in result.command.sources %}<li>{{ source }}</li>{% endfor %}</ul>
+    <ul class="source-list">{% for source in result.command.sources %}<li>{{ source }}</li>{% endfor %}</ul>
     {% endif %}
     <h3>Standard output</h3>
     <pre class="diagnostic-output">{{ result.command.stdout if result.command.stdout else "<empty>" }}</pre>

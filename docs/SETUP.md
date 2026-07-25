@@ -20,7 +20,10 @@ Run `dist/rpi-omt-client-deployer-windows-x64.exe` on Windows 10/11 with
 Docker Desktop, OpenSSH host trust, Pi SSH credentials, and this source tree.
 The Deploy tab builds/uploads; Manage reads status/logs or restarts; Wi-Fi
 updates NetworkManager; About displays version, copyright, license, and
-third-party notices.
+third-party notices. The theme selector in the title row offers System (the
+default, which follows Windows), Light, and Dark. While an action runs, the
+activity row shows the state chip and an indeterminate progress bar; validation
+problems appear in the message bar above it.
 
 ## CLI deployment
 

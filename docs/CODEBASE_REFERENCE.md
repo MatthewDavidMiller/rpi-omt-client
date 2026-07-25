@@ -17,6 +17,7 @@
 | Discovery and URI validation | `src/omt_client/discovery.py` |
 | OMT XML settings | `src/omt_client/network_config.py` |
 | Templates and CSS | `src/omt_client/templates/`, `src/omt_client/static/` |
+| Web design tokens and layout | `src/omt_client/static/style.css`, `src/omt_client/static/favicon.svg` |
 | Dev-only preview fakes | `src/omt_client_preview/` |
 | Shell process lifecycle | `deploy/container/runtime-lib.sh`, `deploy/container/start-omt.sh`, `deploy/container/control-omt.sh`, `deploy/container/entrypoint.sh` |
 | Container | `deploy/Dockerfile`, `deploy/compose.yml` |
@@ -58,6 +59,7 @@ are POST and CSRF protected.
 | Windows deployment facade | `src/deployer/RpiOmt.Deployer.Core/DeploymentOperations.cs` |
 | Windows view models | `src/deployer/RpiOmt.Deployer.App/ViewModels/MainViewModel.cs`, `src/deployer/RpiOmt.Deployer.App/ViewModels/SectionViewModels.cs` |
 | Windows About UI | `src/deployer/RpiOmt.Deployer.App/BuildInformation.cs`, `src/deployer/RpiOmt.Deployer.App/Views/MainWindow.axaml` |
+| Windows theme and control styles | `src/deployer/RpiOmt.Deployer.App/App.axaml`, `src/deployer/RpiOmt.Deployer.App/Styles/Tokens.axaml`, `src/deployer/RpiOmt.Deployer.App/Styles/Controls.axaml` |
 
 ## Legal and release
 

@@ -4,19 +4,27 @@ using System.Runtime.CompilerServices;
 using Avalonia;
 using Avalonia.Styling;
 using Avalonia.Threading;
-using Avalonia.Media;
 using RpiOmt.Deployer.Core;
 
 namespace RpiOmt.Deployer.App.ViewModels;
 
+/// <summary>Theme selection offered in the title bar. <see cref="AppTheme.System"/>
+/// leaves the variant at <see cref="ThemeVariant.Default"/> so the window follows the
+/// operating system.</summary>
+public enum AppTheme
+{
+    System,
+    Light,
+    Dark,
+}
+
+/// <remarks>The level is exposed as booleans rather than a brush so the activity log
+/// is coloured by the theme dictionaries and stays readable in light mode.</remarks>
 public sealed record LogLine(string Message, string Level)
 {
-    public IBrush Color => Brush.Parse(Level switch
-    {
-        "warning" => "#F1BD61",
-        "error" => "#FF8A8A",
-        _ => "#E5E7EB",
-    });
+    public bool IsWarning => Level == "warning";
+
+    public bool IsError => Level == "error";
 }
 
 public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
@@ -25,7 +33,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     private readonly IDeploymentOperations _operations;
     private CancellationTokenSource? _cancellation;
     private bool _closeAfterAction;
-    private bool _isDark;
+    private AppTheme _theme = AppTheme.System;
     private readonly string _appVersion = BuildInformation.Version;
     private readonly string _copyrightNotice = BuildInformation.Copyright;
     private readonly string _projectLicense = BuildInformation.ProjectLicense;
@@ -153,19 +161,26 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
     public string ValidationMessage { get => OperationState.ValidationMessage; private set => SetSection(OperationState.ValidationMessage, value, newValue => OperationState.ValidationMessage = newValue); }
 
-    public bool IsDark
+    public IReadOnlyList<AppTheme> ThemeOptions { get; } = [AppTheme.System, AppTheme.Light, AppTheme.Dark];
+
+    public AppTheme Theme
     {
-        get => _isDark;
+        get => _theme;
         set
         {
-            if (!Set(ref _isDark, value))
+            if (!Set(ref _theme, value))
             {
                 return;
             }
 
             if (Application.Current is not null)
             {
-                Application.Current.RequestedThemeVariant = value ? ThemeVariant.Dark : ThemeVariant.Light;
+                Application.Current.RequestedThemeVariant = value switch
+                {
+                    AppTheme.Light => ThemeVariant.Light,
+                    AppTheme.Dark => ThemeVariant.Dark,
+                    _ => ThemeVariant.Default,
+                };
             }
         }
     }

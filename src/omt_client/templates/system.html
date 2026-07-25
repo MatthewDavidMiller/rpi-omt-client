@@ -6,6 +6,8 @@
     <p class="eyebrow">Danger zone</p>
     <h2 id="reboot-heading">Reboot operating system</h2>
     <p>Rebooting stops playback and disconnects this Web GUI until the Raspberry Pi starts again.</p>
-    <a class="button button-danger" href="{{ url_for('system.confirm_reboot') }}">Reboot OS…</a>
+    <div class="button-row">
+        <a class="button button-danger" href="{{ url_for('system.confirm_reboot') }}">Reboot OS…</a>
+    </div>
 </section>
 {% endblock %}

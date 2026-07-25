@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Login — {{ hostname }} OMT Client{% endblock %}
+{% block page_class %} page-center{% endblock %}
 {% block content %}
 <h1>Log in</h1>
 <section class="card login-card" aria-labelledby="login-heading">
@@ -12,8 +13,10 @@
        request.endpoint is None. #}
     <form method="POST" action="{{ url_for('auth.login') }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <label for="password">Password</label>
-        <input type="password" id="password" name="password" autocomplete="current-password" required autofocus>
+        <div class="field">
+            <label for="password">Password</label>
+            <input type="password" id="password" name="password" autocomplete="current-password" required autofocus>
+        </div>
         <button type="submit" class="button">Log in</button>
     </form>
 </section>

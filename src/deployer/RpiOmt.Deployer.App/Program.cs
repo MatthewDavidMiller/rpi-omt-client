@@ -36,10 +36,10 @@ internal static class Program
             var tabs = window.GetLogicalDescendants().OfType<TabItem>()
                 .Select(tab => tab.Header?.ToString())
                 .ToArray();
-            var requiredTabs = new[] { "Deploy", "Manage", "Wi-Fi" };
+            var requiredTabs = new[] { "Deploy", "Manage", "Wi-Fi", "About" };
             if (!requiredTabs.SequenceEqual(tabs, StringComparer.Ordinal))
             {
-                throw new InvalidOperationException("The Deploy, Manage, and Wi-Fi tabs were not constructed.");
+                throw new InvalidOperationException("The Deploy, Manage, Wi-Fi, and About tabs were not constructed.");
             }
 
             var cancel = window.FindControl<Button>("CancelButton");

@@ -1,5 +1,13 @@
 # Operations
 
+## Web GUI layout
+
+Every page shares a sticky header holding the hostname, the primary navigation
+(Dashboard, Network Settings, Diagnostics, System, About), and Log out. The
+layout is fluid: cards reflow into one column on phone-width screens and use
+the full width of large monitors, and the palette follows the browser's light
+or dark preference.
+
 ## Playback
 
 Dashboard lists OMT names returned by the native receiver. Selecting a source
