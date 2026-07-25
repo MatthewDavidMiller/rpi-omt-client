@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
 from pathlib import Path
 
 import pytest
@@ -245,21 +244,15 @@ def test_revoking_an_unknown_session_leaves_the_registry_untouched(tmp_path):
     assert registry.read_bytes() == before
 
 
-def test_bounded_command_success_timeout_and_os_error(monkeypatch):
+def test_bounded_command_success_timeout_and_os_error():
     result = run_command(["/bin/sh", "-c", "printf ok; printf err >&2"], 2)
     assert result.returncode == 0 and result.stdout == "ok" and result.stderr == "err"
 
-    def timeout(*_args, **_kwargs):
-        raise subprocess.TimeoutExpired("receiver", 1, output=b"partial")
+    timed_out = run_command(["/bin/sh", "-c", "sleep 5"], 0.2)
+    assert timed_out.timed_out and timed_out.returncode is None
 
-    monkeypatch.setattr(subprocess, "run", timeout)
-    assert run_command(["receiver"], 1).timed_out
-
-    def missing(*_args, **_kwargs):
-        raise FileNotFoundError("missing")
-
-    monkeypatch.setattr(subprocess, "run", missing)
-    assert "missing" in run_command(["receiver"], 1).error
+    missing = run_command(["/nonexistent/omt-receiver-missing"], 1)
+    assert missing.error
 
 
 def test_command_output_is_truncated_to_the_limit_and_flagged():
@@ -283,25 +276,18 @@ def test_command_output_is_truncated_to_the_limit_and_flagged():
     assert not within.stdout_truncated and not within.stderr_truncated
 
 
-def test_timed_out_command_still_reports_the_partial_output_it_captured(monkeypatch):
-    """`TimeoutExpired.stdout` holds whatever the child wrote before the kill.
-    Discarding it would leave an operator with a bare "exceeded N seconds" for
-    the failure mode that most often explains itself in that partial text."""
-
-    def timeout(*_args, **_kwargs):
-        raise subprocess.TimeoutExpired(
-            "receiver",
-            1,
-            output=b"partial stdout",
-            stderr=b"partial stderr",
-        )
-
-    monkeypatch.setattr(subprocess, "run", timeout)
-    result = run_command(["receiver"], 1)
+def test_timed_out_command_still_reports_the_partial_output_it_captured():
+    """Whatever the child printed before the kill must reach the operator.
+    Discarding it would leave a bare "exceeded N seconds" for the failure mode
+    that most often explains itself in that partial text."""
+    result = run_command(
+        ["/bin/sh", "-c", "printf 'partial stdout'; printf 'partial stderr' >&2; sleep 5"],
+        0.3,
+    )
     assert result.timed_out and result.returncode is None
     assert result.stdout == "partial stdout" and result.stderr == "partial stderr"
     # `error` outranks the partial streams: the timeout is the actual failure.
-    assert result.failure_detail == "Command exceeded 1 seconds."
+    assert result.failure_detail.startswith("Command exceeded")
 
 
 @pytest.mark.parametrize(

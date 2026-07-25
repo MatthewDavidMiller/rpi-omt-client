@@ -152,6 +152,23 @@ class PreviewDiagnostics:
     def version(self) -> str:
         return "preview"
 
+    def legal_texts(self) -> tuple[str, str]:
+        from flask import current_app
+
+        from omt_client.safe_io import read_text
+
+        settings = current_app.extensions["omt_client.settings"]
+        license_result = read_text(settings.project_license_file, 2 * 1024 * 1024)
+        notices_result = read_text(settings.third_party_notices_file, 2 * 1024 * 1024)
+        return (
+            license_result.text
+            if license_result.ok
+            else "Project license is unavailable in this image.",
+            notices_result.text
+            if notices_result.ok
+            else "Third-party notices is unavailable in this image.",
+        )
+
     def status(self) -> str:
         return "running:4242 overall=running video=running audio=running"
 

@@ -14,13 +14,13 @@ from ..network_config import (
 )
 from ..safe_io import ReadStatus, atomic_replace, read_bytes
 from ..settings import AppSettings
-from .playback import RuntimeSourcePlayback
+from .protocols import SourcePlaybackService
 
 SETTINGS_XML_LIMIT = 64 * 1024
 
 
 class RuntimeNetwork:
-    def __init__(self, settings: AppSettings, source: RuntimeSourcePlayback) -> None:
+    def __init__(self, settings: AppSettings, source: SourcePlaybackService) -> None:
         self._settings = settings
         self._source = source
 

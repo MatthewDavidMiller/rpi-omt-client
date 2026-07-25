@@ -119,10 +119,10 @@ public sealed class PlaybackStateModel
 /// </summary>
 /// <remarks>
 /// Every decoded video and audio frame drives a projection, but publishing is a
-/// write + fsync + rename onto the SD-card-backed config volume. At 1080p60 that
-/// is well over a hundred fsync cycles a second, forever -- flash wear, and a
-/// synchronous stall inside the presentation loop -- to restate a record whose
-/// only changing field is its timestamp.
+/// write + fsync + rename. Status lives on a tmpfs in the shipped image, yet
+/// an unthrottled publish at 1080p60 is still well over a hundred fsync cycles
+/// a second -- a synchronous stall inside the presentation loop to restate a
+/// record whose only changing field is its timestamp.
 ///
 /// So a projection identical to the last published one is written only once per
 /// heartbeat. Any change to the state, detail, or connector is published
@@ -130,6 +130,8 @@ public sealed class PlaybackStateModel
 /// The heartbeat stays well inside OMT_PLAYBACK_STATUS_STALE_SECONDS, whose
 /// minimum accepted value is one second, so the consumer never reads the record
 /// as stale purely because of this throttle.
+///
+/// Callers must serialize access: this type is not thread-safe on its own.
 /// </remarks>
 public sealed class StatusPublishPolicy(TimeSpan? heartbeat = null, Func<long>? clock = null)
 {

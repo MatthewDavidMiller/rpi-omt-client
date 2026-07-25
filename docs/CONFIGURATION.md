@@ -28,7 +28,7 @@
 | `OMT_DIAGNOSTICS_HOST_PCAP_FILE` | `/host-diagnostics/host-network.pcap` |
 | `OMT_DIAGNOSTICS_HOST_PCAP_METADATA_FILE` | `/host-diagnostics/host-network-pcap.txt` |
 | `OMT_DIAGNOSTICS_HOST_TIMEOUT_SECONDS` | `30` |
-| `OMT_DIAGNOSTICS_HOST_BUDGET_SECONDS` | `25` |
+| `OMT_DIAGNOSTICS_HOST_BUDGET_SECONDS` | `25` (host oneshot; set by `install.sh` on the systemd unit — container env only mirrors this into support bundles) |
 | `OMT_DIAGNOSTICS_BUNDLE_BUDGET_SECONDS` | `60` |
 | `OMT_DIAGNOSTICS_RECEIVE_PROBE` | enabled |
 | `OMT_DIAGNOSTICS_DOWNLOAD_LIMIT` | `10 per hour` |

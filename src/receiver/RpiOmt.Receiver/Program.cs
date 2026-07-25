@@ -387,49 +387,81 @@ internal sealed class PlaybackStatus
         _target = target;
     }
 
-    public void VideoStarting(string detail, HdmiConnector? connector) =>
-        Publish(_model.VideoStarting(detail), connector);
+    public void VideoStarting(string detail, HdmiConnector? connector)
+    {
+        _model.VideoStarting(detail);
+        Publish(connector);
+    }
 
-    public void WaitingForDiscovery(string detail, HdmiConnector? connector) =>
-        Publish(_model.WaitingForDiscovery(detail), connector);
+    public void WaitingForDiscovery(string detail, HdmiConnector? connector)
+    {
+        _model.WaitingForDiscovery(detail);
+        Publish(connector);
+    }
 
-    public void WaitingForHdmi(string detail, HdmiConnector? connector) =>
-        Publish(_model.WaitingForHdmi(detail), connector);
+    public void WaitingForHdmi(string detail, HdmiConnector? connector)
+    {
+        _model.WaitingForHdmi(detail);
+        Publish(connector);
+    }
 
-    public void VideoRetrying(string detail, HdmiConnector? connector) =>
-        Publish(_model.VideoRetrying(detail), connector);
+    public void VideoRetrying(string detail, HdmiConnector? connector)
+    {
+        _model.VideoRetrying(detail);
+        Publish(connector);
+    }
 
-    public void UnsupportedFormat(string detail, HdmiConnector? connector) =>
-        Publish(_model.UnsupportedFormat(detail), connector);
+    public void UnsupportedFormat(string detail, HdmiConnector? connector)
+    {
+        _model.UnsupportedFormat(detail);
+        Publish(connector);
+    }
 
-    public void VideoRunning(string detail, HdmiConnector? connector) =>
-        Publish(_model.VideoRunning(detail), connector);
+    public void VideoRunning(string detail, HdmiConnector? connector)
+    {
+        _model.VideoRunning(detail);
+        Publish(connector);
+    }
 
-    public void AudioRunning(string detail, HdmiConnector? connector) =>
-        Publish(_model.AudioRunning(detail), connector);
+    public void AudioRunning(string detail, HdmiConnector? connector)
+    {
+        _model.AudioRunning(detail);
+        Publish(connector);
+    }
 
-    public void AudioFailed(string detail, HdmiConnector? connector) =>
-        Publish(_model.AudioFailed(detail), connector);
+    public void AudioFailed(string detail, HdmiConnector? connector)
+    {
+        _model.AudioFailed(detail);
+        Publish(connector);
+    }
 
-    public void AudioStopped(HdmiConnector? connector) =>
-        Publish(_model.AudioStopped(), connector);
+    public void AudioStopped(HdmiConnector? connector)
+    {
+        _model.AudioStopped();
+        Publish(connector);
+    }
 
     /// <summary>
     /// Publishes the terminal projection. This one bypasses the heartbeat
     /// throttle: it is the last record the process writes, so its timestamp has
     /// to be current or the dashboard reads a stale file after a clean exit.
     /// </summary>
-    public void Stopped(string detail, HdmiConnector? connector) =>
-        Publish(_model.Stopped(detail), connector, force: true);
+    public void Stopped(string detail, HdmiConnector? connector)
+    {
+        _model.Stopped(detail);
+        Publish(connector, force: true);
+    }
 
-    private void Publish(
-        PlaybackProjection projection,
-        HdmiConnector? connector,
-        bool force = false)
+    private void Publish(HdmiConnector? connector, bool force = false)
     {
         lock (_sync)
         {
-            if (!_policy.ShouldPublish(projection, connector?.Name ?? "none", force))
+            // Video and audio threads each mutate then publish. Snapshot under
+            // this lock so an older projection cannot overwrite a newer one that
+            // another thread already committed between the caller's mutate and
+            // this critical section.
+            PlaybackProjection current = _model.Snapshot();
+            if (!_policy.ShouldPublish(current, connector?.Name ?? "none", force))
             {
                 return;
             }
@@ -440,11 +472,11 @@ internal sealed class PlaybackStatus
             string temporary = $"{_path}.tmp.{Environment.ProcessId}";
             PlaybackStatusDocument document = new(
                 1,
-                projection.State,
-                projection.VideoState,
-                projection.AudioState,
+                current.State,
+                current.VideoState,
+                current.AudioState,
                 _target,
-                projection.Detail,
+                current.Detail,
                 connector?.Name ?? "none",
                 connector?.DevicePath ?? "none",
                 connector?.AlsaDevice ?? "none",

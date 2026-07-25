@@ -23,8 +23,27 @@ LOG_FILE="${OMT_CONFIG_DIR}/receiver.log"
 START_OMT_CMD="${START_OMT_CMD:-/usr/local/bin/start-omt.sh}"
 OMT_RECEIVER_COMMAND="${OMT_RECEIVER_COMMAND:-/usr/local/bin/omt-receiver}"
 PID_FILE_MAX_BYTES=128
+# Crash loops append forever; keep the persistent log size-capped so a bad
+# target cannot fill the SD-card-backed config volume.
+LOG_FILE_MAX_BYTES=$((1024 * 1024))
+LOG_FILE_KEEP_BYTES=$((512 * 1024))
 
 mkdir -p "${RUN_DIR}"
+
+rotate_receiver_log() {
+    local size tmp
+    [[ -f "${LOG_FILE}" && ! -L "${LOG_FILE}" ]] || return 0
+    size="$(stat -c '%s' -- "${LOG_FILE}" 2>/dev/null || true)"
+    [[ "${size}" =~ ^[0-9]+$ ]] || return 0
+    (( size <= LOG_FILE_MAX_BYTES )) && return 0
+    tmp="${LOG_FILE}.tmp.$$"
+    tail -c "${LOG_FILE_KEEP_BYTES}" -- "${LOG_FILE}" > "${tmp}" || {
+        rm -f -- "${tmp}"
+        return 0
+    }
+    chmod 600 "${tmp}" 2>/dev/null || true
+    mv -f -- "${tmp}" "${LOG_FILE}"
+}
 
 read_pid_record() {
     local record pid start_time extra size
@@ -103,6 +122,7 @@ start_locked() {
         return 0
     fi
     rm -f -- "${PID_FILE}" "${STATUS_FILE}"
+    rotate_receiver_log
     # 9>&- closes the controller's lock descriptor in the receiver. A flock is
     # held by the open file description, not by the process that took it, so a
     # receiver that inherited fd 9 would keep this exclusive lock for as long as

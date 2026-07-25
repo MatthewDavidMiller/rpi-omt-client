@@ -468,3 +468,28 @@ def test_bundle_budget_bounds_all_container_commands(tmp_path: Path, monkeypatch
     assert timeouts
     assert sum(timeouts) <= budget
     assert clock.now - started <= budget
+
+
+def test_bundle_rejects_stale_pcap_metadata_bytes(tmp_path: Path, monkeypatch):
+    """A prior capture's metadata file must not be embedded when this request
+    rejects it. Support bundles that look complete with the wrong capture are
+    worse than an explicit unavailable marker."""
+    diagnostics = _diagnostics(tmp_path, OMT_DIAGNOSTICS_RECEIVE_PROBE="0")
+    request = Path(diagnostics._settings.diagnostics_host_request_file)
+    request.touch(mode=0o600)
+    os.chmod(request, 0o600)
+    Path(diagnostics._settings.diagnostics_host_pcap_metadata_file).write_text(
+        _metadata().replace(f"request_id={REQUEST_ID}", "request_id=" + ("ab" * 16)),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(os, "urandom", lambda _size: bytes.fromhex(REQUEST_ID))
+    monkeypatch.setattr(
+        "omt_client.services.diagnostics.run_command",
+        lambda command, _timeout: CommandResult(command=" ".join(command), returncode=1),
+    )
+    bundle, _name = diagnostics.bundle(include_packet_capture=False)
+    with zipfile.ZipFile(bundle) as archive:
+        text = archive.read("host-network-pcap.txt").decode("utf-8")
+        assert text.startswith("unavailable:")
+        assert "does not match" in text
+        assert "abab" not in text

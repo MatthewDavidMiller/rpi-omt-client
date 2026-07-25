@@ -32,7 +32,10 @@ Use these as the primary map of the system. Then pull in task-specific docs as n
 - Prefer minimal, targeted changes. This repo already has strong test coverage around the Flask app, entrypoint, install flow, and container behavior.
 - Do not assume Raspberry Pi hardware is available locally. Prefer unit tests and amd64 container validation unless the task explicitly requires Pi-only verification.
 - If you change documented behavior, update the relevant docs in the same pass.
-- Never add agent co-author trailers such as `Co-Authored-By` to commits.
+- Never add co-authors to commits. Do not include `Co-Authored-By`,
+  `Signed-off-by` for an agent, or any other trailer that attributes the
+  commit to an AI/agent or additional author. Commits are authored only by
+  the human operator.
 
 ## Restricted Files
 

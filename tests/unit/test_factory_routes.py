@@ -278,10 +278,98 @@ def test_authenticated_csrf_error_uses_operator_error_view():
     with client.session_transaction() as browser_session:
         browser_session["authenticated"] = True
         browser_session["session_id"] = session_id
+        browser_session["password_digest"] = services.auth.password_digest
     response = client.post("/playback/restart")
     assert response.status_code == 400
     assert b"Session expired" in response.data
     assert b"Return to dashboard" in response.data
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/sources/select",
+        "/sources/refresh",
+        "/playback/restart",
+        "/playback/clear",
+        "/settings/network",
+        "/settings/direct-source",
+        "/diagnostics/discovery",
+        "/diagnostics/runtime",
+        "/diagnostics/direct",
+        "/diagnostics/download",
+        "/system/reboot",
+        "/logout",
+    ],
+)
+def test_mutating_posts_require_csrf_when_enabled(path):
+    services = preview_services("csrf-matrix")
+    application = build_app(services=services, WTF_CSRF_ENABLED=True)
+    client = application.test_client()
+    login_page = client.get("/login").get_data(as_text=True)
+    login_token = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', login_page)
+    assert login_token is not None
+    assert (
+        client.post(
+            "/login",
+            data={"password": "csrf-matrix", "csrf_token": login_token.group(1)},
+        ).status_code
+        == 302
+    )
+    response = client.post(
+        path,
+        data={"source": "x", "discovery_server": "x", "direct_address": "x"},
+    )
+    assert response.status_code == 400
+    assert b"Session expired" in response.data
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("GET", "/"),
+        ("GET", "/settings/network"),
+        ("GET", "/diagnostics"),
+        ("GET", "/system"),
+        ("GET", "/about"),
+        ("POST", "/sources/refresh"),
+        ("POST", "/playback/clear"),
+        ("POST", "/system/reboot"),
+        ("POST", "/logout"),
+    ],
+)
+def test_unauthenticated_routes_redirect_to_login(method, path):
+    application = build_app(services=preview_services("anon-guard"))
+    client = application.test_client()
+    response = client.open(path, method=method)
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith("/login")
+
+
+def test_csrf_protected_mutation_succeeds_with_token():
+    services = preview_services("csrf-ok")
+    application = build_app(services=services, WTF_CSRF_ENABLED=True)
+    client = application.test_client()
+    login_page = client.get("/login").get_data(as_text=True)
+    login_token = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', login_page)
+    assert login_token is not None
+    assert (
+        client.post(
+            "/login",
+            data={"password": "csrf-ok", "csrf_token": login_token.group(1)},
+        ).status_code
+        == 302
+    )
+    dashboard = client.get("/").get_data(as_text=True)
+    match = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', dashboard)
+    assert match is not None
+    response = client.post(
+        "/sources/refresh",
+        data={"csrf_token": match.group(1)},
+        follow_redirects=True,
+    )
+    assert response.status_code == 200
+    assert b"Session expired" not in response.data
 
 
 def test_diagnostics_landing_page_renders_without_a_check(factory_client):

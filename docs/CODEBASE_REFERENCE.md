@@ -21,6 +21,8 @@
 | Shared ASCII host grammar | `src/omt_client/hostnames.py` |
 | OMT XML settings | `src/omt_client/network_config.py` |
 | Templates and CSS | `src/omt_client/templates/`, `src/omt_client/static/` |
+| About route (presentation) | `src/omt_client/routes/about.py` |
+| About legal texts (service) | `RuntimeDiagnostics.legal_texts()` in `src/omt_client/services/diagnostics.py` |
 | Web design tokens and layout | `src/omt_client/static/style.css`, `src/omt_client/static/favicon.svg` |
 | Dev-only preview fakes | `src/omt_client_preview/` |
 | Shell process lifecycle | `deploy/container/runtime-lib.sh`, `deploy/container/start-omt.sh`, `deploy/container/control-omt.sh`, `deploy/container/entrypoint.sh` |

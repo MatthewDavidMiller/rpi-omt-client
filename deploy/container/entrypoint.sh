@@ -44,10 +44,14 @@ sync_replace() {
 }
 
 safe_nonempty_file() {
-    local path="$1" maximum="$2" size
+    local path="$1" maximum="$2" size content
     [[ -f "${path}" && ! -L "${path}" ]] || return 1
     size="$(stat -c '%s' -- "${path}" 2>/dev/null || true)"
-    [[ "${size}" =~ ^[1-9][0-9]*$ ]] && (( size <= maximum ))
+    [[ "${size}" =~ ^[1-9][0-9]*$ ]] && (( size <= maximum )) || return 1
+    # Byte length alone accepts whitespace-only secrets that later crash auth
+    # at import time; require at least one non-whitespace character.
+    content="$(tr -d '[:space:]' < "${path}" | head -c 1 || true)"
+    [[ -n "${content}" ]]
 }
 
 if ! safe_nonempty_file "${OMT_CONFIG_DIR}/flask_secret" 256; then

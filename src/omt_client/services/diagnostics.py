@@ -10,6 +10,7 @@ import stat
 import tempfile
 import time
 import zipfile
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import IO
@@ -20,7 +21,7 @@ from ..records import parse_key_value_record
 from ..safe_io import read_bytes, read_text, write_fixed_inode
 from ..settings import AppSettings
 from .command import run_command
-from .playback import RuntimeSourcePlayback
+from .protocols import SourcePlaybackService
 
 HOST_REPORT_LIMIT = 16 * 1024 * 1024
 PCAP_METADATA_LIMIT = 64 * 1024
@@ -62,14 +63,33 @@ def _run_before_deadline(
     return run_command(command, max(0.001, remaining))
 
 
+LEGAL_FILE_LIMIT = 2 * 1024 * 1024
+
+
 class RuntimeDiagnostics:
-    def __init__(self, settings: AppSettings, source: RuntimeSourcePlayback) -> None:
+    def __init__(self, settings: AppSettings, source: SourcePlaybackService) -> None:
         self._settings = settings
         self._source = source
 
     def version(self) -> str:
         result = read_text(self._settings.version_file, 256)
         return result.text.strip() if result.ok and result.text.strip() else "unknown"
+
+    def legal_texts(self) -> tuple[str, str]:
+        """Return the project license and third-party notices for the About page."""
+        return (
+            self._legal_text(self._settings.project_license_file, "Project license"),
+            self._legal_text(
+                self._settings.third_party_notices_file,
+                "Third-party notices",
+            ),
+        )
+
+    def _legal_text(self, path: str, label: str) -> str:
+        result = read_text(path, LEGAL_FILE_LIMIT)
+        if result.ok:
+            return result.text
+        return f"{label} is unavailable in this image."
 
     def status(self) -> str:
         result = run_command(
@@ -93,17 +113,8 @@ class RuntimeDiagnostics:
             5,
             deadline,
         )
-        enriched = CommandResult(
-            command=result.command,
-            returncode=result.returncode,
-            stdout=result.stdout,
-            stderr=result.stderr,
-            duration_seconds=result.duration_seconds,
-            timed_out=result.timed_out,
-            error=result.error,
-            skipped=result.skipped,
-            stdout_truncated=result.stdout_truncated,
-            stderr_truncated=result.stderr_truncated,
+        enriched = replace(
+            result,
             sources=tuple(parse_omt_sources(result.stdout)),
         )
         return DiagnosticResult("OMT discovery check", enriched)
@@ -423,7 +434,10 @@ class RuntimeDiagnostics:
             )
             archive.writestr(
                 "host-network-pcap.txt",
-                metadata_data if metadata_data else _unavailable(metadata_error),
+                # Only embed raw metadata when it validated for this request.
+                # Truthy stale bytes from a prior capture must not win over the
+                # typed error explaining why this run rejected them.
+                metadata_data if metadata is not None else _unavailable(metadata_error),
             )
             if include_packet_capture:
                 if packet_spool is None:

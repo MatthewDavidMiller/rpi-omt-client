@@ -25,6 +25,8 @@ import os
 import stat
 import sys
 
+from omt_client.discovery import is_valid_direct_target, is_valid_source_name
+
 path = sys.argv[1]
 before = os.lstat(path)
 if stat.S_ISLNK(before.st_mode) or not stat.S_ISREG(before.st_mode) or before.st_size > 1024:
@@ -45,12 +47,14 @@ if document.get("schema") != 1:
     raise SystemExit("unsupported OMT source target schema")
 if document.get("kind") == "discovered" and set(document) == {"schema", "kind", "name"}:
     value = document["name"]
+    if not isinstance(value, str) or not is_valid_source_name(value):
+        raise SystemExit("invalid discovered OMT source name")
 elif document.get("kind") == "direct" and set(document) == {"schema", "kind", "uri"}:
     value = document["uri"]
+    if not isinstance(value, str) or not is_valid_direct_target(value):
+        raise SystemExit("invalid direct OMT target")
 else:
     raise SystemExit("invalid OMT source target")
-if not isinstance(value, str) or not value:
-    raise SystemExit("empty OMT source target")
 print(value)
 PY
 )"

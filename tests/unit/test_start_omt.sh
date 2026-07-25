@@ -21,6 +21,7 @@ run_start() {
     OMT_STORAGE_PATH="${CASE_DIR}/config/omt" \
     OMT_RECEIVER_COMMAND="${CASE_DIR}/receiver" \
     OMT_HDMI_CONNECTOR="${1:-auto}" \
+    PYTHONPATH="${ROOT}/src${PYTHONPATH:+:${PYTHONPATH}}" \
         "${START}"
 }
 
@@ -56,6 +57,20 @@ rm -f "${CASE_DIR}/config/source_target.json"
 ln -s target "${CASE_DIR}/config/source_target.json"
 if run_start auto >/dev/null 2>&1; then
     echo "symlinked target was accepted" >&2
+    exit 1
+fi
+
+# Shared validators must reject hand-edited volume state the web UI would refuse.
+printf '%s\n' '{"schema":1,"kind":"discovered","name":"bad\nname"}' \
+    > "${CASE_DIR}/config/source_target.json"
+if run_start auto >/dev/null 2>&1; then
+    echo "control-character source name was accepted" >&2
+    exit 1
+fi
+printf '%s\n' '{"schema":1,"kind":"direct","uri":"omt://not a host:6400"}' \
+    > "${CASE_DIR}/config/source_target.json"
+if run_start auto >/dev/null 2>&1; then
+    echo "invalid direct target was accepted" >&2
     exit 1
 fi
 

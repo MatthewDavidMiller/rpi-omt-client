@@ -2,14 +2,14 @@
   "comment": [
     "Shared contract between the C# status producer and the Python status consumer.",
     "Producer: src/receiver/RpiOmt.Receiver.Core/PlaybackState.cs",
-    "Consumer: src/omt_client/services/playback.py",
+    "Consumer: src/omt_client/playback_status.py",
     "Python requires set(document) == fields exactly, so a field added on only one",
     "side would make every status record unparseable and pin the dashboard to",
     "'Playback status stale'. Both test suites assert against this file.",
     "'events' names PlaybackStateModel methods, applied in order.",
     "receiver_states/video_states are the consumer accept-lists. 'failed' is",
-    "accepted for forward compatibility but no producer path emits it today, so",
-    "it carries no projection row."
+    "accepted for forward compatibility; no producer path emits it as an overall",
+    "state today, so it carries no projection row."
   ],
   "schema": 1,
   "fields": [

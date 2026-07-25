@@ -105,4 +105,14 @@ if run_entrypoint_with_runtime "${CASE_DIR}/runtime/state" >/dev/null 2>&1; then
     exit 1
 fi
 
+# Whitespace-only secrets are not usable credentials; regenerate them.
+printf '   \n' > "${CASE_DIR}/config/flask_secret"
+chmod 600 "${CASE_DIR}/config/flask_secret"
+BEFORE_SECRET="$(stat -c '%i %s' -- "${CASE_DIR}/config/flask_secret")"
+run_entrypoint >/dev/null 2>&1
+AFTER_SECRET="$(stat -c '%i %s' -- "${CASE_DIR}/config/flask_secret")"
+[[ "${BEFORE_SECRET}" != "${AFTER_SECRET}" ]]
+CONTENT="$(tr -d '[:space:]' < "${CASE_DIR}/config/flask_secret")"
+[[ -n "${CONTENT}" ]]
+
 echo "OMT entrypoint tests passed"

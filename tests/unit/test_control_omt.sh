@@ -208,4 +208,61 @@ OMT_RUNTIME_DIR="${RUNTIME_DIR}" run_control start >/dev/null 2>&1 || true
 [[ -e "${CASE_DIR}/config/receiver.log" ]]
 [[ ! -e "${RUNTIME_DIR}/receiver.log" ]]
 
+# ─── PID record schema edges ────────────────────────────────────────────────
+#
+# Malformed records must never be treated as a live managed process. Oversized
+# files, junk fields, and a zero pid are all fail-closed.
+install_receiver <<'EOF'
+#!/bin/bash
+while true; do sleep 0.2; done
+EOF
+configure_target
+run_control start >/dev/null 2>&1
+read -r LIVE_PID LIVE_START < "${CASE_DIR}/config/run/omt.pid"
+STRAY_PIDS+=("${LIVE_PID}")
+
+printf '1 2 leftover\n' > "${CASE_DIR}/config/run/omt.pid"
+if run_control status >/dev/null 2>&1; then
+    echo "PID record with trailing junk was trusted" >&2
+    exit 1
+fi
+printf '0 %s\n' "${LIVE_START}" > "${CASE_DIR}/config/run/omt.pid"
+if run_control status >/dev/null 2>&1; then
+    echo "zero pid was trusted" >&2
+    exit 1
+fi
+python3 - <<PY
+from pathlib import Path
+path = Path("${CASE_DIR}/config/run/omt.pid")
+path.write_bytes((("9 " + ("1" * 200) + "\n").encode()))
+PY
+if run_control status >/dev/null 2>&1; then
+    echo "oversized PID record was trusted" >&2
+    exit 1
+fi
+rm -f "${CASE_DIR}/config/run/omt.pid"
+ln -s /proc/self "${CASE_DIR}/config/run/omt.pid"
+if run_control status >/dev/null 2>&1; then
+    echo "symlinked PID record was trusted" >&2
+    exit 1
+fi
+rm -f "${CASE_DIR}/config/run/omt.pid"
+# Restore a valid record so cleanup can stop the live receiver.
+printf '%s %s\n' "${LIVE_PID}" "${LIVE_START}" > "${CASE_DIR}/config/run/omt.pid"
+run_control stop >/dev/null 2>&1 || true
+
+# Oversized receiver logs are rotated before the next start appends.
+python3 - <<PY
+from pathlib import Path
+path = Path("${CASE_DIR}/config/receiver.log")
+path.write_bytes(b"x" * (1024 * 1024 + 64))
+PY
+run_control start >/dev/null 2>&1 || true
+LOG_SIZE="$(stat -c '%s' -- "${CASE_DIR}/config/receiver.log")"
+(( LOG_SIZE <= 1024 * 1024 )) || {
+    echo "receiver log was not rotated before append (${LOG_SIZE})" >&2
+    exit 1
+}
+run_control stop >/dev/null 2>&1 || true
+
 echo "OMT controller tests passed"
