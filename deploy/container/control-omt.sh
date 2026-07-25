@@ -74,8 +74,21 @@ stop_locked() {
         sleep 0.1
     done
     kill -KILL "${pid}" 2>/dev/null || true
-    rm -f -- "${PID_FILE}" "${STATUS_FILE}"
-    echo "Force-stopped OMT receiver"
+    # SIGKILL is delivered, not completed. Until the kernel finishes tearing the
+    # process down it still holds /dev/dri, which DRM hands to one master at a
+    # time. Reporting success here would let `restart` launch a receiver that
+    # cannot open the display and drops straight into its retry loop, so keep
+    # the PID record and fail instead of guessing.
+    for attempt in $(seq 1 50); do
+        if ! managed_process_is_valid "${pid}" "${start_time}"; then
+            rm -f -- "${PID_FILE}" "${STATUS_FILE}"
+            echo "Force-stopped OMT receiver"
+            return 0
+        fi
+        sleep 0.1
+    done
+    echo "OMT receiver ${pid} survived SIGKILL" >&2
+    return 1
 }
 
 start_locked() {
@@ -90,7 +103,13 @@ start_locked() {
         return 0
     fi
     rm -f -- "${PID_FILE}" "${STATUS_FILE}"
-    setsid "${START_OMT_CMD}" >>"${LOG_FILE}" 2>&1 </dev/null &
+    # 9>&- closes the controller's lock descriptor in the receiver. A flock is
+    # held by the open file description, not by the process that took it, so a
+    # receiver that inherited fd 9 would keep this exclusive lock for as long as
+    # it runs. Every later start, stop, restart, or status would then block on
+    # `flock 9` until the web worker's own command timeout expired and reported
+    # the action as failed -- with playback itself running perfectly.
+    setsid "${START_OMT_CMD}" >>"${LOG_FILE}" 2>&1 </dev/null 9>&- &
     pid=$!
     start_time=""
     for attempt in $(seq 1 50); do

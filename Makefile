@@ -32,7 +32,7 @@ help:
 	@echo "Quality targets:"
 	@echo "  lint          Run ruff + hadolint + shellcheck + yamllint"
 	@echo "  test          Run all tests (unit + live container build)"
-	@echo "  test-quick    Run unit tests only, no container engine (~30s)"
+	@echo "  test-quick    Run every unit suite, no container engine (~1m)"
 	@echo "  test-py       Run Python unit tests only (requires test-setup)"
 	@echo "  test-receiver Run receiver-core analyzers, tests, and coverage gate"
 	@echo "  test-deployer Run locked C# build, unit/headless tests, and coverage gate"
@@ -105,7 +105,7 @@ test:
 	@echo "Running all tests..."
 	./scripts/test-local.sh
 
-# Run unit tests only, no container engine (~30s)
+# Run every unit suite, no container engine (~1m)
 test-quick:
 	./scripts/test-local.sh --quick
 

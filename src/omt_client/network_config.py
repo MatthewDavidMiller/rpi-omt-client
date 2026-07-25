@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-import ipaddress
 import re
 import xml.etree.ElementTree as ET
 from typing import cast
 from urllib.parse import urlsplit
 
+from .hostnames import canonical_host, is_ascii
+
 DISCOVERY_SERVER_DEFAULT_PORT = 6399
 DISCOVERY_SERVER_MAX_BYTES = 512
-HOST_LABEL = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$")
 
 
 class OmtNetworkConfigurationError(RuntimeError):
@@ -50,19 +50,12 @@ def normalize_discovery_server(value: str) -> str:
         or not 1 <= port <= 65535
     ):
         raise OmtNetworkConfigurationError("Discovery Server must be a host or omt://host:port.")
-    host = parsed.hostname
-    if any(ord(character) > 127 for character in host):
+    if not is_ascii(parsed.hostname):
         raise OmtNetworkConfigurationError("Discovery Server host must be ASCII.")
-    try:
-        address = ipaddress.ip_address(host)
-    except ValueError:
-        labels = host.split(".")
-        if len(host) > 253 or not all(HOST_LABEL.fullmatch(label) for label in labels):
-            raise OmtNetworkConfigurationError("Discovery Server host is invalid.") from None
-        canonical_host = host.lower()
-    else:
-        canonical_host = f"[{address}]" if address.version == 6 else str(address)
-    return f"omt://{canonical_host}:{port}"
+    canonical = canonical_host(parsed.hostname)
+    if canonical is None:
+        raise OmtNetworkConfigurationError("Discovery Server host is invalid.")
+    return f"omt://{canonical}:{port}"
 
 
 def _parse_settings(value: str | bytes) -> ET.Element:

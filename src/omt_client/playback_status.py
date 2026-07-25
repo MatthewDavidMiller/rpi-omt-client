@@ -54,7 +54,7 @@ STATUS_FIELDS = frozenset(
         "updated_at",
     }
 )
-# Must stay total over RECEIVER_STATES: PlaybackStatusRecord.summary indexes this
+# Must stay total over RECEIVER_STATES: PlaybackStatusRecord.projection indexes this
 # directly, so a receiver state without a row would raise KeyError and 500 the
 # dashboard. `tests/unit/test_playback_failures.py` asserts the totality.
 PUBLIC_STATES: dict[str, tuple[str, str, str]] = {

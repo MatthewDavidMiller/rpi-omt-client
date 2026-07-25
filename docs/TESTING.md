@@ -35,6 +35,13 @@ Timing-sensitive suites use `conftest.VirtualClock` rather than wall-clock
 sleeps, so a budget assertion measures the code's own deadline arithmetic
 instead of the host's filesystem latency.
 
+`tests/unit/test_control_omt.sh` deliberately spends real seconds: it runs a
+receiver that stays alive, which is the only way to reach the PID record, the
+process-identity check that guards every kill, the lock the controller must not
+leak into what it launches, and the SIGKILL fallback. Every controller
+invocation there is wrapped in `timeout`, so a leaked lock names itself instead
+of hanging the gate.
+
 `scripts/test-local.sh` is the single entry point for every shell suite, and
 `tests/unit/test_test_runner_args.sh` fails if a file in `tests/unit/` is not
 wired into it.

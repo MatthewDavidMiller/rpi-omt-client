@@ -86,8 +86,8 @@ if [[ -e "${REQUEST_FILE}" || -L "${REQUEST_FILE}" ]]; then
                    [[ "${request_fields[request_id]:-}" =~ ^[0-9a-f]{32}$ ]] && \
                    [[ "${request_fields[capture_pcap]:-}" =~ ^[01]$ ]] && \
                    [[ "${requested_at}" =~ ^[0-9]{1,12}$ ]] && \
-                   (( requested_at <= now_epoch + 5 )) && \
-                   (( now_epoch - requested_at <= 60 )); then
+                   (( 10#${requested_at} <= now_epoch + 5 )) && \
+                   (( now_epoch - 10#${requested_at} <= 60 )); then
                     REQUEST_ID="${request_fields[request_id]}"
                     CAPTURE_PCAP="${request_fields[capture_pcap]}"
                 fi

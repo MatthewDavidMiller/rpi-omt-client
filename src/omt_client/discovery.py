@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-import ipaddress
 import json
 import unicodedata
 from dataclasses import dataclass
 from urllib.parse import urlsplit
+
+from .hostnames import canonical_host
 
 MAX_SOURCE_NAME_BYTES = 63
 MAX_DISCOVERY_OUTPUT_BYTES = 256 * 1024
@@ -90,25 +91,7 @@ def is_valid_direct_target(target: str) -> bool:
         or parsed.fragment
     ):
         return False
-    host = parsed.hostname
-    if any(ord(character) > 127 for character in host):
-        return False
-    try:
-        ipaddress.ip_address(host)
-        return True
-    except ValueError:
-        pass
-    if len(host) > 253:
-        return False
-    labels = host.split(".")
-    return all(
-        label
-        and len(label) <= 63
-        and label[0].isalnum()
-        and label[-1].isalnum()
-        and all(character.isalnum() or character == "-" for character in label)
-        for label in labels
-    )
+    return canonical_host(parsed.hostname) is not None
 
 
 def parse_source_selection(selection: str) -> tuple[str, str | None, str] | None:

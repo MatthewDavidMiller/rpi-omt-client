@@ -19,13 +19,6 @@ omt_read_bounded_state() {
     (( ${#OMT_BOUNDED_STATE_VALUE} <= maximum_bytes ))
 }
 
-omt_bounded_regular_nonempty() {
-    local path="$1" maximum_bytes="$2"
-    omt_read_bounded_state "${path}" "${maximum_bytes}" || return 1
-    iconv -f UTF-8 -t UTF-8 -- "${path}" >/dev/null 2>&1 || return 1
-    [[ "${OMT_BOUNDED_STATE_VALUE}" =~ [^[:space:]] ]]
-}
-
 omt_proc_start_time() {
     local pid="$1" stat_line remainder
     [[ "${pid}" =~ ^[1-9][0-9]*$ ]] || return 1

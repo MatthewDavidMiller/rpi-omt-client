@@ -36,23 +36,34 @@ fi
 EOF
 chmod 0755 "${CASE_DIR}/bin/tcpdump"
 
-run_case() {
-    local label="$1" request_id="$2" capture="$3"
-    local request="${CASE_DIR}/diagnostics/request"
-    local report="${CASE_DIR}/diagnostics/report-${label}.txt"
-    local pcap="${CASE_DIR}/diagnostics/capture-${label}.pcap"
-    local metadata="${CASE_DIR}/diagnostics/metadata-${label}.txt"
-    printf 'version=1\nrequest_id=%s\ncapture_pcap=%s\nrequested_at_epoch=%s\n' \
-        "${request_id}" "${capture}" "$(date +%s)" > "${request}"
-    chmod 0600 "${request}"
+# Run one collection against per-label output paths. Every caller needs the same
+# eight environment overrides, so they live here rather than in each case.
+run_diagnostics() {
+    local label="$1"
     PATH="${CASE_DIR}/bin:${PATH}" \
-    OMT_DIAGNOSTICS_HOST_REPORT_FILE="${report}" \
-    OMT_DIAGNOSTICS_HOST_REQUEST_FILE="${request}" \
+    OMT_DIAGNOSTICS_HOST_REPORT_FILE="${CASE_DIR}/diagnostics/report-${label}.txt" \
+    OMT_DIAGNOSTICS_HOST_REQUEST_FILE="${CASE_DIR}/diagnostics/request" \
     OMT_DIAGNOSTICS_HOST_BUDGET_SECONDS=1 \
-    OMT_DIAGNOSTICS_HOST_PCAP_FILE="${pcap}" \
-    OMT_DIAGNOSTICS_HOST_PCAP_METADATA_FILE="${metadata}" \
+    OMT_DIAGNOSTICS_HOST_PCAP_FILE="${CASE_DIR}/diagnostics/capture-${label}.pcap" \
+    OMT_DIAGNOSTICS_HOST_PCAP_METADATA_FILE="${CASE_DIR}/diagnostics/metadata-${label}.txt" \
     OMT_INSTALL_DIR="${CASE_DIR}/install" \
         "${HOST_DIAGNOSTICS}"
+}
+
+write_request() {
+    local request_id="$1" capture="$2" epoch="${3:-$(date +%s)}"
+    printf 'version=1\nrequest_id=%s\ncapture_pcap=%s\nrequested_at_epoch=%s\n' \
+        "${request_id}" "${capture}" "${epoch}" \
+        > "${CASE_DIR}/diagnostics/request"
+    chmod 0600 "${CASE_DIR}/diagnostics/request"
+}
+
+run_case() {
+    local label="$1" request_id="$2" capture="$3" epoch="${4:-$(date +%s)}"
+    local report="${CASE_DIR}/diagnostics/report-${label}.txt"
+    local metadata="${CASE_DIR}/diagnostics/metadata-${label}.txt"
+    write_request "${request_id}" "${capture}" "${epoch}"
+    run_diagnostics "${label}"
     grep -qx 'version=1' "${report}"
     grep -qx "request_id=${request_id}" "${report}"
     grep -qx 'status=complete' "${report}"
@@ -76,19 +87,25 @@ grep -Eq '^capture_status=(complete|time_limit|size_limit)$' \
 grep -qx 'pcap_magic=d4c3b2a1' \
     "${CASE_DIR}/diagnostics/metadata-checked.txt"
 
-invalid_request="${CASE_DIR}/diagnostics/request"
-printf 'version=1\nrequest_id=wrong\ncapture_pcap=1\nrequested_at_epoch=0\n' \
-    > "${invalid_request}"
-PATH="${CASE_DIR}/bin:${PATH}" \
-OMT_DIAGNOSTICS_HOST_REPORT_FILE="${CASE_DIR}/diagnostics/report-invalid.txt" \
-OMT_DIAGNOSTICS_HOST_REQUEST_FILE="${invalid_request}" \
-OMT_DIAGNOSTICS_HOST_BUDGET_SECONDS=1 \
-OMT_DIAGNOSTICS_HOST_PCAP_FILE="${CASE_DIR}/diagnostics/capture-invalid.pcap" \
-OMT_DIAGNOSTICS_HOST_PCAP_METADATA_FILE="${CASE_DIR}/diagnostics/metadata-invalid.txt" \
-OMT_INSTALL_DIR="${CASE_DIR}/install" \
-    "${HOST_DIAGNOSTICS}"
-grep -qx 'request_id=invalid' "${CASE_DIR}/diagnostics/report-invalid.txt"
-[[ ! -e "${CASE_DIR}/diagnostics/capture-invalid.pcap" ]]
+# The accepted timestamp shape allows leading zeros, so the freshness
+# comparison has to be base 10. Read as octal, a zero-padded epoch is an
+# arithmetic error, the request is discarded, and the operator gets a report
+# that never correlates with what they asked for.
+padded_id=33333333333333333333333333333333
+run_case padded "${padded_id}" 0 "$(printf '%012d' "$(date +%s)")"
+
+# A request older than the freshness window is a leftover, not this collection.
+run_case_rejected() {
+    local label="$1"
+    write_request "$2" "$3" "$4"
+    run_diagnostics "${label}"
+    grep -qx 'request_id=invalid' "${CASE_DIR}/diagnostics/report-${label}.txt"
+    [[ ! -e "${CASE_DIR}/diagnostics/capture-${label}.pcap" ]]
+}
+
+run_case_rejected stale 44444444444444444444444444444444 1 1
+run_case_rejected future 55555555555555555555555555555555 1 "$(($(date +%s) + 600))"
+run_case_rejected invalid wrong 1 0
 
 if OMT_HOST_DEBUG_OUTPUT="${CASE_DIR}/legacy" "${HOST_DIAGNOSTICS}" \
     >"${CASE_DIR}/obsolete.out" 2>&1; then

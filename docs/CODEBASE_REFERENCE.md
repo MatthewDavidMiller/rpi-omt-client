@@ -18,6 +18,7 @@
 | Shared host `key=value` record parsing | `src/omt_client/records.py` |
 | Receiver status contract (consumer half) | `src/omt_client/playback_status.py` |
 | Discovery and URI validation | `src/omt_client/discovery.py` |
+| Shared ASCII host grammar | `src/omt_client/hostnames.py` |
 | OMT XML settings | `src/omt_client/network_config.py` |
 | Templates and CSS | `src/omt_client/templates/`, `src/omt_client/static/` |
 | Web design tokens and layout | `src/omt_client/static/style.css`, `src/omt_client/static/favicon.svg` |

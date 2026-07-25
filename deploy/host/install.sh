@@ -137,7 +137,7 @@ for required_file in "${TARBALL}" "${COMPOSE_FILE}" "${HOST_DIAGNOSTICS_SCRIPT}"
         "${HOST_REBOOT_SCRIPT}" "${PROJECT_LICENSE}" "${THIRD_PARTY_NOTICES}" \
         "${THIRD_PARTY_SOURCE}" "${DEPLOY_TRANSACTION_SCRIPT}" \
         "${DEPLOY_ARTIFACT_MANIFEST}"; do
-    if [[ ! -f "${required_file}" || -L "${required_file}" ]]; then
+    if ! host_require_regular_file "${required_file}"; then
         echo "ERROR: Required deployment file not found: ${required_file}"
         exit 1
     fi
