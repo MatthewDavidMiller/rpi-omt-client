@@ -15,11 +15,12 @@ from .protocols import ServiceContainer
 def production_services(settings: AppSettings | None = None) -> ServiceContainer:
     effective = settings or load_settings()
     source = RuntimeSourcePlayback(effective)
+    about = RuntimeAbout(effective)
     return ServiceContainer(
         auth=PersistentAuthentication(effective),
-        about=RuntimeAbout(effective),
+        about=about,
         source=source,
         network=RuntimeNetwork(effective, source),
-        diagnostics=RuntimeDiagnostics(effective, source),
+        diagnostics=RuntimeDiagnostics(effective, source, about),
         system=HostSystem(effective),
     )

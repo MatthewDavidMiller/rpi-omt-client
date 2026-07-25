@@ -22,7 +22,7 @@ from ..records import parse_key_value_record
 from ..safe_io import read_bytes, read_text, write_fixed_inode
 from ..settings import AppSettings
 from .command import run_command
-from .protocols import SourcePlaybackService
+from .protocols import AboutService, SourcePlaybackService
 
 HOST_REPORT_LIMIT = 16 * 1024 * 1024
 PCAP_METADATA_LIMIT = 64 * 1024
@@ -65,14 +65,17 @@ def _run_before_deadline(
 
 
 class RuntimeDiagnostics:
-    def __init__(self, settings: AppSettings, source: SourcePlaybackService) -> None:
+    def __init__(
+        self,
+        settings: AppSettings,
+        source: SourcePlaybackService,
+        about: AboutService,
+    ) -> None:
         self._settings = settings
         self._source = source
-
-    def version(self) -> str:
-        """Return the build version for support bundles and the diagnostics page."""
-        result = read_text(self._settings.version_file, 256)
-        return result.text.strip() if result.ok and result.text.strip() else "unknown"
+        # The build version has one owner. A support bundle that disagreed with
+        # the About page about which build produced it is worse than useless.
+        self._about = about
 
     def status(self) -> str:
         result = run_command(
@@ -395,7 +398,7 @@ class RuntimeDiagnostics:
         bundle = tempfile.SpooledTemporaryFile(max_size=4 * 1024 * 1024)
         timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
         with zipfile.ZipFile(bundle, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-            archive.writestr("version.txt", self.version() + "\n")
+            archive.writestr("version.txt", self._about.version() + "\n")
             archive.writestr(
                 "runtime-settings.txt",
                 "\n".join(self._settings.diagnostic_lines()) + "\n",

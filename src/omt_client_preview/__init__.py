@@ -171,9 +171,6 @@ class PreviewAbout:
 
 
 class PreviewDiagnostics:
-    def version(self) -> str:
-        return "preview"
-
     def status(self) -> str:
         return "running:4242 overall=running video=running audio=running"
 

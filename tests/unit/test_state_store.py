@@ -169,6 +169,21 @@ def test_play_target_value_matches_saved_configuration(tmp_path):
         play_target_value(path)
 
 
+def test_play_target_value_refuses_to_launch_on_a_corrupt_target(tmp_path):
+    """`deploy/container/start-omt.sh` runs this and execs the receiver with
+    whatever it prints. A corrupt record has to abort the launch with the reason
+    on stderr; anything else would either exec an unvalidated target or print an
+    error message as if it were one."""
+    path = tmp_path / "source_target.json"
+    path.write_text('{"schema":1,"kind":"discovered","name":"  bad  "}\n', encoding="utf-8")
+    with pytest.raises(SystemExit, match="kind or value is invalid"):
+        play_target_value(path)
+
+    path.write_text("not json at all", encoding="utf-8")
+    with pytest.raises(SystemExit, match="invalid JSON"):
+        play_target_value(path)
+
+
 def test_state_store_cli_prints_play_targets_and_rejects_bad_usage(tmp_path, capsys):
     from omt_client.state_store import main
 

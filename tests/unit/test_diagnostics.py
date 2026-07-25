@@ -13,6 +13,7 @@ import pytest
 from conftest import VirtualClock, raises
 
 from omt_client.models import CommandResult
+from omt_client.services.about import RuntimeAbout
 from omt_client.services.diagnostics import (
     PCAP_MAX_BYTES,
     RuntimeDiagnostics,
@@ -48,7 +49,7 @@ def _settings(tmp_path: Path, **overrides: str):
 
 def _diagnostics(tmp_path: Path, **overrides: str) -> RuntimeDiagnostics:
     settings = _settings(tmp_path, **overrides)
-    return RuntimeDiagnostics(settings, RuntimeSourcePlayback(settings))
+    return RuntimeDiagnostics(settings, RuntimeSourcePlayback(settings), RuntimeAbout(settings))
 
 
 def _metadata(

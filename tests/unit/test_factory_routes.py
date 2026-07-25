@@ -290,6 +290,28 @@ def test_aborted_http_errors_keep_their_status_and_message():
     assert b"Forbidden" in response.data
 
 
+def test_http_error_page_failure_keeps_the_original_status(monkeypatch):
+    """The catch-all guards its own template call, so a broken error page still
+    answers with the status the request earned. Falling through to Flask's
+    default here would report a 403 as a 500 and hand the operator a misleading
+    cause for the failure they are chasing."""
+    application = build_app(services=preview_services("render-password"))
+
+    @application.get("/forbidden-probe")
+    def forbidden_probe():
+        abort(403)
+
+    client = signed_in(application, "render-password")
+
+    def broken_render(*_args, **_kwargs):
+        raise RuntimeError("template blew up")
+
+    monkeypatch.setattr("omt_client.factory.render_template", broken_render)
+    response = client.get("/forbidden-probe")
+    assert response.status_code == 403
+    assert b"template blew up" not in response.data
+
+
 def test_static_assets_are_cacheable_but_keep_transport_security(factory_client):
     response = factory_client.get("/static/style.css")
     assert response.status_code == 200

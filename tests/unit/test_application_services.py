@@ -4,7 +4,14 @@ from __future__ import annotations
 
 import json
 import os
+import signal
+import subprocess
+import threading
+import time
+import zipfile
 from pathlib import Path
+from typing import Any, cast
+from unittest import mock
 
 import pytest
 from conftest import VirtualClock, raises
@@ -22,6 +29,7 @@ from omt_client.services import (
     RuntimeSourcePlayback,
     production_services,
 )
+from omt_client.services import command as command_module
 from omt_client.services.command import COMMAND_OUTPUT_LIMIT, run_command
 from omt_client.settings import load_settings
 from omt_client.state_store import SourceTarget, save_source_target
@@ -319,6 +327,129 @@ def test_timed_out_command_still_reports_the_partial_output_it_captured():
     assert result.failure_detail.startswith("Command exceeded")
 
 
+def test_timing_out_kills_the_whole_process_group_not_just_the_child():
+    """`control-omt.sh` launches the receiver; `host-diagnostics.sh` launches
+    `tcpdump`. Signalling only the direct child on a timeout would reap the
+    script and leave what it started holding /dev/dri or a capture socket, with
+    nothing left watching it. Every child is started in its own session so the
+    group can be signalled as a unit."""
+    result = run_command(
+        ["/bin/sh", "-c", 'sleep 60 & printf "%s" "$!"; sleep 60'],
+        0.5,
+    )
+    assert result.timed_out
+    grandchild = int(result.stdout)
+    for _ in range(100):
+        try:
+            os.kill(grandchild, 0)
+        except ProcessLookupError:
+            return
+        time.sleep(0.05)
+    os.kill(grandchild, signal.SIGKILL)
+    raise AssertionError(f"grandchild {grandchild} survived the group kill")
+
+
+def test_a_child_that_will_not_die_is_abandoned_rather_than_waited_on():
+    """The bound on `_reap` is the point of it. `Popen.wait()` and the `with`
+    statement's `__exit__` both block forever on a process stuck in an
+    uninterruptible read -- a wedged /dev/dri or ALSA device is exactly that --
+    which would turn a reported command timeout into a Gunicorn worker killed at
+    `--timeout`, ending the operator's session instead of one request."""
+    killed: list[int] = []
+
+    class Undying:
+        pid = 4242
+        returncode = None
+
+        def wait(self, timeout=None):
+            raise subprocess.TimeoutExpired("stuck", timeout)
+
+    def record(pid, number):
+        assert number == signal.SIGKILL
+        killed.append(pid)
+
+    with mock.patch("os.killpg", record):
+        command_module._reap(cast(Any, Undying()), timed_out=True)
+    # Escalated once for the timeout and once more when the grace expired, and
+    # returned either way rather than blocking on the process.
+    assert killed == [4242, 4242]
+
+
+def test_killing_a_group_that_already_exited_is_not_an_error():
+    """The child usually dies on its own between the drain loop and the kill.
+    A raised ProcessLookupError there would replace a perfectly good result with
+    a spurious failure."""
+
+    class Gone:
+        pid = 2**30
+        returncode = 0
+
+    command_module._kill_group(cast(Any, Gone()))
+
+
+def test_a_read_failure_mid_drain_reports_the_error_and_stops_the_child(monkeypatch):
+    """An OSError while draining still leaves a spawned child behind, so the
+    failure path has to take it down instead of returning and forgetting it."""
+    reaped: list[bool] = []
+    monkeypatch.setattr(
+        command_module,
+        "_drain_bounded",
+        raises(OSError("pipe read failed")),
+    )
+    monkeypatch.setattr(
+        command_module,
+        "_reap",
+        lambda _process, timed_out: reaped.append(timed_out),
+    )
+    result = run_command(["/bin/sh", "-c", "printf ok"], 5)
+    assert result.error == "pipe read failed" and result.returncode is None
+    assert reaped == [True]
+
+
+def test_drain_discards_everything_past_the_limit_without_buffering_it():
+    """Exercised directly rather than through a subprocess: whether a real child
+    happens to fill the buffer exactly, overshoot it, or keep writing afterwards
+    depends on kernel pipe scheduling, and all three are contractual."""
+    read_fd, write_fd = os.pipe()
+
+    def write_in_two_batches():
+        # The second batch lands after the limit is already full, which is the
+        # case that must be discarded in place rather than buffered and sliced.
+        os.write(write_fd, b"a" * 4096)
+        time.sleep(0.2)
+        os.write(write_fd, b"b" * 4096)
+        os.close(write_fd)
+
+    writer = threading.Thread(target=write_in_two_batches)
+    try:
+        writer.start()
+
+        class Stub:
+            def __init__(self, descriptor):
+                self._descriptor = descriptor
+
+            def fileno(self):
+                return self._descriptor
+
+        class FakeProcess:
+            stdout = Stub(read_fd)
+            stderr = None
+
+        monkeypatched_limit = 100
+        with mock.patch.object(command_module, "COMMAND_OUTPUT_LIMIT", monkeypatched_limit):
+            stdout, stderr, stdout_truncated, stderr_truncated, timed_out = (
+                command_module._drain_bounded(cast(Any, FakeProcess()), 5)
+            )
+    finally:
+        writer.join(5)
+        os.close(read_fd)
+    assert stdout == b"a" * monkeypatched_limit and stdout_truncated
+    # A process without a stderr pipe contributes an empty, untruncated stream
+    # rather than a KeyError.
+    assert stderr == b"" and not stderr_truncated
+    assert not timed_out
+
+
 @pytest.mark.parametrize(
     ("result", "failure_detail", "report_text"),
     [
@@ -540,8 +671,8 @@ def test_diagnostics_version_commands_direct_and_bundle(tmp_path, monkeypatch):
         return command_result(stdout="ok\n")
 
     monkeypatch.setattr("omt_client.services.diagnostics.run_command", run)
-    diagnostics = RuntimeDiagnostics(settings, source)
-    assert diagnostics.version() == "v2.0.0"
+    about = RuntimeAbout(settings)
+    diagnostics = RuntimeDiagnostics(settings, source, about)
     assert diagnostics.status() == "ok"
     assert diagnostics.discovery().command.sources == ("Camera",)
     assert diagnostics.runtime().command.returncode == 0
@@ -549,7 +680,12 @@ def test_diagnostics_version_commands_direct_and_bundle(tmp_path, monkeypatch):
     assert diagnostics.direct("omt://host:6400").command.returncode == 0
     bundle, filename = diagnostics.bundle()
     assert filename.startswith("omt-diagnostics-")
-    assert bundle.read(2) == b"PK"
+    # The bundle stamps the build the About page reports, not a second reading
+    # of its own. A support archive that named a different build than the
+    # appliance UI would misdirect every triage that starts from it.
+    with zipfile.ZipFile(bundle) as archive:
+        assert archive.read("version.txt").decode() == about.version() + "\n"
+    assert about.version() == "v2.0.0"
 
 
 def test_host_system_accept_reject_timeout_and_unsafe_request(tmp_path, monkeypatch):
@@ -660,3 +796,20 @@ def test_production_container_wires_every_runtime_service(tmp_path):
     assert isinstance(services.system, HostSystem)
     assert services.about.version() == "unknown"
     assert "unavailable" in services.about.legal_texts()[0]
+
+
+def test_about_serves_the_legal_files_the_image_actually_ships(tmp_path):
+    """The unavailable-fallback path was covered; the path that returns real
+    text was not. That is the one the appliance takes, and it is a licence
+    obligation: About has to show the shipped LICENSE and notices verbatim."""
+    settings = settings_for(
+        tmp_path,
+        OMT_PROJECT_LICENSE_FILE=str(tmp_path / "LICENSE"),
+        OMT_THIRD_PARTY_NOTICES_FILE=str(tmp_path / "THIRD_PARTY_NOTICES.txt"),
+    )
+    Path(settings.version_file).write_text("  v9.9.9\n", encoding="utf-8")
+    Path(settings.project_license_file).write_text("LICENCE BODY\n", encoding="utf-8")
+    Path(settings.third_party_notices_file).write_text("NOTICES BODY\n", encoding="utf-8")
+    about = RuntimeAbout(settings)
+    assert about.version() == "v9.9.9"
+    assert about.legal_texts() == ("LICENCE BODY\n", "NOTICES BODY\n")

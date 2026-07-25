@@ -15,7 +15,7 @@ def _render(result: DiagnosticResult | None = None) -> ResponseReturnValue:
     source, direct_target = services().source.configuration()
     return render_template(
         "diagnostics.html",
-        app_version=services().diagnostics.version(),
+        app_version=services().about.version(),
         current_source=source,
         current_direct_target=direct_target,
         omt_status=services().diagnostics.status(),

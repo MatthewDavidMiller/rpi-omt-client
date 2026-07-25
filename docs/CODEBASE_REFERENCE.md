@@ -22,11 +22,17 @@
 | OMT XML settings | `src/omt_client/network_config.py` |
 | Templates and CSS | `src/omt_client/templates/`, `src/omt_client/static/` |
 | About route (presentation) | `src/omt_client/routes/about.py` |
-| About legal texts (service) | `RuntimeAbout` in `src/omt_client/services/about.py` |
+| Build version and legal texts (service) | `RuntimeAbout` in `src/omt_client/services/about.py` |
 | Web design tokens and layout | `src/omt_client/static/style.css`, `src/omt_client/static/favicon.svg` |
 | Dev-only preview fakes | `src/omt_client_preview/` |
 | Shell process lifecycle | `deploy/container/runtime-lib.sh`, `deploy/container/start-omt.sh`, `deploy/container/control-omt.sh`, `deploy/container/entrypoint.sh` |
 | Container | `deploy/Dockerfile`, `deploy/compose.yml` |
+
+`RuntimeAbout` is the single owner of the build version. The About page, the
+diagnostics page, and the `version.txt` member of a support bundle all read it
+through that one service, so an archive cannot name a different build than the
+UI that produced it. `DiagnosticsService` therefore has no `version()` of its
+own; `RuntimeDiagnostics` receives the About service instead.
 
 `deploy/Dockerfile` builds a wheel from the `packages` list in `pyproject.toml`
 and installs it into `/opt/venv`, so the appliance imports `omt_client` from

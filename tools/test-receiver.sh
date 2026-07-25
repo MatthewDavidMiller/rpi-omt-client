@@ -27,9 +27,16 @@ export DOTNET_NOLOGO=1
     --collect:"XPlat Code Coverage" \
     --results-directory "${PROJECT_ROOT}/.build/receiver-test-results"
 
+# Newest report wins. `sed -n 1s//p` rather than `head -n 1`: under
+# `pipefail`, a `head` that exits after one line leaves `sort` writing into a
+# closed pipe, and that SIGPIPE becomes the pipeline's status and fails this
+# gate. Whether the race is lost depends on how much output `sort` still has
+# left, so the run directories accumulating here decide it -- the gate passed
+# on a clean tree and failed once enough of them had piled up. `sed` reads its
+# input to the end and cannot lose that race.
 coverage_file="$(find "${PROJECT_ROOT}/.build/receiver-test-results" \
     -name coverage.cobertura.xml -type f -printf '%T@ %p\n' |
-    sort -nr | head -n 1 | cut -d' ' -f2-)"
+    sort -nr | sed -n '1s/^[^ ]* //p')"
 if [[ -z "${coverage_file}" ]]; then
     echo "ERROR: receiver-core coverage report was not produced" >&2
     exit 1

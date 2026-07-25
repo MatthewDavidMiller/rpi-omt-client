@@ -102,7 +102,6 @@ def test_preview_source_network_diagnostics_and_bundle_are_in_memory():
     assert services.source.save_direct("omt://host:6400").ok is True
     assert services.network.save("omt://192.0.2.1:6399").ok is True
     assert services.network.read()["discovery_server"] == "omt://192.0.2.1:6399"
-    assert services.diagnostics.version() == "preview"
     assert services.about.version() == "preview"
     assert "running:" in services.diagnostics.status()
     assert services.diagnostics.discovery().command.sources
