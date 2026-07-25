@@ -6,6 +6,7 @@
 |---|---|
 | Native receiver | `src/receiver/RpiOmt.Receiver/Program.cs` |
 | Receiver policy/status core | `src/receiver/RpiOmt.Receiver.Core` |
+| HDMI connector selection | `src/receiver/RpiOmt.Receiver.Core/HdmiConnectors.cs` |
 | Audited OMT source | `third_party/omt/PROVENANCE.md`, `third_party/omt/libomtnet`, `third_party/omt/libvmx`, `third_party/omt/omtplayer` |
 | Flask composition | `src/omt_client/factory.py`, `src/omt_client/wsgi.py` |
 | Service composition | `src/omt_client/services/composition.py` |
@@ -52,6 +53,7 @@ are POST and CSRF protected.
 | Host diagnostics | `deploy/host/host-diagnostics.sh` |
 | Reboot validator | `deploy/host/host-reboot.sh` |
 | Shared host helpers | `deploy/lib/host-validation.sh`, `deploy/lib/publication.sh`, `deploy/lib/service-install.sh` |
+| HDMI boot-configuration rules | `deploy/lib/hdmi-config.sh` |
 | Deployment contract | `deploy/manifest-v2.txt`, `deploy/transaction.sh` |
 | CLI deployment | `scripts/deploy.sh` |
 | Windows models/validation | `src/deployer/RpiOmt.Deployer.Core/Models.cs` |

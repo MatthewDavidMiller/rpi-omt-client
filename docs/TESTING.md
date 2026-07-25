@@ -24,11 +24,20 @@ and runtime adapters, at a 98% branch-coverage floor. The suite imports the
 package straight from `src/` via the `pythonpath` setting in `pyproject.toml`,
 so no install step is required.
 `make test-receiver` performs locked restore, analyzer-enabled build, shared
-validation vectors, event-ordering tests, and a 95% receiver-core branch gate.
+validation vectors, event-ordering tests, HDMI connector selection against a
+synthetic DRM sysfs tree, and a 95% receiver-core branch gate.
 `make test-deployer` performs locked restore, formatting/analyzers, unit and
 headless Avalonia tests, and 95% coverage. Shell tests exercise entrypoint,
 controller, deployment transactions, install/uninstall contracts, host helpers,
-Compose, and supply-chain pins.
+HDMI boot configuration, Compose, and supply-chain pins.
+
+Timing-sensitive suites use `conftest.VirtualClock` rather than wall-clock
+sleeps, so a budget assertion measures the code's own deadline arithmetic
+instead of the host's filesystem latency.
+
+`scripts/test-local.sh` is the single entry point for every shell suite, and
+`tests/unit/test_test_runner_args.sh` fails if a file in `tests/unit/` is not
+wired into it.
 
 The normal `make test` adds an amd64 image build. Full mode adds container smoke
 and OMT receiver discovery/probe checks. Pi-only validation still must cover

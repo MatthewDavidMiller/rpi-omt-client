@@ -51,6 +51,13 @@ require 'RestrictAddressFamilies=AF_UNIX' "reboot unit must restrict networking"
 require 'PathChanged=\$\{HOST_REBOOT_REQUEST_FILE\}' "reboot path unit must watch the fixed request"
 require 'systemctl enable --now omt-client-reboot\.path' "reboot watcher must be enabled"
 
+require 'source .*/hdmi-config\.sh' "installer must source the shared HDMI rules"
+require 'host_validate_hdmi_video_mode' "HDMI mode validation must use the tested rule"
+require 'host_hdmi_config_txt' "config.txt rewrite must use the tested rule"
+require 'host_hdmi_cmdline_line' "cmdline.txt rewrite must use the tested rule"
+forbid 'BEGIN OMT Client HDMI configuration' \
+    "the managed config.txt block belongs in deploy/lib/hdmi-config.sh"
+
 forbid '5960-8999' "installer must not open a broad legacy media port range"
 require 'add-service=mdns' "firewalld must allow mDNS"
 require 'ufw allow 5353/udp' "ufw must allow mDNS"

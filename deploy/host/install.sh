@@ -20,22 +20,17 @@ With no option, a previously saved choice is preserved; first installs use auto.
 EOF
 }
 
-validate_hdmi_video_mode() {
-    local mode="$1"
-    local dimensions width height refresh
-
-    [[ "${mode}" == "auto" ]] && return 0
-    [[ "${mode}" =~ ^HDMI-A-[12]:[1-9][0-9]{2,3}x[1-9][0-9]{2,3}@[1-9][0-9]{1,2}$ ]] || \
-        return 1
-    dimensions="${mode#*:}"
-    width="${dimensions%%x*}"
-    dimensions="${dimensions#*x}"
-    height="${dimensions%%@*}"
-    refresh="${dimensions#*@}"
-    (( 10#${width} >= 320 && 10#${width} <= 7680 )) && \
-        (( 10#${height} >= 200 && 10#${height} <= 4320 )) && \
-        (( 10#${refresh} >= 23 && 10#${refresh} <= 240 ))
-}
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+INSTALL_DIR="$(cd -- "${SCRIPT_DIR}/../.." && pwd -P)"
+LIB_DIR="${INSTALL_DIR}/deploy/lib"
+# shellcheck source=deploy/lib/host-validation.sh
+source "${LIB_DIR}/host-validation.sh"
+# shellcheck source=deploy/lib/hdmi-config.sh
+source "${LIB_DIR}/hdmi-config.sh"
+# shellcheck source=deploy/lib/publication.sh
+source "${LIB_DIR}/publication.sh"
+# shellcheck source=deploy/lib/service-install.sh
+source "${LIB_DIR}/service-install.sh"
 
 HDMI_VIDEO_EXPLICIT=false
 HDMI_VIDEO_REQUEST=""
@@ -76,20 +71,11 @@ while (($#)); do
     esac
 done
 if [[ "${HDMI_VIDEO_EXPLICIT}" == "true" ]] && \
-   ! validate_hdmi_video_mode "${HDMI_VIDEO_REQUEST}"; then
+   ! host_validate_hdmi_video_mode "${HDMI_VIDEO_REQUEST}"; then
     echo "ERROR: Invalid --hdmi-video mode: ${HDMI_VIDEO_REQUEST}" >&2
     exit 2
 fi
 
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
-INSTALL_DIR="$(cd -- "${SCRIPT_DIR}/../.." && pwd -P)"
-LIB_DIR="${INSTALL_DIR}/deploy/lib"
-# shellcheck source=deploy/lib/host-validation.sh
-source "${LIB_DIR}/host-validation.sh"
-# shellcheck source=deploy/lib/publication.sh
-source "${LIB_DIR}/publication.sh"
-# shellcheck source=deploy/lib/service-install.sh
-source "${LIB_DIR}/service-install.sh"
 if ! host_validate_safe_absolute_path "${INSTALL_DIR}"; then
     echo "ERROR: Invalid install directory: ${INSTALL_DIR}" >&2
     exit 1
@@ -191,7 +177,7 @@ if [[ -f "${INSTALLER_CONFIG_FILE}" ]]; then
         exit 1
     fi
     SAVED_HDMI_VIDEO_MODE="${installer_config_lines[0]#HDMI_VIDEO_MODE=}"
-    if ! validate_hdmi_video_mode "${SAVED_HDMI_VIDEO_MODE}"; then
+    if ! host_validate_hdmi_video_mode "${SAVED_HDMI_VIDEO_MODE}"; then
         echo "ERROR: Invalid saved HDMI mode in ${INSTALLER_CONFIG_FILE}." >&2
         exit 1
     fi
@@ -571,51 +557,7 @@ CONFIG_FILE="/boot/firmware/config.txt"
 if [[ -f "${CONFIG_FILE}" ]]; then
     echo "Configuring HDMI output..."
     HDMI_TMP="$(mktemp "${CONFIG_FILE}.omt-client.XXXXXX")"
-    awk '
-        function flush_pending_blanks() {
-            while (pending_blanks > 0) {
-                print ""
-                pending_blanks--
-            }
-        }
-        function emit_unmanaged(line) {
-            if (line ~ /^[[:space:]]*$/) {
-                pending_blanks++
-                return
-            }
-            flush_pending_blanks()
-            print line
-        }
-        /^# BEGIN OMT Client HDMI configuration$/ {
-            in_managed = 1
-            managed_count = 0
-            next
-        }
-        /^# END OMT Client HDMI configuration$/ {
-            in_managed = 0
-            managed_count = 0
-            next
-        }
-        in_managed {
-            managed_lines[++managed_count] = $0
-            next
-        }
-        { emit_unmanaged($0) }
-        END {
-            # A truncated older managed block must not erase unrelated settings
-            # that happen to follow its missing end marker.
-            if (in_managed) {
-                for (line_number = 1; line_number <= managed_count; line_number++) {
-                    emit_unmanaged(managed_lines[line_number])
-                }
-            }
-            print ""
-            print "# BEGIN OMT Client HDMI configuration"
-            print "[all]"
-            print "dtoverlay=vc4-kms-v3d"
-            print "# END OMT Client HDMI configuration"
-        }
-    ' "${CONFIG_FILE}" > "${HDMI_TMP}"
+    host_hdmi_config_txt < "${CONFIG_FILE}" > "${HDMI_TMP}"
     chmod --reference="${CONFIG_FILE}" "${HDMI_TMP}"
     chown --reference="${CONFIG_FILE}" "${HDMI_TMP}"
     sync -f "${HDMI_TMP}"
@@ -640,23 +582,11 @@ if [[ -f "${CMDLINE_FILE}" ]]; then
         echo "ERROR: ${CMDLINE_FILE} must contain exactly one non-empty line." >&2
         exit 1
     fi
-    read -r -a cmdline_tokens <<< "${cmdline_lines[0]}"
-    updated_cmdline_tokens=()
-    for token in "${cmdline_tokens[@]}"; do
-        if [[ -n "${PREVIOUS_HDMI_TOKEN}" && "${token}" == "${PREVIOUS_HDMI_TOKEN}" ]]; then
-            continue
-        fi
-        if [[ -n "${DESIRED_HDMI_CONNECTOR}" && \
-              "${token}" == "video=${DESIRED_HDMI_CONNECTOR}:"* ]]; then
-            echo "ERROR: ${CMDLINE_FILE} already contains an unmanaged ${DESIRED_HDMI_CONNECTOR} video setting: ${token}" >&2
-            exit 1
-        fi
-        updated_cmdline_tokens+=("${token}")
-    done
-    if [[ -n "${DESIRED_HDMI_TOKEN}" ]]; then
-        updated_cmdline_tokens+=("${DESIRED_HDMI_TOKEN}")
+    if ! UPDATED_CMDLINE="$(host_hdmi_cmdline_line "${cmdline_lines[0]}" \
+            "${PREVIOUS_HDMI_TOKEN}" "${DESIRED_HDMI_TOKEN}" "${DESIRED_HDMI_CONNECTOR}")"; then
+        echo "ERROR: ${CMDLINE_FILE} already contains an unmanaged video setting." >&2
+        exit 1
     fi
-    UPDATED_CMDLINE="${updated_cmdline_tokens[*]}"
     if [[ "${UPDATED_CMDLINE}" != "${cmdline_lines[0]}" ]]; then
         CMDLINE_TMP="$(mktemp "${CMDLINE_FILE}.omt-client.XXXXXX")"
         printf '%s\n' "${UPDATED_CMDLINE}" > "${CMDLINE_TMP}"

@@ -38,31 +38,29 @@ cp "${RUNNER}" "${fixture_root}/scripts/test-local.sh"
 cp "${PROJECT_ROOT}/scripts/docker-test-env.sh" \
     "${fixture_root}/scripts/docker-test-env.sh"
 
+# Every shell suite must be wired into the runner. One that is not would pass
+# review, pass its own invocation, and never run in any gate again.
+unwired=()
+for suite in "${PROJECT_ROOT}"/tests/unit/*.sh; do
+    suite_path="tests/unit/$(basename -- "${suite}")"
+    grep -Fq "${suite_path}" "${RUNNER}" || unwired+=("${suite_path}")
+done
+if ((${#unwired[@]} > 0)); then
+    echo "FAIL: shell suites are not run by test-local.sh: ${unwired[*]}" >&2
+    exit 1
+fi
+echo "PASS: every tests/unit shell suite is wired into the runner"
+
 stub_paths=(
-    tests/unit/test_flask_app_syntax.sh
-    tests/unit/test_control_omt.sh
-    tests/unit/test_entrypoint_logic.sh
-    tests/unit/test_start_omt.sh
-    tests/unit/test_host_diagnostics.sh
-    tests/unit/test_host_reboot.sh
-    tests/unit/test_host_install_helpers.sh
-    tests/unit/test_deployment_transactions.sh
-    tests/unit/test_compose_config.sh
-    tests/unit/test_install.sh
-    tests/unit/test_uninstall.sh
-    tests/unit/test_detect_version.sh
-    tests/unit/test_container_engine.sh
-    tests/unit/test_setup_hooks.sh
-    tests/unit/test_python_tooling.sh
-    tests/unit/test_test_runner_args.sh
-    tests/unit/test_supply_chain.sh
     scripts/lint.sh
     tools/test-receiver.sh
-    tests/unit/test_dockerfile_lint.sh
     tests/integration/test_docker_build.sh
     tests/integration/test_container_smoke.sh
     tests/integration/test_omt_network.sh
 )
+for suite in "${PROJECT_ROOT}"/tests/unit/*.sh; do
+    stub_paths+=("tests/unit/$(basename -- "${suite}")")
+done
 for stub_path in "${stub_paths[@]}"; do
     ln -s /bin/true "${fixture_root}/${stub_path}"
 done

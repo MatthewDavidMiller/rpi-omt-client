@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 from omt_client import create_app
@@ -16,6 +18,31 @@ TESTING_CONFIG = {
     "WTF_CSRF_ENABLED": False,
     "SESSION_COOKIE_SECURE": False,
 }
+
+
+class VirtualClock:
+    """A monotonic clock that advances only when the code under test waits.
+
+    Deadline and budget assertions must describe what the code does with its
+    own arithmetic, not how fast this host happens to fsync. Replace a module's
+    `time` with `clock.module()` and every `monotonic`/`sleep` call in it
+    becomes deterministic and instant.
+    """
+
+    def __init__(self, start: float = 1_000.0) -> None:
+        self.now = start
+        self.slept: list[float] = []
+
+    def monotonic(self) -> float:
+        return self.now
+
+    def sleep(self, seconds: float) -> None:
+        self.slept.append(seconds)
+        self.now += seconds
+
+    def module(self) -> SimpleNamespace:
+        """Return a stand-in for the `time` module bound to this clock."""
+        return SimpleNamespace(monotonic=self.monotonic, sleep=self.sleep, time=time.time)
 
 
 def raises(error: BaseException):

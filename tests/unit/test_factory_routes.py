@@ -194,6 +194,21 @@ def test_security_headers_and_contextual_error_pages(factory_client):
     assert b"Return to dashboard" in oversized.data
 
 
+def test_templates_stay_within_the_content_security_policy():
+    """The response header sends `style-src 'self'; script-src 'none'`, so an
+    inline style, script, or event handler added to a template is dropped by
+    the browser with no server-side error: the page just renders unstyled or
+    inert. Keep the markup and the policy from drifting apart."""
+    blocked = re.compile(r"<script\b|\sstyle=|\son[a-z]+=|javascript:", re.IGNORECASE)
+    offenders = [
+        f"{template.name}:{line_number}"
+        for template in sorted((REPO_ROOT / "src" / "omt_client" / "templates").glob("*.html"))
+        for line_number, line in enumerate(template.read_text(encoding="utf-8").splitlines(), 1)
+        if blocked.search(line)
+    ]
+    assert not offenders, "Templates use markup the CSP blocks: " + ", ".join(offenders)
+
+
 def test_unknown_paths_render_the_context_appropriate_view(factory_app, factory_client):
     """Without a 404 handler these served Werkzeug's default page, leaking
     framework markup to an unauthenticated caller."""

@@ -116,7 +116,11 @@ status_locked() {
     local record pid
     record="$(get_managed_record 2>/dev/null || true)"
     if [[ -z "${record}" ]]; then
-        rm -f -- "${PID_FILE}"
+        # The receiver is provably gone, so its last published status is a
+        # leftover. Clearing it with the PID record lets the dashboard report
+        # "stopped" instead of an unexplained "status stale". Only `start`
+        # publishes a new one, and it holds this same lock.
+        rm -f -- "${PID_FILE}" "${STATUS_FILE}"
         echo "stopped"
         return 3
     fi

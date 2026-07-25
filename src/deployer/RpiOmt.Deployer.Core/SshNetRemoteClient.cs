@@ -221,7 +221,9 @@ public sealed class SshNetRemoteClient(ICommandRunner commandRunner) : IRemoteCl
                 return;
             }
 
-            destination.Append(Encoding.UTF8.GetString(buffer, 0, count));
+            // The buffer decodes: a read boundary can fall inside a UTF-8
+            // scalar, and only it carries the decoder state across chunks.
+            destination.Append(buffer.AsSpan(0, count));
         }
     }
 }

@@ -304,3 +304,145 @@ public sealed class CoreTests
         JsonDocument.Parse(
             File.ReadAllText(Path.Combine(AppContext.BaseDirectory, fileName)));
 }
+
+public sealed class HdmiConnectorTests : IDisposable
+{
+    private readonly string _root = Directory.CreateTempSubdirectory("omt-drm").FullName;
+
+    private string DrmRoot => Path.Combine(_root, "sys");
+
+    private string DeviceRoot => Path.Combine(_root, "dev");
+
+    private HdmiConnectorLocator Locator => new(DrmRoot, DeviceRoot);
+
+    [Fact]
+    public void AutoPrefersTheFirstConnectedOutputAndItsAlsaDevice()
+    {
+        Publish("card1", "HDMI-A-1", "connected", "32");
+        Publish("card1", "HDMI-A-2", "connected", "40");
+
+        HdmiConnector connector = Assert.IsType<HdmiConnector>(Locator.Find("auto"));
+        Assert.Equal("HDMI-A-1", connector.Name);
+        Assert.Equal(32u, connector.ConnectorId);
+        Assert.Equal(Path.Combine(DeviceRoot, "card1"), connector.DevicePath);
+        Assert.Equal("plughw:CARD=vc4hdmi0,DEV=0", connector.AlsaDevice);
+        Assert.True(connector.IsConnected());
+
+        Assert.Equal(
+            "plughw:CARD=vc4hdmi1,DEV=0",
+            Assert.IsType<HdmiConnector>(Locator.Find("HDMI-A-2")).AlsaDevice);
+    }
+
+    [Fact]
+    public void AutoFallsThroughToTheSecondOutputWhenTheFirstIsNotUsable()
+    {
+        Publish("card1", "HDMI-A-1", "disconnected", "32");
+        Publish("card1", "HDMI-A-2", "connected", "40");
+
+        Assert.Equal("HDMI-A-2", Assert.IsType<HdmiConnector>(Locator.Find("auto")).Name);
+        Assert.Null(Locator.Find("HDMI-A-1"));
+    }
+
+    [Theory]
+    [InlineData("connected", "0")]
+    [InlineData("connected", "")]
+    [InlineData("connected", "-1")]
+    [InlineData("connected", "not-a-number")]
+    [InlineData("unknown", "32")]
+    public void UnusableSysfsAttributesSelectNothing(string status, string connectorId)
+    {
+        Publish("card1", "HDMI-A-1", status, connectorId);
+        Assert.Null(Locator.Find("auto"));
+    }
+
+    [Fact]
+    public void AnEmptySysfsAttributeReadsAsAbsent()
+    {
+        // sysfs can hand back an empty read while a hotplug is settling.
+        Publish("card1", "HDMI-A-1", "connected", "32");
+        File.WriteAllText(Path.Combine(DrmRoot, "card1-HDMI-A-1", "status"), "");
+        Assert.Null(Locator.Find("auto"));
+    }
+
+    [Fact]
+    public void AConnectorWithoutItsCardDeviceIsSkipped()
+    {
+        Publish("card1", "HDMI-A-1", "connected", "32", withCardDevice: false);
+        Assert.Null(Locator.Find("auto"));
+    }
+
+    [Fact]
+    public void AMissingDrmTreeIsNoDisplayRatherThanAFailure()
+    {
+        // The play loop treats null as "waiting for HDMI" and retries. An
+        // exception here would instead terminate playback on any Pi that has
+        // not bound its DRM driver yet.
+        Assert.Null(Locator.Find("auto"));
+        Assert.Null(new HdmiConnectorLocator("/nonexistent/drm", DeviceRoot).Find("auto"));
+    }
+
+    [Fact]
+    public void AnUnreadableDrmTreeIsAlsoNoDisplayRatherThanAFailure()
+    {
+        Publish("card1", "HDMI-A-1", "connected", "32");
+        if (!OperatingSystem.IsLinux() || Environment.IsPrivilegedProcess)
+        {
+            // The appliance is Linux-only, and mode bits do not apply to root,
+            // so on either there is nothing to observe here.
+            return;
+        }
+
+        string connector = Path.Combine(DrmRoot, "card1-HDMI-A-1");
+        File.SetUnixFileMode(Path.Combine(connector, "status"), UnixFileMode.None);
+        Assert.Null(Locator.Find("auto"));
+
+        File.SetUnixFileMode(DrmRoot, UnixFileMode.None);
+        try
+        {
+            Assert.Null(Locator.Find("auto"));
+        }
+        finally
+        {
+            File.SetUnixFileMode(
+                DrmRoot,
+                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        }
+    }
+
+    [Fact]
+    public void AHotUnpluggedConnectorStopsReportingItselfAsConnected()
+    {
+        Publish("card1", "HDMI-A-1", "connected", "32");
+        HdmiConnector connector = Assert.IsType<HdmiConnector>(Locator.Find("auto"));
+
+        File.WriteAllText(Path.Combine(connector.SysfsPath, "status"), "disconnected\n");
+        Assert.False(connector.IsConnected());
+
+        File.WriteAllText(Path.Combine(connector.SysfsPath, "status"), "connected\n");
+        File.WriteAllText(Path.Combine(connector.SysfsPath, "connector_id"), "40\n");
+        Assert.False(connector.IsConnected());
+
+        Directory.Delete(connector.SysfsPath, true);
+        Assert.False(connector.IsConnected());
+    }
+
+    public void Dispose() => Directory.Delete(_root, true);
+
+    private void Publish(
+        string card,
+        string name,
+        string status,
+        string connectorId,
+        bool withCardDevice = true)
+    {
+        string path = Path.Combine(DrmRoot, $"{card}-{name}");
+        Directory.CreateDirectory(path);
+        File.WriteAllText(Path.Combine(path, "status"), status + "\n");
+        File.WriteAllText(Path.Combine(path, "connector_id"), connectorId + "\n");
+        Directory.CreateDirectory(DeviceRoot);
+        if (withCardDevice)
+        {
+            File.WriteAllText(Path.Combine(DeviceRoot, card), "");
+        }
+    }
+}

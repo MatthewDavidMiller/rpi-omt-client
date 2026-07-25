@@ -48,11 +48,15 @@ if run_control status >/dev/null 2>&1; then
 fi
 
 printf '999999 1\n' > "${CASE_DIR}/config/run/omt.pid"
+printf '{"state":"running"}\n' > "${CASE_DIR}/config/run/playback-status.json"
 if run_control status >/dev/null 2>&1; then
     echo "stale PID record was trusted" >&2
     exit 1
 fi
 [[ ! -e "${CASE_DIR}/config/run/omt.pid" ]]
+# A status the dead receiver left behind would otherwise pin the dashboard to
+# "status stale" instead of the "stopped" the controller just reported.
+[[ ! -e "${CASE_DIR}/config/run/playback-status.json" ]]
 
 rm -f "${CASE_DIR}/config/source_target.json"
 ln -s target "${CASE_DIR}/config/source_target.json"

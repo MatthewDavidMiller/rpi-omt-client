@@ -163,6 +163,7 @@ internal static class Program
         string target = command.Target;
         string connectorPreference = command.Connector;
         PlaybackStatus status = new(command.StatusFile, target);
+        HdmiConnectorLocator connectors = new();
 
         while (_running)
         {
@@ -173,7 +174,7 @@ internal static class Program
                 Wait(1_000);
                 continue;
             }
-            ConnectorSelection? selection = ConnectorSelection.Find(connectorPreference);
+            HdmiConnector? selection = connectors.Find(connectorPreference);
             if (selection is null)
             {
                 status.WaitingForHdmi(
@@ -234,7 +235,7 @@ internal static class Program
 
     private static void RunSession(
         string target,
-        ConnectorSelection selection,
+        HdmiConnector selection,
         PlaybackStatus status)
     {
         using DRMDevice device = new(selection.DevicePath);
@@ -368,69 +369,6 @@ internal static class Program
     };
 }
 
-internal sealed record ConnectorSelection(
-    string Name,
-    string DevicePath,
-    string SysfsPath,
-    uint ConnectorId,
-    string AlsaDevice)
-{
-    public static ConnectorSelection? Find(string preference)
-    {
-        IEnumerable<string> names = preference == "auto"
-            ? ["HDMI-A-1", "HDMI-A-2"]
-            : [preference];
-        foreach (string name in names)
-        {
-            foreach (string path in Directory.EnumerateDirectories(
-                         "/sys/class/drm", $"card*-{name}").Order(StringComparer.Ordinal))
-            {
-                string status = ReadOneLine(Path.Combine(path, "status"));
-                string connectorId = ReadOneLine(Path.Combine(path, "connector_id"));
-                if (status != "connected" ||
-                    !uint.TryParse(connectorId, NumberStyles.None,
-                        CultureInfo.InvariantCulture, out uint id) || id == 0)
-                {
-                    continue;
-                }
-                string card = Path.GetFileName(path)[..^($"-{name}".Length)];
-                string device = $"/dev/dri/{card}";
-                if (!File.Exists(device))
-                {
-                    continue;
-                }
-                string alsa = name == "HDMI-A-1"
-                    ? "plughw:CARD=vc4hdmi0,DEV=0"
-                    : "plughw:CARD=vc4hdmi1,DEV=0";
-                return new(name, device, path, id, alsa);
-            }
-        }
-        return null;
-    }
-
-    public bool IsConnected() =>
-        ReadOneLine(Path.Combine(SysfsPath, "status")) == "connected" &&
-        ReadOneLine(Path.Combine(SysfsPath, "connector_id")) ==
-        ConnectorId.ToString(CultureInfo.InvariantCulture);
-
-    private static string ReadOneLine(string path)
-    {
-        try
-        {
-            using StreamReader reader = new(path);
-            return reader.ReadLine()?.Trim() ?? "";
-        }
-        catch (IOException)
-        {
-            return "";
-        }
-        catch (UnauthorizedAccessException)
-        {
-            return "";
-        }
-    }
-}
-
 internal sealed class PlaybackStatus
 {
     private readonly object _sync = new();
@@ -444,39 +382,39 @@ internal sealed class PlaybackStatus
         _target = target;
     }
 
-    public void VideoStarting(string detail, ConnectorSelection? connector) =>
+    public void VideoStarting(string detail, HdmiConnector? connector) =>
         Publish(_model.VideoStarting(detail), connector);
 
-    public void WaitingForDiscovery(string detail, ConnectorSelection? connector) =>
+    public void WaitingForDiscovery(string detail, HdmiConnector? connector) =>
         Publish(_model.WaitingForDiscovery(detail), connector);
 
-    public void WaitingForHdmi(string detail, ConnectorSelection? connector) =>
+    public void WaitingForHdmi(string detail, HdmiConnector? connector) =>
         Publish(_model.WaitingForHdmi(detail), connector);
 
-    public void VideoRetrying(string detail, ConnectorSelection? connector) =>
+    public void VideoRetrying(string detail, HdmiConnector? connector) =>
         Publish(_model.VideoRetrying(detail), connector);
 
-    public void UnsupportedFormat(string detail, ConnectorSelection? connector) =>
+    public void UnsupportedFormat(string detail, HdmiConnector? connector) =>
         Publish(_model.UnsupportedFormat(detail), connector);
 
-    public void VideoRunning(string detail, ConnectorSelection? connector) =>
+    public void VideoRunning(string detail, HdmiConnector? connector) =>
         Publish(_model.VideoRunning(detail), connector);
 
-    public void AudioRunning(string detail, ConnectorSelection? connector) =>
+    public void AudioRunning(string detail, HdmiConnector? connector) =>
         Publish(_model.AudioRunning(detail), connector);
 
-    public void AudioFailed(string detail, ConnectorSelection? connector) =>
+    public void AudioFailed(string detail, HdmiConnector? connector) =>
         Publish(_model.AudioFailed(detail), connector);
 
-    public void AudioStopped(ConnectorSelection? connector) =>
+    public void AudioStopped(HdmiConnector? connector) =>
         Publish(_model.AudioStopped(), connector);
 
-    public void Stopped(string detail, ConnectorSelection? connector) =>
+    public void Stopped(string detail, HdmiConnector? connector) =>
         Publish(_model.Stopped(detail), connector);
 
     private void Publish(
         PlaybackProjection projection,
-        ConnectorSelection? connector)
+        HdmiConnector? connector)
     {
         lock (_sync)
         {
@@ -522,7 +460,7 @@ internal sealed class AudioWorker : IDisposable
     private readonly OMTReceive _receiver;
     private readonly string _device;
     private readonly PlaybackStatus _status;
-    private readonly ConnectorSelection _selection;
+    private readonly HdmiConnector _selection;
     private Thread? _thread;
     private volatile bool _running;
 
@@ -530,7 +468,7 @@ internal sealed class AudioWorker : IDisposable
         OMTReceive receiver,
         string device,
         PlaybackStatus status,
-        ConnectorSelection selection)
+        HdmiConnector selection)
     {
         _receiver = receiver;
         _device = device;

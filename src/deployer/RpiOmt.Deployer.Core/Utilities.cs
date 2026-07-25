@@ -43,29 +43,57 @@ public sealed class SecretRedactor(IEnumerable<string> values)
 public sealed class BoundedTextBuffer(int maximumBytes)
 {
     private readonly StringBuilder _builder = new();
+    private readonly Decoder _decoder = Encoding.UTF8.GetDecoder();
+    private char[] _decoded = [];
     private int _retainedBytes;
     private long _totalBytes;
 
     public bool Truncated { get; private set; }
+
+    /// <summary>
+    /// Appends one chunk of a UTF-8 byte stream. A chunk boundary may fall
+    /// inside a scalar, so the decoder state is kept across calls and the
+    /// split character is completed by the next chunk instead of decoding to
+    /// U+FFFD. A sequence still incomplete when the stream ends is dropped.
+    /// </summary>
+    public void Append(ReadOnlySpan<byte> value)
+    {
+        var required = Encoding.UTF8.GetMaxCharCount(value.Length);
+        if (_decoded.Length < required)
+        {
+            _decoded = new char[required];
+        }
+
+        var count = _decoder.GetChars(value, _decoded, false);
+        if (count > 0)
+        {
+            Append(_decoded.AsSpan(0, count));
+        }
+    }
 
     public void Append(ReadOnlySpan<char> value)
     {
         var bytes = Encoding.UTF8.GetBytes(value.ToString());
         _totalBytes += bytes.Length;
         var available = Math.Max(0, maximumBytes - _retainedBytes);
-        if (available > 0)
-        {
-            var count = Math.Min(available, bytes.Length);
-            while (count > 0 && (bytes[count - 1] & 0xc0) == 0x80)
-            {
-                count--;
-            }
+        var count = Math.Min(available, bytes.Length);
 
+        // bytes[count] is the first byte that will be dropped. A continuation
+        // byte there means the limit fell inside a scalar, so retreat to that
+        // scalar's lead byte: retaining a partial sequence would decode to
+        // U+FFFD and corrupt the last character an operator gets to see.
+        while (count > 0 && count < bytes.Length && (bytes[count] & 0xc0) == 0x80)
+        {
+            count--;
+        }
+
+        if (count > 0)
+        {
             _builder.Append(Encoding.UTF8.GetString(bytes, 0, count));
             _retainedBytes += count;
         }
 
-        Truncated |= bytes.Length > available;
+        Truncated |= count < bytes.Length;
     }
 
     public override string ToString()
@@ -75,6 +103,6 @@ public sealed class BoundedTextBuffer(int maximumBytes)
             return _builder.ToString();
         }
 
-        return $"{_builder}\n[output truncated: retained {maximumBytes} of {_totalBytes} bytes]\n";
+        return $"{_builder}\n[output truncated: retained {_retainedBytes} of {_totalBytes} bytes]\n";
     }
 }

@@ -31,15 +31,19 @@ unprivileged container
 `src/receiver/RpiOmt.Receiver` builds against audited source snapshots in
 `third_party/omt`. Its dependency-free
 `src/receiver/RpiOmt.Receiver.Core` owns typed CLI parsing, shared target
-validation, format policy, sanitization, and synchronized status projection.
+validation, format policy, sanitization, synchronized status projection, and
+HDMI connector selection over the DRM sysfs tree.
 `discover` emits bounded JSON, `probe` checks a direct OMT target, and `play`
 owns receive, DRM, ALSA, hotplug, retry, and status publication. Discovered
 names are NFC, have no control characters, and are at most 63 UTF-8 bytes.
 Direct targets must be exact `omt://host:port` URIs.
 
-Playback supports either Pi HDMI connector. Frames over 1920×1080 or 60 fps are
-reported as `unsupported-format`. Interlaced input is presented progressively
-without deinterlacing. Audio failure degrades playback while video continues.
+Playback supports either Pi HDMI connector. A missing, unreadable, or
+half-populated DRM tree reads as "no display connected", so the play loop
+reports `waiting-for-hdmi` and retries instead of exiting. Frames over
+1920×1080 or 60 fps are reported as `unsupported-format`. Interlaced input is
+presented progressively without deinterlacing. Audio failure degrades playback
+while video continues.
 
 ## Container and host boundary
 

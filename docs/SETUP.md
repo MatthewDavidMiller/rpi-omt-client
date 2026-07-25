@@ -41,6 +41,7 @@ including:
 - `deploy/host/uninstall.sh`
 - `deploy/host/host-diagnostics.sh`
 - `deploy/host/host-reboot.sh`
+- `deploy/lib/hdmi-config.sh`
 - `deploy/lib/host-validation.sh`
 - `deploy/lib/publication.sh`
 - `deploy/lib/service-install.sh`

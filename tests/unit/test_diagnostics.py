@@ -9,6 +9,7 @@ import zipfile
 from pathlib import Path
 
 import pytest
+from conftest import VirtualClock, raises
 
 from omt_client.models import CommandResult
 from omt_client.services.diagnostics import (
@@ -284,6 +285,33 @@ def test_validated_pcap_reports_an_os_error_during_the_read(tmp_path: Path, monk
     assert spool is None and "unable to read packet capture" in error
 
 
+def test_validated_pcap_reports_a_capture_that_cannot_be_opened(tmp_path: Path, monkeypatch):
+    """lstat can succeed and the open still fail; nothing may be left open or
+    spooled when it does."""
+    diagnostics = _diagnostics(tmp_path)
+    Path(diagnostics._settings.diagnostics_host_pcap_file).write_bytes(PCAP)
+    monkeypatch.setattr(os, "open", raises(PermissionError("denied")))
+    spool, error = diagnostics._validated_pcap(_valid_metadata())
+    assert spool is None and "unable to read packet capture" in error
+
+
+def test_validated_pcap_assembles_the_magic_across_short_reads(tmp_path: Path, monkeypatch):
+    """A capture arrives in whatever chunks the kernel returns, so the magic
+    must be accumulated across them rather than read from the first chunk."""
+    diagnostics = _diagnostics(tmp_path)
+    Path(diagnostics._settings.diagnostics_host_pcap_file).write_bytes(PCAP)
+    original_read = os.read
+
+    def short_read(descriptor: int, count: int) -> bytes:
+        return original_read(descriptor, min(2, count))
+
+    monkeypatch.setattr(os, "read", short_read)
+    spool, error = diagnostics._validated_pcap(_valid_metadata())
+    assert spool is not None and not error
+    assert spool.read() == PCAP
+    spool.close()
+
+
 def _prepare_bundle(diagnostics: RuntimeDiagnostics, monkeypatch) -> Path:
     request = Path(diagnostics._settings.diagnostics_host_request_file)
     request.touch(mode=0o600)
@@ -408,27 +436,35 @@ def test_bundle_opt_out_never_streams_raw_capture(tmp_path: Path, monkeypatch):
 
 
 def test_bundle_budget_bounds_all_container_commands(tmp_path: Path, monkeypatch):
+    """Every container command shares one budget, and the first one still runs.
+
+    The clock is virtual: a real one measures this host's fsync latency for the
+    correlated host request, which on a slow filesystem alone exhausts a budget
+    this small and skips every command before the deadline arithmetic is
+    exercised at all."""
+    budget = 0.03
     diagnostics = _diagnostics(
         tmp_path,
-        OMT_DIAGNOSTICS_BUNDLE_BUDGET_SECONDS="0.03",
+        OMT_DIAGNOSTICS_BUNDLE_BUDGET_SECONDS=str(budget),
         OMT_DIAGNOSTICS_RECEIVE_PROBE="0",
     )
     request = Path(diagnostics._settings.diagnostics_host_request_file)
     request.touch(mode=0o600)
     os.chmod(request, 0o600)
+    clock = VirtualClock()
+    monkeypatch.setattr("omt_client.services.diagnostics.time", clock.module())
     timeouts: list[float] = []
 
     def consume_timeout(command, timeout):
         timeouts.append(timeout)
-        time.sleep(timeout)
+        clock.sleep(timeout)
         return CommandResult(command=" ".join(command), returncode=0, stdout="ok")
 
     monkeypatch.setattr("omt_client.services.diagnostics.run_command", consume_timeout)
-    started = time.monotonic()
+    started = clock.now
     bundle, _name = diagnostics.bundle()
-    elapsed = time.monotonic() - started
     bundle.close()
 
     assert timeouts
-    assert sum(timeouts) <= 0.04
-    assert elapsed < 0.2
+    assert sum(timeouts) <= budget
+    assert clock.now - started <= budget

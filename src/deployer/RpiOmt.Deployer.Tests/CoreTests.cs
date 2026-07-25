@@ -293,6 +293,44 @@ public sealed class UtilityTests
         unicode.Append("éx");
         Assert.True(unicode.Truncated);
     }
+
+    [Fact]
+    public void BoundedBufferKeepsWholeScalarsAtItsLimit()
+    {
+        // The limit must never split a scalar: half a sequence decodes to
+        // U+FFFD, so an operator would read corruption instead of output.
+        var exact = new BoundedTextBuffer(2);
+        exact.Append("é");
+        Assert.False(exact.Truncated);
+        Assert.Equal("é", exact.ToString());
+
+        var split = new BoundedTextBuffer(2);
+        split.Append("aé");
+        Assert.True(split.Truncated);
+        Assert.StartsWith("a\n[output truncated: retained 1 of 3 bytes]", split.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain("�", split.ToString(), StringComparison.Ordinal);
+
+        var full = new BoundedTextBuffer(0);
+        full.Append("a");
+        Assert.True(full.Truncated);
+        Assert.StartsWith("\n[output truncated: retained 0 of 1 bytes]", full.ToString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BoundedBufferRejoinsScalarsSplitAcrossChunks()
+    {
+        // Remote reads land on arbitrary byte boundaries. Decoding each chunk
+        // alone would turn every straddling character into U+FFFD.
+        var bytes = Encoding.UTF8.GetBytes("héllo");
+        var buffer = new BoundedTextBuffer(64);
+        foreach (var index in Enumerable.Range(0, bytes.Length))
+        {
+            buffer.Append(bytes.AsSpan(index, 1));
+        }
+
+        Assert.False(buffer.Truncated);
+        Assert.Equal("héllo", buffer.ToString());
+    }
 }
 
 public sealed class ProcessRunnerTests
