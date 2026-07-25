@@ -114,7 +114,7 @@ test-py:
 	@if [ ! -x "$(TEST_PYTHON)" ]; then \
 		echo "Run 'make test-setup' first to install Python test tools"; exit 1; fi
 	$(TEST_PYTHON) -m pytest tests/unit \
-		--cov=src/omt_client --cov-report=term-missing --cov-fail-under=90 -v
+		--cov=src/omt_client --cov-report=term-missing --cov-fail-under=98 -v
 
 test-receiver:
 	./tools/test-receiver.sh

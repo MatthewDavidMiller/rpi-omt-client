@@ -17,6 +17,14 @@ MALFORMED_DOCUMENTS = (
     b"<Settings><DiscoveryServer>a</DiscoveryServer>"
     b"<DiscoveryServer>b</DiscoveryServer></Settings>",
     b"<Settings>",
+    # xml.etree expands internal entities, so this bounded document would
+    # otherwise expand without limit.
+    b"<!DOCTYPE Settings ["
+    b'<!ENTITY a "aaaaaaaaaa">'
+    b'<!ENTITY b "&a;&a;&a;&a;&a;&a;&a;&a;&a;&a;">'
+    b'<!ENTITY c "&b;&b;&b;&b;&b;&b;&b;&b;&b;&b;">'
+    b"]><Settings><DiscoveryServer>&c;</DiscoveryServer></Settings>",
+    b'<!DOCTYPE Settings SYSTEM "http://192.0.2.1/x.dtd"><Settings />',
 )
 
 
@@ -49,6 +57,12 @@ def test_discovery_server_normalization(value, expected):
         "omt://host:1/path",
         "omt://host:6399?x=1",
         "omt://host:6399#x",
+        # urlsplit reports these delimiters as absent because the component
+        # after them is empty, so they need their own rejection.
+        "omt://host:6399?",
+        "omt://host:6399#",
+        "omt://host:6399/",
+        "host:6399?",
         "host\x00name",
         "host\x7fname",
         "x" * 513,
@@ -98,3 +112,11 @@ def test_an_empty_settings_document_reads_as_unconfigured():
 def test_read_rejects_wrong_root_duplicates_and_malformed_values(document):
     with pytest.raises(OmtNetworkConfigurationError):
         network_configuration_from_xml(document)
+
+
+def test_doctype_rejection_names_the_declaration_and_spares_comments():
+    with pytest.raises(OmtNetworkConfigurationError, match="doctype or entities"):
+        network_configuration_from_xml(b"<!doctype Settings><Settings />")
+    document = b"<Settings><!-- an ordinary comment --><Keep /></Settings>"
+    assert network_configuration_from_xml(document)["discovery_server"] == ""
+    assert b"Keep" in update_network_configuration_xml(document, "192.0.2.1")

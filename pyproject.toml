@@ -1,3 +1,42 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rpi-omt-client"
+# The canonical release number. RPI_OMT_CLIENT_VERSION still drives the image
+# label and the About page via scripts/detect-version.sh; this is the version
+# recorded in the wheel that ships inside the appliance image.
+version = "0.9.27"
+description = "Raspberry Pi OMT Client web application"
+requires-python = ">=3.11"
+license = "LicenseRef-Proprietary"
+license-files = ["LICENSE"]
+# Names only. requirements/runtime.txt holds the hash-pinned versions that the
+# image installs, so the two files cannot disagree about a version.
+dependencies = [
+    "flask",
+    "flask-limiter",
+    "flask-wtf",
+    "gunicorn",
+]
+
+[project.urls]
+Homepage = "https://github.com/matthewdavidmiller/rpi-omt-client"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+# Only the shipped package. src/omt_client_preview is a dev-only sibling and is
+# deliberately absent, so it cannot reach the appliance image.
+packages = [
+    "omt_client",
+    "omt_client.routes",
+    "omt_client.services",
+]
+
+[tool.setuptools.package-data]
+omt_client = ["templates/*.html", "static/*.css"]
+
 [tool.ruff]
 target-version = "py311"
 line-length = 100
@@ -11,6 +50,9 @@ select = ["E", "F", "I", "UP", "B"]
 [tool.pytest.ini_options]
 testpaths = ["tests/unit"]
 addopts = "-q --tb=short"
+# The suite imports omt_client and its dev-only sibling omt_client_preview
+# straight from the tree, without an install step.
+pythonpath = ["src"]
 
 [tool.coverage.run]
 branch = true

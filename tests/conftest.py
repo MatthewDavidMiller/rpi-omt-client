@@ -2,19 +2,14 @@
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 from typing import Any
 
+from omt_client import create_app
+from omt_client.services import ServiceContainer
+from omt_client.settings import AppSettings, load_settings
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
-
-# The application is imported from src/ without installing the package, so both
-# omt_client and its dev-only sibling omt_client_preview resolve here.
-sys.path.insert(0, str(REPO_ROOT / "src"))
-
-from omt_client import create_app  # noqa: E402
-from omt_client.services import ServiceContainer  # noqa: E402
-from omt_client.settings import AppSettings, load_settings  # noqa: E402
 
 TESTING_CONFIG = {
     "TESTING": True,

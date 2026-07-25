@@ -7,7 +7,10 @@
     {% if error %}
     <p class="notice notice-danger" role="alert">{{ error }}</p>
     {% endif %}
-    <form method="POST" action="{{ url_for(request.endpoint) }}">
+    {# auth.login is the only endpoint that authenticates, and this view is also
+       rendered for errors raised elsewhere -- including 404s, where
+       request.endpoint is None. #}
+    <form method="POST" action="{{ url_for('auth.login') }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <label for="password">Password</label>
         <input type="password" id="password" name="password" autocomplete="current-password" required autofocus>

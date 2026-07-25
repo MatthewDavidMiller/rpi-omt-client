@@ -20,7 +20,9 @@ make test
 `make test-py` covers validation, atomic state, persistent auth, Flask routes
 against both the preview fakes and the real `ServiceContainer`, rate limits on
 every throttled endpoint, About/System workflows, reboot request correlation,
-and runtime adapters.
+and runtime adapters, at a 98% branch-coverage floor. The suite imports the
+package straight from `src/` via the `pythonpath` setting in `pyproject.toml`,
+so no install step is required.
 `make test-receiver` performs locked restore, analyzer-enabled build, shared
 validation vectors, event-ordering tests, and a 95% receiver-core branch gate.
 `make test-deployer` performs locked restore, formatting/analyzers, unit and

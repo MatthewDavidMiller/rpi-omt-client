@@ -32,6 +32,7 @@ ENVIRONMENT_SPECS = (
     EnvironmentSpec("OMT_DIAGNOSTICS_HOST_BUDGET_SECONDS", "25", "integer", 1),
     EnvironmentSpec("OMT_DIAGNOSTICS_BUNDLE_BUDGET_SECONDS", "60", "number", 0, False),
     EnvironmentSpec("OMT_REBOOT_ACK_TIMEOUT_SECONDS", "3", "number", 0, False),
+    EnvironmentSpec("OMT_MAX_REQUEST_BYTES", "16384", "integer", 1024),
 )
 
 
@@ -61,6 +62,8 @@ class AppSettings:
     config_dir: str
     password_file: str
     session_lifetime_seconds: int
+    max_request_bytes: int
+    login_rate_limit: str
     control_command: str
     receiver_command: str
     control_timeout_seconds: float
@@ -93,6 +96,8 @@ class AppSettings:
         """Return a stable, secret-free representation for support bundles."""
         return [
             f"session_lifetime_seconds={self.session_lifetime_seconds}",
+            f"max_request_bytes={self.max_request_bytes}",
+            f"login_rate_limit={self.login_rate_limit}",
             f"control_timeout_seconds={self.control_timeout_seconds:g}",
             f"source_cache_ttl_seconds={self.source_cache_ttl_seconds:g}",
             f"playback_status_stale_seconds={self.playback_status_stale_seconds}",
@@ -137,6 +142,8 @@ def load_settings(environment: Mapping[str, str] | None = None) -> AppSettings:
         config_dir=config_dir,
         password_file=env.get("OMT_PASSWORD_FILE", os.path.join(config_dir, "web_password")),
         session_lifetime_seconds=int(parsed["OMT_SESSION_LIFETIME_SECONDS"]),
+        max_request_bytes=int(parsed["OMT_MAX_REQUEST_BYTES"]),
+        login_rate_limit=env.get("OMT_LOGIN_RATE_LIMIT", "5 per minute"),
         control_command=env.get("OMT_CONTROL_COMMAND", "/usr/local/bin/control-omt.sh"),
         receiver_command=env.get("OMT_RECEIVER_COMMAND", "/usr/local/bin/omt-receiver"),
         control_timeout_seconds=float(parsed["OMT_CONTROL_TIMEOUT_SECONDS"]),

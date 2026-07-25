@@ -112,6 +112,22 @@ for attempt in $(seq 1 30); do
     sleep 1
 done
 
+# Assert the declared probe rather than the engine's scheduler: Podman runs image
+# health checks through transient systemd units that are not available
+# everywhere, so scheduling is not a portable contract but the command is.
+# Docker exposes the image probe as .Config.Healthcheck, Podman as .HealthCheck,
+# so match the whole inspect document rather than either engine's field path.
+health_test="$("${CONTAINER_ENGINE}" inspect --format '{{json .}}' "${IMAGE_TAG}" 2>/dev/null)"
+[[ "${health_test}" == *'"/opt/venv/bin/python"'* && "${health_test}" == *'/login'* ]] ||
+    fail "image declares no usable HEALTHCHECK command"
+pass "image declares a HEALTHCHECK command"
+
+"${CONTAINER_ENGINE}" exec "${CONTAINER_NAME}" \
+    /opt/venv/bin/python -c \
+    'import os, ssl, urllib.request; urllib.request.urlopen("https://127.0.0.1:" + os.environ["WEB_PORT"] + "/login", timeout=4, context=ssl._create_unverified_context())' ||
+    fail "HEALTHCHECK probe failed against the live listener"
+pass "HEALTHCHECK probe succeeds against the live listener"
+
 unauthenticated_code="$(
     curl_app --output /dev/null --write-out '%{http_code}' "${BASE_URL}/about"
 )"

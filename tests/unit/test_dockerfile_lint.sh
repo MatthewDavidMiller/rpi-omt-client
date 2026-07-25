@@ -27,6 +27,14 @@ if ! command -v hadolint &>/dev/null; then
     exit 0
 fi
 
+# A wedged web process leaves a running container serving nothing, so the image
+# must declare its own liveness probe rather than relying on the restart policy.
+if ! grep -q '^HEALTHCHECK ' "${DOCKERFILE}"; then
+    echo -e "${RED}FAIL${NC}: Dockerfile declares no HEALTHCHECK"
+    exit 1
+fi
+echo -e "${GREEN}PASS${NC}: Dockerfile declares a HEALTHCHECK"
+
 echo "Running hadolint..."
 if hadolint "${DOCKERFILE}"; then
     echo -e "${GREEN}PASS${NC}: Dockerfile passed hadolint"

@@ -7,6 +7,7 @@ import threading
 import time
 
 from ..models import ActionResult
+from ..records import parse_key_value_record
 from ..safe_io import read_text, write_fixed_inode
 from ..settings import AppSettings
 
@@ -31,13 +32,13 @@ class HostSystem:
         result = read_text(path, REBOOT_RECORD_LIMIT)
         if not result.ok:
             return None
-        fields: dict[str, str] = {}
-        for line in result.text.splitlines():
-            key, separator, value = line.partition("=")
-            if not separator or key in fields:
-                return None
-            fields[key] = value
-        if set(fields) != {"version", "request_id", "status", "detail"}:
+        # No `allow_body`: the reboot result is exactly these four lines, so
+        # anything trailing is a rejection rather than an ignored payload.
+        fields = parse_key_value_record(
+            result.text,
+            {"version", "request_id", "status", "detail"},
+        )
+        if fields is None:
             return None
         if fields["version"] != "1" or fields["request_id"] != request_id:
             return None

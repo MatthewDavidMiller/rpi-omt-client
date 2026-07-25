@@ -16,6 +16,7 @@ from typing import IO
 
 from ..discovery import is_valid_direct_target, parse_omt_sources
 from ..models import CommandResult, DiagnosticResult
+from ..records import parse_key_value_record
 from ..safe_io import read_bytes, read_text, write_fixed_inode
 from ..settings import AppSettings
 from .command import run_command
@@ -42,15 +43,8 @@ def _unavailable(detail: str) -> bytes:
 
 
 def _parse_header(value: str, required: set[str]) -> dict[str, str] | None:
-    fields: dict[str, str] = {}
-    for line in value.splitlines():
-        if not line:
-            break
-        key, separator, field_value = line.partition("=")
-        if not separator or key in fields:
-            return None
-        fields[key] = field_value
-    return fields if set(fields) == required else None
+    """Read the leading header of a host report, ignoring its payload."""
+    return parse_key_value_record(value, required, allow_body=True)
 
 
 def _run_before_deadline(

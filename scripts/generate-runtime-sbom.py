@@ -10,6 +10,8 @@ import re
 import subprocess
 from pathlib import Path
 
+FIRST_PARTY_DISTRIBUTION = "rpi-omt-client"
+
 
 def command(*arguments: str) -> str:
     return subprocess.run(
@@ -31,12 +33,13 @@ def metadata_value(distribution: importlib.metadata.Distribution, key: str) -> s
     """Read one optional distribution header without assuming a mapping API.
 
     ``Distribution.metadata`` is typed as the ``PackageMetadata`` protocol, which
-    does not expose ``get``; missing headers read back as ``None``.
+    does not expose ``get``. Test membership first: indexing a missing header
+    returns None today but is deprecated and will raise, and the implicit-None
+    lookup emits a DeprecationWarning during the image build.
     """
-    try:
-        value = distribution.metadata[key]
-    except KeyError:
+    if key not in distribution.metadata:
         return ""
+    value = distribution.metadata[key]
     return str(value) if value else ""
 
 
@@ -68,7 +71,11 @@ def python_components() -> list[dict[str, object]]:
         key=lambda item: metadata_value(item, "Name").casefold(),
     ):
         name = metadata_value(distribution, "Name")
-        if not name:
+        # The application itself is installed as a wheel in the same venv. It is
+        # already this document's metadata.component, and it has no PyPI
+        # identity, so listing it here would misreport first-party code as a
+        # third-party dependency.
+        if not name or name.lower().replace("_", "-") == FIRST_PARTY_DISTRIBUTION:
             continue
         license_name = (
             metadata_value(distribution, "License-Expression")

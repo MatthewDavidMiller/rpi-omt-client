@@ -12,6 +12,8 @@
 | `OMT_RUNTIME_CONFIG_FILE` | `$OMT_STORAGE_PATH/settings.xml` |
 | `OMT_PASSWORD_FILE` | `$OMT_CONFIG_DIR/web_password` |
 | `OMT_SESSION_LIFETIME_SECONDS` | `43200` |
+| `OMT_MAX_REQUEST_BYTES` | `16384` request body ceiling, minimum `1024` |
+| `OMT_LOGIN_RATE_LIMIT` | `5 per minute` |
 | `OMT_RECEIVER_COMMAND` | `/usr/local/bin/omt-receiver` |
 | `OMT_CONTROL_COMMAND` | `/usr/local/bin/control-omt.sh` |
 | `OMT_CONTROL_TIMEOUT_SECONDS` | `8` |

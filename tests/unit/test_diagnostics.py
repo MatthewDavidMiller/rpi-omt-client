@@ -171,6 +171,173 @@ def test_validated_pcap_checks_size_magic_hash_and_symlink(tmp_path: Path):
     assert "unsafe" in diagnostics._validated_pcap(metadata)[1]
 
 
+def test_capture_metadata_rejects_a_non_hex_magic(tmp_path: Path):
+    """A magic value that is not even hex must be rejected on its own, not left
+    to bytes.fromhex to raise."""
+    diagnostics = _diagnostics(tmp_path)
+    path = Path(diagnostics._settings.diagnostics_host_pcap_metadata_file)
+    path.write_text(_metadata(magic="zz"), encoding="utf-8")
+    assert "magic is invalid" in diagnostics._capture_metadata(REQUEST_ID)[2]
+    path.write_text(_metadata(magic="d4c3b2a"), encoding="utf-8")
+    assert "magic is invalid" in diagnostics._capture_metadata(REQUEST_ID)[2]
+
+
+def _valid_metadata(payload: bytes = PCAP) -> dict[str, str]:
+    return {"size_bytes": str(len(payload)), "sha256": hashlib.sha256(payload).hexdigest()}
+
+
+def test_validated_pcap_rejects_a_capture_swapped_while_opening(tmp_path: Path, monkeypatch):
+    """lstat and the open target must be the same inode; otherwise a capture
+    substituted in that window would be streamed to the operator."""
+    diagnostics = _diagnostics(tmp_path)
+    Path(diagnostics._settings.diagnostics_host_pcap_file).write_bytes(PCAP)
+    original_fstat = os.fstat
+    first = True
+
+    def swapped_fstat(descriptor: int):
+        nonlocal first
+        result = original_fstat(descriptor)
+        if first:
+            first = False
+            values = list(result)
+            values[1] += 1
+            return os.stat_result(values)
+        return result
+
+    monkeypatch.setattr(os, "fstat", swapped_fstat)
+    spool, error = diagnostics._validated_pcap(_valid_metadata())
+    assert spool is None and "changed while opening" in error
+
+
+def test_validated_pcap_rejects_a_capture_that_outgrows_its_declared_size(
+    tmp_path: Path, monkeypatch
+):
+    """The reader stops at the declared length, then proves nothing follows."""
+    diagnostics = _diagnostics(tmp_path)
+    path = Path(diagnostics._settings.diagnostics_host_pcap_file)
+    path.write_bytes(PCAP)
+    original_read = os.read
+    grown = False
+
+    def growing_read(descriptor: int, count: int) -> bytes:
+        nonlocal grown
+        if not grown:
+            grown = True
+            with open(path, "ab") as handle:
+                handle.write(b"extra")
+        return original_read(descriptor, count)
+
+    monkeypatch.setattr(os, "read", growing_read)
+    spool, error = diagnostics._validated_pcap(_valid_metadata())
+    assert spool is None and "exceeds its declared size" in error
+
+
+def test_validated_pcap_rejects_a_short_read_before_the_declared_size(tmp_path: Path, monkeypatch):
+    diagnostics = _diagnostics(tmp_path)
+    Path(diagnostics._settings.diagnostics_host_pcap_file).write_bytes(PCAP)
+    monkeypatch.setattr(os, "read", lambda *_args: b"")
+    spool, error = diagnostics._validated_pcap(_valid_metadata())
+    assert spool is None and "ended before its declared size" in error
+
+
+def test_validated_pcap_rejects_a_capture_replaced_during_the_read(tmp_path: Path, monkeypatch):
+    diagnostics = _diagnostics(tmp_path)
+    path = Path(diagnostics._settings.diagnostics_host_pcap_file)
+    path.write_bytes(PCAP)
+    replacement = tmp_path / "replacement.pcap"
+    replacement.write_bytes(PCAP)
+    original_read = os.read
+    swapped = False
+
+    def swapping_read(descriptor: int, count: int) -> bytes:
+        nonlocal swapped
+        chunk = original_read(descriptor, count)
+        if not swapped:
+            swapped = True
+            os.replace(replacement, path)
+        return chunk
+
+    monkeypatch.setattr(os, "read", swapping_read)
+    spool, error = diagnostics._validated_pcap(_valid_metadata())
+    assert spool is None and "changed while being read" in error
+
+
+def test_validated_pcap_rejects_on_disk_content_that_is_not_a_capture(tmp_path: Path):
+    """The metadata magic and the bytes on disk are checked separately, so a
+    truthful-looking header cannot vouch for the payload."""
+    diagnostics = _diagnostics(tmp_path)
+    payload = b"NOPE" + b"\0" * 20
+    Path(diagnostics._settings.diagnostics_host_pcap_file).write_bytes(payload)
+    spool, error = diagnostics._validated_pcap(_valid_metadata(payload))
+    assert spool is None and "magic is invalid" in error
+
+
+def test_validated_pcap_reports_an_os_error_during_the_read(tmp_path: Path, monkeypatch):
+    diagnostics = _diagnostics(tmp_path)
+    Path(diagnostics._settings.diagnostics_host_pcap_file).write_bytes(PCAP)
+
+    def failing_read(*_args):
+        raise OSError("device error")
+
+    monkeypatch.setattr(os, "read", failing_read)
+    spool, error = diagnostics._validated_pcap(_valid_metadata())
+    assert spool is None and "unable to read packet capture" in error
+
+
+def _prepare_bundle(diagnostics: RuntimeDiagnostics, monkeypatch) -> Path:
+    request = Path(diagnostics._settings.diagnostics_host_request_file)
+    request.touch(mode=0o600)
+    os.chmod(request, 0o600)
+    monkeypatch.setattr(os, "urandom", lambda _size: bytes.fromhex(REQUEST_ID))
+    monkeypatch.setattr(
+        "omt_client.services.diagnostics.run_command",
+        lambda command, _timeout: CommandResult(command=" ".join(command), returncode=0),
+    )
+    return request
+
+
+@pytest.mark.parametrize(
+    ("metadata_text", "expected"),
+    [
+        (None, "does not exist"),
+        (
+            _metadata(status="unavailable", magic="none"),
+            "host packet capture status is unavailable",
+        ),
+        (_metadata(request_id="00" * 16), "does not match this request"),
+    ],
+)
+def test_bundle_reports_why_a_requested_capture_is_absent(
+    tmp_path: Path, monkeypatch, metadata_text, expected
+):
+    """Opting in must never silently omit the capture: the archive carries a
+    stated reason instead."""
+    diagnostics = _diagnostics(tmp_path, OMT_DIAGNOSTICS_RECEIVE_PROBE="0")
+    _prepare_bundle(diagnostics, monkeypatch)
+    if metadata_text is not None:
+        Path(diagnostics._settings.diagnostics_host_pcap_metadata_file).write_text(
+            metadata_text, encoding="utf-8"
+        )
+    bundle, _name = diagnostics.bundle(include_packet_capture=True)
+    with zipfile.ZipFile(bundle) as archive:
+        assert "host-network.pcap" not in archive.namelist()
+        reason = archive.read("host-network.pcap.unavailable.txt").decode()
+    assert expected in reason
+
+
+def test_bundle_reports_a_capture_that_fails_validation(tmp_path: Path, monkeypatch):
+    """Valid metadata but an unreadable capture still yields a stated reason."""
+    diagnostics = _diagnostics(tmp_path, OMT_DIAGNOSTICS_RECEIVE_PROBE="0")
+    _prepare_bundle(diagnostics, monkeypatch)
+    Path(diagnostics._settings.diagnostics_host_pcap_metadata_file).write_text(
+        _metadata(), encoding="utf-8"
+    )
+    bundle, _name = diagnostics.bundle(include_packet_capture=True)
+    with zipfile.ZipFile(bundle) as archive:
+        reason = archive.read("host-network.pcap.unavailable.txt").decode()
+    assert "unable to inspect packet capture" in reason
+
+
 def test_bundle_contains_correlated_report_metadata_and_opted_in_pcap(tmp_path: Path, monkeypatch):
     diagnostics = _diagnostics(tmp_path)
     settings = diagnostics._settings

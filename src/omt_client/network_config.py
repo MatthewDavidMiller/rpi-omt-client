@@ -28,6 +28,11 @@ def normalize_discovery_server(value: str) -> str:
     ):
         raise OmtNetworkConfigurationError("Discovery Server contains unsupported characters.")
     candidate = value if value.startswith("omt://") else f"omt://{value}"
+    # urlsplit reports an empty query/fragment for a bare trailing "?" or "#",
+    # which the checks below would read as absent. Reject the delimiters
+    # outright, matching is_valid_direct_target and the receiver's validator.
+    if any(delimiter in candidate[len("omt://") :] for delimiter in "/?#"):
+        raise OmtNetworkConfigurationError("Discovery Server must be a host or omt://host:port.")
     try:
         parsed = urlsplit(candidate)
         parsed_port = parsed.port
@@ -60,11 +65,27 @@ def normalize_discovery_server(value: str) -> str:
     return f"omt://{canonical_host}:{port}"
 
 
-def network_configuration_from_xml(value: str | bytes) -> dict[str, object]:
+def _parse_settings(value: str | bytes) -> ET.Element:
+    """Parse one bounded OMT settings document without entity expansion.
+
+    `xml.etree` expands internal entities, so a 64 KB document of nested
+    declarations ("billion laughs") can exhaust memory. No legitimate
+    `settings.xml` carries a doctype, so reject the declaration outright rather
+    than trying to bound the expansion.
+    """
+    text = value.decode("utf-8", "replace") if isinstance(value, bytes) else value
+    if isinstance(text, str) and re.search(r"<!(?:DOCTYPE|ENTITY)", text, re.IGNORECASE):
+        raise OmtNetworkConfigurationError(
+            "OMT settings XML must not declare a doctype or entities."
+        )
     try:
-        root = ET.fromstring(value)
+        return ET.fromstring(value)
     except (ET.ParseError, TypeError, ValueError) as exc:
         raise OmtNetworkConfigurationError(f"OMT settings XML is invalid: {exc}") from exc
+
+
+def network_configuration_from_xml(value: str | bytes) -> dict[str, object]:
+    root = _parse_settings(value)
     if root.tag != "Settings":
         raise OmtNetworkConfigurationError("OMT settings root must be <Settings>.")
     nodes = root.findall("DiscoveryServer")
@@ -83,10 +104,7 @@ def network_configuration_from_xml(value: str | bytes) -> dict[str, object]:
 
 def update_network_configuration_xml(value: str | bytes, server: str) -> bytes:
     normalized = normalize_discovery_server(server)
-    try:
-        root = ET.fromstring(value)
-    except (ET.ParseError, TypeError, ValueError) as exc:
-        raise OmtNetworkConfigurationError(f"OMT settings XML is invalid: {exc}") from exc
+    root = _parse_settings(value)
     if root.tag != "Settings":
         raise OmtNetworkConfigurationError("OMT settings root must be <Settings>.")
     nodes = root.findall("DiscoveryServer")

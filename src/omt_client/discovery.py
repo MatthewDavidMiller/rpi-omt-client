@@ -67,6 +67,12 @@ def is_valid_direct_target(target: str) -> bool:
         return False
     if any(ord(character) < 32 or ord(character) == 127 for character in target):
         return False
+    # urlsplit reports an empty query for "omt://host:1?" and an empty fragment
+    # for "omt://host:1#", both of which the checks below would read as absent.
+    # The receiver's TargetValidator rejects these delimiters outright, so a
+    # target accepted here but refused there would persist and never play.
+    if any(delimiter in target[len("omt://") :] for delimiter in "/?#"):
+        return False
     try:
         parsed = urlsplit(target)
         port = parsed.port

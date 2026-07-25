@@ -6,6 +6,7 @@ import re
 
 import pytest
 from conftest import REPO_ROOT, build_app, signed_in
+from flask import abort
 
 from omt_client.models import ActionResult
 from omt_client.settings import load_settings
@@ -191,6 +192,67 @@ def test_security_headers_and_contextual_error_pages(factory_client):
     assert oversized.status_code == 413
     assert b"Request too large" in oversized.data
     assert b"Return to dashboard" in oversized.data
+
+
+def test_unknown_paths_render_the_context_appropriate_view(factory_app, factory_client):
+    """Without a 404 handler these served Werkzeug's default page, leaking
+    framework markup to an unauthenticated caller."""
+    signed_out = factory_app.test_client().get("/no-such-page")
+    assert signed_out.status_code == 404
+    assert b"That page does not exist." in signed_out.data
+    assert b"Password" in signed_out.data
+    assert b"Werkzeug" not in signed_out.data
+
+    signed_in_response = factory_client.get("/no-such-page")
+    assert signed_in_response.status_code == 404
+    assert b"Page not found" in signed_in_response.data
+    assert b"Return to dashboard" in signed_in_response.data
+
+
+def test_wrong_method_renders_the_operator_error_view(factory_client):
+    response = factory_client.get("/playback/restart")
+    assert response.status_code == 405
+    assert b"Action not allowed" in response.data
+    assert b"Return to dashboard" in response.data
+
+
+def test_unhandled_route_failure_is_an_opaque_logged_500(factory_app, factory_client, caplog):
+    """The exception text must never reach the browser, but it must be logged."""
+    source = factory_app.extensions["omt_client.services"].source
+
+    def explode():
+        raise RuntimeError("secret-internal-detail")
+
+    source.playback = explode
+    response = factory_client.get("/")
+    assert response.status_code == 500
+    assert b"Something went wrong" in response.data
+    assert b"secret-internal-detail" not in response.data
+    assert "secret-internal-detail" in caplog.text
+
+
+def test_aborted_http_errors_keep_their_status_and_message():
+    """An HTTPException with no dedicated handler falls through the catch-all,
+    which must preserve its code rather than reporting everything as a 500."""
+    application = build_app(services=preview_services("abort-password"))
+
+    @application.get("/forbidden-probe")
+    def forbidden_probe():
+        abort(403)
+
+    response = signed_in(application, "abort-password").get("/forbidden-probe")
+    assert response.status_code == 403
+    assert b"Forbidden" in response.data
+
+
+def test_static_assets_are_cacheable_but_keep_transport_security(factory_client):
+    response = factory_client.get("/static/style.css")
+    assert response.status_code == 200
+    assert "Cache-Control" in response.headers
+    assert response.headers["Cache-Control"] != "no-store"
+    assert "Pragma" not in response.headers
+    assert response.headers["X-Content-Type-Options"] == "nosniff"
+    assert "script-src 'none'" in response.headers["Content-Security-Policy"]
 
 
 def test_authenticated_csrf_error_uses_operator_error_view():

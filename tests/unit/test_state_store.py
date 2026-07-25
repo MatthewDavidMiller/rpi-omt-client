@@ -135,6 +135,17 @@ def test_underlying_os_errors_surface_as_configuration_errors(tmp_path, monkeypa
         save_source_target(target, SourceTarget("discovered", "Camera"))
 
 
+def test_an_encoded_target_over_the_record_limit_is_refused(tmp_path, monkeypatch):
+    """Validated names and URIs always encode well under the limit, so this
+    guard only fires if those bounds are ever relaxed. It must stay a typed
+    configuration error rather than an opaque write failure."""
+    target = tmp_path / "source_target.json"
+    monkeypatch.setattr("omt_client.state_store.SOURCE_TARGET_MAX_BYTES", 8)
+    with pytest.raises(SourceConfigurationError, match="oversized"):
+        save_source_target(target, SourceTarget("discovered", "Camera"))
+    assert not target.exists()
+
+
 def test_source_target_oversized_and_nonregular_reads(tmp_path):
     path = tmp_path / "source_target.json"
     path.write_bytes(b"x" * 1025)

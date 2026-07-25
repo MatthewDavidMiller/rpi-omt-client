@@ -106,4 +106,4 @@ fi
 
 exec "${GUNICORN_CMD}" --workers 1 --bind "0.0.0.0:${WEB_PORT}" \
     --timeout 90 --certfile="${ssl_cert}" --keyfile="${ssl_key}" \
-    omt_client.wsgi:app --chdir /app --access-logfile -
+    omt_client.wsgi:app --access-logfile -

@@ -41,6 +41,27 @@ def test_cache_ttl_allows_zero_and_all_other_defaults_are_finite():
     )
 
 
+def test_request_and_login_limits_are_settings_driven():
+    """These were hardcoded in factory.py while every other limit came from
+    AppSettings, so they could not be tuned or reported in a support bundle."""
+    defaults = load_settings({})
+    assert defaults.max_request_bytes == 16384
+    assert defaults.login_rate_limit == "5 per minute"
+    assert "max_request_bytes=16384" in defaults.diagnostic_lines()
+    assert "login_rate_limit=5 per minute" in defaults.diagnostic_lines()
+
+    overridden = load_settings(
+        {"OMT_MAX_REQUEST_BYTES": "2048", "OMT_LOGIN_RATE_LIMIT": "2 per minute"}
+    )
+    assert overridden.max_request_bytes == 2048
+    assert overridden.login_rate_limit == "2 per minute"
+
+
+def test_the_request_ceiling_cannot_be_set_below_a_usable_form_post():
+    with pytest.raises(SettingsError, match="OMT_MAX_REQUEST_BYTES"):
+        load_settings({"OMT_MAX_REQUEST_BYTES": "1023"})
+
+
 def test_runtime_override_derives_sdk_directory_unless_explicit():
     derived = load_settings({"OMT_RUNTIME_CONFIG_FILE": "/tmp/sdk/settings.xml"})
     explicit = load_settings(

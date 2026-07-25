@@ -14,11 +14,17 @@ SHIPPED_PACKAGE = REPO_ROOT / "src" / "omt_client"
 
 
 def test_shipped_package_never_depends_on_the_preview_fakes():
-    """deploy/Dockerfile copies only src/omt_client/, so nothing there may import
-    the dev-only fakes — that would break the appliance image at runtime."""
+    """The image installs a wheel built from the `packages` list in
+    pyproject.toml, which names only omt_client. Nothing there may import the
+    dev-only fakes — that would break the appliance image at runtime."""
     dockerfile = (REPO_ROOT / "deploy" / "Dockerfile").read_text(encoding="utf-8")
-    assert "COPY src/omt_client/ /app/omt_client/" in dockerfile
+    assert "COPY src/omt_client/ src/omt_client/" in dockerfile
     assert "omt_client_preview" not in dockerfile
+
+    packaging = (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    packages = re.search(r"^packages = \[(.*?)^\]", packaging, re.MULTILINE | re.DOTALL)
+    assert packages is not None
+    assert "omt_client_preview" not in packages.group(1)
 
     offenders = [
         module.relative_to(REPO_ROOT).as_posix()

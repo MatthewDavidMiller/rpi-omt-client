@@ -24,6 +24,7 @@ from omt_client.services import (
 )
 from omt_client.services.command import run_command
 from omt_client.settings import load_settings
+from omt_client.state_store import SourceTarget, save_source_target
 
 PASSWORD = "correct"
 # scrypt derivation costs ~85ms; the hash of a constant password is invariant, so
@@ -191,11 +192,42 @@ def test_plaintext_password_file_is_compared_without_hashing(tmp_path):
     assert auth.authenticate("", None) is None
 
 
-def test_corrupt_password_hash_is_rejected_rather_than_raising(tmp_path):
+@pytest.mark.parametrize(
+    "stored",
+    [
+        # Structurally parseable but semantically impossible parameters. Werkzeug
+        # returns False for a hash it cannot even split, so those inputs never
+        # reach _verify's exception handler; these do raise.
+        "scrypt:0:8:1$salt$abcd",
+        "pbkdf2:sha256:0$salt$abcd",
+        # UnsupportedDigestmodError, a ValueError subclass, from OpenSSL.
+        "pbkdf2:bogusalg$salt$abcd",
+    ],
+)
+def test_corrupt_password_hash_is_rejected_rather_than_raising(tmp_path, stored):
+    (tmp_path / "flask_secret").write_text("a" * 64, encoding="utf-8")
+    (tmp_path / "web_password").write_text(stored, encoding="utf-8")
+    with pytest.raises(RuntimeError, match="unsupported format"):
+        PersistentAuthentication(settings_for(tmp_path))
+
+
+def test_unparseable_password_hash_verifies_as_a_mismatch(tmp_path):
+    """Werkzeug returns False rather than raising for a hash it cannot split, so
+    the startup probe accepts it and every login attempt simply fails."""
     (tmp_path / "flask_secret").write_text("a" * 64, encoding="utf-8")
     (tmp_path / "web_password").write_text("scrypt:not-a-valid-hash", encoding="utf-8")
     auth = PersistentAuthentication(settings_for(tmp_path))
     assert auth.authenticate("anything", None) is None
+
+
+def test_argon2_password_hash_fails_startup_instead_of_locking_operators_out(tmp_path):
+    """`argon2:` matches the hash-prefix list but Werkzeug cannot verify it. A
+    silent False here would reject every correct password with "Invalid
+    password" and no diagnosable cause."""
+    (tmp_path / "flask_secret").write_text("a" * 64, encoding="utf-8")
+    (tmp_path / "web_password").write_text("argon2:v=19$m=65536$abcd", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="unsupported format"):
+        PersistentAuthentication(settings_for(tmp_path))
 
 
 def test_missing_password_file_is_a_startup_error(tmp_path):
@@ -273,6 +305,45 @@ def test_source_discovery_cache_selection_direct_clear_and_restart(tmp_path, mon
     assert service.clear().ok
     assert service.configuration() == ("", "")
     assert not service.restart().ok
+
+
+def test_saving_discovery_settings_restarts_a_configured_source(tmp_path, monkeypatch):
+    """A Discovery Server change only takes effect on restart, so a configured
+    target must be restarted and the operator told that it was."""
+    settings = settings_for(tmp_path)
+    source = RuntimeSourcePlayback(settings)
+    network = RuntimeNetwork(settings, source)
+    assert source.save_direct("omt://192.0.2.1:6400").ok is False  # no controller yet
+    save_source_target(
+        settings.source_target_file,
+        SourceTarget("direct", "omt://192.0.2.1:6400"),
+    )
+    monkeypatch.setattr(
+        "omt_client.services.playback.run_command",
+        lambda command, _timeout: command_result(returncode=0),
+    )
+    outcome = network.save("discovery.example")
+    assert outcome.ok
+    assert "playback restarted" in outcome.message
+
+
+def test_saving_discovery_settings_without_a_target_reports_no_restart(tmp_path):
+    settings = settings_for(tmp_path)
+    network = RuntimeNetwork(settings, RuntimeSourcePlayback(settings))
+    outcome = network.save("discovery.example")
+    assert outcome.ok
+    assert "restarted" not in outcome.message
+
+
+def test_session_registry_lock_that_is_not_a_regular_file_fails_closed(tmp_path):
+    """A FIFO at the lock path opens successfully but can never provide the
+    mutual exclusion the registry depends on."""
+    (tmp_path / "flask_secret").write_text("a" * 64, encoding="utf-8")
+    (tmp_path / "web_password").write_text(PASSWORD_HASH, encoding="utf-8")
+    os.mkfifo(tmp_path / "web_sessions.lock")
+    auth = PersistentAuthentication(settings_for(tmp_path))
+    with pytest.raises(OSError, match="not a regular file"):
+        auth.authenticate(PASSWORD, None)
 
 
 def test_network_read_reports_unsafe_settings_instead_of_raising(tmp_path):

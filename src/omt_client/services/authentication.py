@@ -18,7 +18,7 @@ from contextlib import contextmanager
 from flask import session
 from werkzeug.security import check_password_hash
 
-from ..safe_io import ReadStatus, atomic_replace, read_text
+from ..safe_io import atomic_replace, read_text
 from ..settings import AppSettings
 
 
@@ -47,6 +47,23 @@ class PersistentAuthentication:
                 raise RuntimeError("The Web GUI password file is missing or unsafe.")
             self._password = password_result.text.strip()
             self._password_is_hash = self._password.startswith(self._hash_prefixes)
+            if self._password_is_hash:
+                self._require_supported_hash()
+
+    def _require_supported_hash(self) -> None:
+        """Fail startup on a hash Werkzeug cannot verify.
+
+        Werkzeug raises for an unsupported method (`argon2:` is recognised as a
+        hash prefix here but rejected there) and for structurally broken
+        parameters. Left to `_verify`, both collapse into a plain "Invalid
+        password", locking every operator out with no diagnosable cause.
+        """
+        try:
+            check_password_hash(self._password, "")
+        except ValueError as exc:
+            raise RuntimeError(
+                f"The Web GUI password hash uses an unsupported format: {exc}"
+            ) from exc
 
     @property
     def password_digest(self) -> str:
@@ -81,7 +98,7 @@ class PersistentAuthentication:
 
     def _read_registry(self) -> dict[str, float]:
         result = read_text(self._registry_file, self._maximum_registry_bytes)
-        if result.status is ReadStatus.MISSING or not result.ok:
+        if not result.ok:
             return {}
         try:
             document = json.loads(result.text)
@@ -90,13 +107,13 @@ class PersistentAuthentication:
                 return {}
             sessions: dict[str, float] = {}
             for digest, raw_expiry in raw_sessions.items():
+                # JSON object keys are always strings, so only the shape needs
+                # checking. Validate before converting, so a bool -- which is a
+                # float subclass -- cannot slip through as an expiry.
+                if not re.fullmatch(r"[0-9a-f]{64}", digest) or isinstance(raw_expiry, bool):
+                    return {}
                 expiry = float(raw_expiry)
-                if (
-                    not isinstance(digest, str)
-                    or not re.fullmatch(r"[0-9a-f]{64}", digest)
-                    or isinstance(raw_expiry, bool)
-                    or not math.isfinite(expiry)
-                ):
+                if not math.isfinite(expiry):
                     return {}
                 sessions[digest] = expiry
             return sessions
@@ -120,10 +137,10 @@ class PersistentAuthentication:
 
     def _verify(self, supplied: str) -> bool:
         if self._password_is_hash:
-            try:
-                return check_password_hash(self._password, supplied)
-            except ValueError:
-                return False
+            # _require_supported_hash already proved this hash verifies without
+            # raising. Werkzeug's failure modes depend on the stored method and
+            # parameters, not on the supplied password, so no guard is needed.
+            return check_password_hash(self._password, supplied)
         return hmac.compare_digest(self._password.encode("utf-8"), supplied.encode("utf-8"))
 
     def authenticate(self, password: str, previous_session_id: str | None) -> str | None:

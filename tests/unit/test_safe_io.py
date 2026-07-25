@@ -112,6 +112,108 @@ def test_bounded_read_reports_open_read_and_postread_races(tmp_path: Path, monke
     assert safe_io.read_bytes(target, 10).status is safe_io.ReadStatus.MISSING
 
 
+def test_unexpected_os_errors_are_reported_as_io_errors(tmp_path: Path):
+    """ELOOP/ENOTDIR mean "unsafe" and ENOENT means "missing", but anything else
+    -- a permission or type error -- must still fail closed rather than raise."""
+    directory = tmp_path / "directory"
+    directory.mkdir()
+    unreadable = tmp_path / "unreadable"
+    unreadable.write_bytes(b"secret")
+    os.chmod(unreadable, 0o000)
+    try:
+        result = safe_io.read_bytes(unreadable, 10)
+        if os.geteuid() == 0:
+            pytest.skip("root bypasses the permission check")
+        assert result.status is safe_io.ReadStatus.IO_ERROR
+        assert "unable to read file" in result.detail
+    finally:
+        os.chmod(unreadable, 0o600)
+
+    nested = safe_io.read_bytes(unreadable / "child", 10)
+    assert nested.status is safe_io.ReadStatus.UNSAFE
+
+
+def test_bounded_read_rejects_a_file_that_grows_past_the_limit(tmp_path: Path, monkeypatch):
+    """lstat reports a size within the limit, then the file grows before the
+    read. Trusting the first stat would return a partial record as if it were
+    whole."""
+    target = tmp_path / "value"
+    target.write_bytes(b"12345")
+    original_read = os.read
+    grown = False
+
+    def growing_read(descriptor: int, count: int) -> bytes:
+        nonlocal grown
+        if not grown:
+            grown = True
+            with open(target, "ab") as handle:
+                handle.write(b"6789")
+        return original_read(descriptor, count)
+
+    monkeypatch.setattr(os, "read", growing_read)
+    assert safe_io.read_bytes(target, 5).status is safe_io.ReadStatus.OVERSIZED
+
+
+def test_bounded_read_rejects_a_file_replaced_during_the_read(tmp_path: Path, monkeypatch):
+    """The descriptor stays valid across a rename, so only comparing the final
+    lstat identity catches a swap committed mid-read."""
+    target = tmp_path / "value"
+    target.write_bytes(b"12345")
+    replacement = tmp_path / "replacement"
+    replacement.write_bytes(b"abcde")
+    original_read = os.read
+    swapped = False
+
+    def swapping_read(descriptor: int, count: int) -> bytes:
+        nonlocal swapped
+        if not swapped:
+            swapped = True
+            os.replace(replacement, target)
+        return original_read(descriptor, count)
+
+    monkeypatch.setattr(os, "read", swapping_read)
+    result = safe_io.read_bytes(target, 16)
+    assert result.status is safe_io.ReadStatus.UNSAFE
+    assert "changed while being read" in result.detail
+
+
+def test_atomic_replace_tolerates_a_stage_removed_by_someone_else(tmp_path: Path, monkeypatch):
+    """The rollback must not mask the original failure with a spurious
+    FileNotFoundError when the stage is already gone."""
+    target = tmp_path / "value"
+    target.write_bytes(b"old")
+
+    def unlink_then_fail(source, destination):
+        os.unlink(source)
+        raise OSError("replace refused")
+
+    monkeypatch.setattr(os, "replace", unlink_then_fail)
+    with pytest.raises(OSError, match="replace refused"):
+        safe_io.atomic_replace(target, b"new", 3)
+    assert target.read_bytes() == b"old"
+    assert not list(tmp_path.glob(".value.*"))
+
+
+def test_fixed_inode_write_rejects_a_swap_committed_after_the_write(tmp_path: Path, monkeypatch):
+    """The pre-open and post-open checks both pass, then the request file is
+    replaced before the final lstat. Without the closing check the caller would
+    believe its record reached the channel the host reads."""
+    request = tmp_path / "request"
+    request.touch(mode=0o600)
+    os.chmod(request, 0o600)
+    replacement = tmp_path / "replacement"
+    replacement.touch(mode=0o600)
+    original_fsync = os.fsync
+
+    def swap_after_fsync(descriptor: int) -> None:
+        original_fsync(descriptor)
+        os.replace(replacement, request)
+
+    monkeypatch.setattr(os, "fsync", swap_after_fsync)
+    with pytest.raises(OSError, match="changed during write"):
+        safe_io.write_fixed_inode(request, b"record", 32)
+
+
 def test_fixed_inode_write_preserves_identity_and_rejects_swaps(tmp_path: Path, monkeypatch):
     request = tmp_path / "request"
     request.touch(mode=0o600)

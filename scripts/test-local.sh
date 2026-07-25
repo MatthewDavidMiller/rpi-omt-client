@@ -103,7 +103,7 @@ fi
 # ─── Python Unit Tests ────────────────────────────────────────
 echo "=== Python Unit Tests ==="
 if "${PYTHON_TEST_BIN}" -m pytest tests/unit \
-    --cov=src/omt_client --cov-report=term-missing --cov-fail-under=90 -q --tb=short; then
+    --cov=src/omt_client --cov-report=term-missing --cov-fail-under=98 -q --tb=short; then
     echo -e "${GREEN}PASSED${NC}: Python unit tests"
 else
     echo -e "${RED}FAILED${NC}: Python unit tests"

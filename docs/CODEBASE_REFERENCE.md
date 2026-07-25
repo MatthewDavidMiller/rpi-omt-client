@@ -13,6 +13,7 @@
 | Authentication, playback, network, diagnostics, host system | `src/omt_client/services/` |
 | Routes | `src/omt_client/routes/` |
 | Safe I/O and persistent state | `src/omt_client/safe_io.py`, `src/omt_client/state_store.py` |
+| Shared host `key=value` record parsing | `src/omt_client/records.py` |
 | Discovery and URI validation | `src/omt_client/discovery.py` |
 | OMT XML settings | `src/omt_client/network_config.py` |
 | Templates and CSS | `src/omt_client/templates/`, `src/omt_client/static/` |
@@ -20,11 +21,19 @@
 | Shell process lifecycle | `deploy/container/runtime-lib.sh`, `deploy/container/start-omt.sh`, `deploy/container/control-omt.sh`, `deploy/container/entrypoint.sh` |
 | Container | `deploy/Dockerfile`, `deploy/compose.yml` |
 
-`deploy/Dockerfile` copies only `src/omt_client/`, so `src/omt_client_preview/`
-(the in-memory fakes behind `scripts/preview-web-ui.py` and the route tests)
-never reaches the appliance image or `runtime-sha256.manifest`. Nothing under
-`src/omt_client/` may import it; `tests/unit/test_preview_services.py` enforces
-that.
+`deploy/Dockerfile` builds a wheel from the `packages` list in `pyproject.toml`
+and installs it into `/opt/venv`, so the appliance imports `omt_client` from
+site-packages rather than a copied tree. That list names only `omt_client*`, so
+`src/omt_client_preview/` (the in-memory fakes behind
+`scripts/preview-web-ui.py` and the route tests) never reaches the appliance
+image. Nothing under `src/omt_client/` may import it;
+`tests/unit/test_preview_services.py` enforces that.
+
+`runtime-sha256.manifest` covers `/app`, `/usr/local/bin`, `libvmx.so`, **and**
+the installed `omt_client` package with its `.dist-info`, so the integrity
+check still spans the application code after the move. The first-party wheel is
+excluded from the third-party notice sweep and from the SBOM's PyPI components;
+`tests/integration/test_docker_build.sh` asserts all of this.
 
 Public routes are `/login`, `/logout`, `/`, `/sources/select`,
 `/sources/refresh`, `/playback/restart`, `/playback/clear`,

@@ -45,11 +45,21 @@ FROM alpine:3.23.5@${ALPINE_DIGEST} AS python-builder
 
 SHELL ["/bin/ash", "-eo", "pipefail", "-c"]
 
-RUN apk add --no-cache build-base python3 python3-dev py3-pip \
+RUN apk add --no-cache build-base python3 python3-dev py3-pip py3-setuptools py3-wheel \
     && python3 -m venv /opt/venv
 COPY requirements/runtime.txt /tmp/requirements.txt
 RUN /opt/venv/bin/python -m pip install --no-cache-dir --require-hashes \
-        -r /tmp/requirements.txt \
+        -r /tmp/requirements.txt
+
+# Build the application wheel with Alpine's own setuptools, so no build backend
+# is fetched at image-build time, then install it into the runtime venv. The
+# `packages` list in pyproject.toml names only the shipped package, so the
+# dev-only preview fakes cannot reach the image.
+WORKDIR /src
+COPY pyproject.toml LICENSE ./
+COPY src/omt_client/ src/omt_client/
+RUN python3 -m pip wheel --no-deps --no-build-isolation -w /tmp/wheel . \
+    && /opt/venv/bin/python -m pip install --no-cache-dir --no-deps /tmp/wheel/*.whl \
     && /opt/venv/bin/python -m pip uninstall -y pip setuptools wheel
 
 FROM alpine:3.23.5@${ALPINE_DIGEST} AS runtime
@@ -80,7 +90,6 @@ RUN apk add --no-cache \
 COPY --from=python-builder /opt/venv /opt/venv
 COPY --from=receiver-builder /out/receiver/omt-receiver /usr/local/bin/omt-receiver
 COPY --from=receiver-builder /out/native/libvmx.so /usr/local/lib/libvmx.so
-COPY src/omt_client/ /app/omt_client/
 COPY deploy/container/ /usr/local/bin/
 COPY LICENSE THIRD_PARTY_NOTICES.txt /app/legal/
 COPY scripts/generate-runtime-sbom.py /tmp/generate-runtime-sbom.py
@@ -91,7 +100,8 @@ RUN chmod 0755 \
         /usr/local/bin/start-omt.sh \
         /usr/local/bin/entrypoint.sh \
     && { \
-        find /opt/venv/lib -path '*dist-info/licenses/*' -type f -print \
+        find /opt/venv/lib -path '*dist-info/licenses/*' -type f \
+                ! -path '*/rpi_omt_client-*' -print \
             | sort \
             | while IFS= read -r license_file; do \
                 relative="${license_file#*/site-packages/}"; \
@@ -109,6 +119,9 @@ RUN chmod 0755 \
         find /app -type f ! -name runtime-sha256.manifest -print0; \
         find /usr/local/bin -maxdepth 1 -type f -print0; \
         find /usr/local/lib -maxdepth 1 -type f -name 'libvmx.so' -print0; \
+        find /opt/venv/lib -type d \
+                \( -name omt_client -o -name 'rpi_omt_client-*.dist-info' \) \
+                -exec find {} -type f -print0 \; ; \
     } | sort -z | xargs -0 sha256sum > /app/runtime-sha256.manifest
 
 ENV HOME=/etc/omt
@@ -128,4 +141,12 @@ LABEL org.opencontainers.image.licenses="LicenseRef-Proprietary"
 USER omt
 EXPOSE ${WEB_PORT}
 VOLUME ["/etc/omt"]
+
+# Surface a wedged gunicorn in `docker ps` and host diagnostics. The listener is
+# HTTPS with a self-signed certificate generated on first boot, so the probe
+# does not verify it; GET /login is unauthenticated and unthrottled, so it
+# cannot consume an operator's rate-limit budget. The start period must outlast
+# first-boot key and certificate generation in entrypoint.sh.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=45s --retries=3 \
+    CMD ["/opt/venv/bin/python", "-c", "import os, ssl, urllib.request; urllib.request.urlopen(f\"https://127.0.0.1:{os.environ['WEB_PORT']}/login\", timeout=4, context=ssl._create_unverified_context())"]
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

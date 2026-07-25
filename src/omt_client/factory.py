@@ -13,6 +13,7 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from flask_wtf import CSRFProtect
 from flask_wtf.csrf import CSRFError
+from werkzeug.exceptions import HTTPException
 from werkzeug.wrappers import Response
 
 from .routes import (
@@ -26,9 +27,6 @@ from .routes import (
 from .routes.common import authenticated
 from .services import ServiceContainer, production_services
 from .settings import AppSettings, load_settings
-
-MAX_REQUEST_BYTES = 16 * 1024
-LOGIN_RATE_LIMIT = "5 per minute"
 
 
 def create_app(
@@ -51,7 +49,7 @@ def create_app(
         SESSION_COOKIE_SECURE=True,
         SESSION_COOKIE_HTTPONLY=True,
         SESSION_COOKIE_SAMESITE="Lax",
-        MAX_CONTENT_LENGTH=MAX_REQUEST_BYTES,
+        MAX_CONTENT_LENGTH=effective_settings.max_request_bytes,
         PERMANENT_SESSION_LIFETIME=timedelta(seconds=effective_settings.session_lifetime_seconds),
     )
     app.extensions["omt_client.settings"] = effective_settings
@@ -89,7 +87,7 @@ def create_app(
         limited = limiter.limit(limit, **options)(app.view_functions[endpoint])
         app.view_functions[endpoint] = cast(RouteCallable, limited)
 
-    apply_limit("auth.login", LOGIN_RATE_LIMIT, methods=["POST"])
+    apply_limit("auth.login", effective_settings.login_rate_limit, methods=["POST"])
     for endpoint in (
         "diagnostics.discovery_check",
         "diagnostics.runtime_check",
@@ -132,6 +130,40 @@ def create_app(
     @app.errorhandler(413)
     def request_too_large(_error: Exception) -> ResponseReturnValue:
         return contextual_error("Request too large", "Request is too large.", 413)
+
+    @app.errorhandler(404)
+    def not_found(_error: Exception) -> ResponseReturnValue:
+        return contextual_error("Page not found", "That page does not exist.", 404)
+
+    @app.errorhandler(405)
+    def method_not_allowed(_error: Exception) -> ResponseReturnValue:
+        return contextual_error(
+            "Action not allowed",
+            "That action is not allowed on this page.",
+            405,
+        )
+
+    @app.errorhandler(500)
+    @app.errorhandler(Exception)
+    def internal_error(error: Exception) -> ResponseReturnValue:
+        """Render an operator-facing page for any unhandled failure.
+
+        Werkzeug's own HTTP errors keep their status and message; everything else
+        is logged with a traceback and reported as an opaque 500, so an
+        exception string never reaches the browser.
+        """
+        if isinstance(error, HTTPException) and error.code is not None:
+            return contextual_error(
+                error.name,
+                error.description or "The request could not be completed.",
+                error.code,
+            )
+        app.logger.exception("Unhandled error serving %s", request.path)
+        return contextual_error(
+            "Something went wrong",
+            "The appliance could not complete that request. Check the container logs.",
+            500,
+        )
 
     @app.errorhandler(429)
     def rate_limited(_error: Exception) -> ResponseReturnValue:
