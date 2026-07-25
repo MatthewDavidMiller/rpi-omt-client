@@ -109,3 +109,18 @@ def test_runtime_override_derives_sdk_directory_unless_explicit():
 def test_obsolete_diagnostic_settings_fail_with_migration_guidance(name):
     with pytest.raises(SettingsError, match="Migrate to OMT_DIAGNOSTICS_"):
         load_settings({name: "1"})
+
+
+def test_bundle_budget_cannot_outlive_the_gunicorn_worker():
+    with pytest.raises(SettingsError, match="Gunicorn"):
+        load_settings({"OMT_DIAGNOSTICS_BUNDLE_BUDGET_SECONDS": "86"})
+
+
+def test_host_timeout_cannot_exhaust_the_bundle_budget_alone():
+    with pytest.raises(SettingsError, match="must not exceed"):
+        load_settings(
+            {
+                "OMT_DIAGNOSTICS_BUNDLE_BUDGET_SECONDS": "40",
+                "OMT_DIAGNOSTICS_HOST_TIMEOUT_SECONDS": "41",
+            }
+        )

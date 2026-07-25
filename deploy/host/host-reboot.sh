@@ -5,6 +5,20 @@ set -euo pipefail
 export LC_ALL=C
 umask 027
 
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+if [[ -f "${SCRIPT_DIR}/reboot-request.sh" ]]; then
+    # Installed next to this script under /usr/local/libexec/omt-client.
+    # shellcheck source=reboot-request.sh
+    source "${SCRIPT_DIR}/reboot-request.sh"
+elif [[ -f "${SCRIPT_DIR}/../lib/reboot-request.sh" ]]; then
+    # Running from the nested deployment capsule.
+    # shellcheck source=../lib/reboot-request.sh
+    source "${SCRIPT_DIR}/../lib/reboot-request.sh"
+else
+    echo "reboot-request.sh is missing beside host-reboot.sh" >&2
+    exit 1
+fi
+
 REQUEST_FILE="${OMT_REBOOT_REQUEST_FILE:-/var/lib/omt-client/host-actions/reboot.request}"
 RESULT_FILE="${OMT_REBOOT_RESULT_FILE:-/var/lib/omt-client/host-actions/reboot.result}"
 LOCK_FILE="${OMT_REBOOT_LOCK_FILE:-/run/lock/omt-client-reboot.lock}"
@@ -68,30 +82,11 @@ exec 3<&-
 }
 (( ${#request} <= MAX_REQUEST_BYTES )) || exit 1
 
-version=""
-action=""
-request_id=""
-requested_at_epoch=""
-declare -A seen=()
-line_count=0
-while IFS= read -r line || [[ -n "${line}" ]]; do
-    ((line_count += 1))
-    [[ "${line}" == *=* ]] || exit 1
-    key="${line%%=*}"
-    value="${line#*=}"
-    [[ -z "${seen[${key}]:-}" ]] || exit 1
-    seen["${key}"]=1
-    case "${key}" in
-        version) version="${value}" ;;
-        action) action="${value}" ;;
-        request_id) request_id="${value}" ;;
-        requested_at_epoch) requested_at_epoch="${value}" ;;
-        *) exit 1 ;;
-    esac
-done <<< "${request}"
-
-[[ "${line_count}" -eq 4 && "${#seen[@]}" -eq 4 ]] || exit 1
-[[ "${request_id}" =~ ^[0-9a-f]{32}$ ]] || exit 1
+# Schema failures exit without a correlated result: request_id may be untrusted.
+if ! reboot_parse_request_body >/dev/null; then
+    echo "invalid reboot request body" >&2
+    exit 1
+fi
 
 reject() {
     local detail="$1"
@@ -103,21 +98,13 @@ reject() {
     exit 0
 }
 
-[[ "${version}" == "1" && "${action}" == "reboot" ]] || reject invalid-request
-[[ "${requested_at_epoch}" =~ ^[1-9][0-9]*$ ]] || reject invalid-timestamp
 now="$(date +%s)"
-(( 10#${requested_at_epoch} <= now + MAX_FUTURE_SECONDS )) || reject future-request
-(( now - 10#${requested_at_epoch} <= MAX_AGE_SECONDS )) || reject stale-request
-
+last_accepted_raw=""
 if [[ -f "${LAST_ACCEPTED_FILE}" && ! -L "${LAST_ACCEPTED_FILE}" ]]; then
-    last_record="$(head -c 128 -- "${LAST_ACCEPTED_FILE}" 2>/dev/null || true)"
-    last_id="${last_record%% *}"
-    last_epoch="${last_record#* }"
-    [[ "${last_id}" != "${request_id}" ]] || reject replayed-request
-    if [[ "${last_epoch}" =~ ^[1-9][0-9]*$ ]] &&
-       (( now - 10#${last_epoch} < COOLDOWN_SECONDS )); then
-        reject cooldown-active
-    fi
+    last_accepted_raw="$(head -c 128 -- "${LAST_ACCEPTED_FILE}" 2>/dev/null || true)"
+fi
+if ! reason="$(reboot_evaluate_request)"; then
+    reject "${reason}"
 fi
 
 printf '%s %s\n' "${request_id}" "${now}" > "${LAST_ACCEPTED_FILE}"

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from ..settings import AppSettings, load_settings
+from .about import RuntimeAbout
 from .authentication import PersistentAuthentication
 from .diagnostics import RuntimeDiagnostics
 from .host_system import HostSystem
@@ -16,6 +17,7 @@ def production_services(settings: AppSettings | None = None) -> ServiceContainer
     source = RuntimeSourcePlayback(effective)
     return ServiceContainer(
         auth=PersistentAuthentication(effective),
+        about=RuntimeAbout(effective),
         source=source,
         network=RuntimeNetwork(effective, source),
         diagnostics=RuntimeDiagnostics(effective, source),

@@ -6,6 +6,7 @@ import fcntl
 import json
 import os
 import stat
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -106,3 +107,32 @@ def save_source_target(
         raise SourceConfigurationError(f"unable to save OMT target: {exc}") from exc
     finally:
         os.close(lock_descriptor)
+
+
+def play_target_value(path: str | os.PathLike[str]) -> str:
+    """Return the receiver `--target` value for a saved configuration.
+
+    Shared by the Flask services and `deploy/container/start-omt.sh` so the
+    launcher cannot drift from the web-side schema and validation rules.
+    """
+    try:
+        target = read_source_target(path)
+    except SourceConfigurationError as exc:
+        raise SystemExit(str(exc)) from exc
+    if target is None:
+        raise SystemExit("saved OMT target is missing")
+    return target.value
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Minimal CLI used by the container launcher."""
+    arguments = sys.argv[1:] if argv is None else argv
+    if len(arguments) != 2 or arguments[0] != "play-target":
+        print("usage: python -m omt_client.state_store play-target PATH", file=sys.stderr)
+        return 2
+    print(play_target_value(arguments[1]))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

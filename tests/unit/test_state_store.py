@@ -9,6 +9,7 @@ from omt_client.safe_io import ReadStatus, read_bytes, read_text
 from omt_client.state_store import (
     SourceConfigurationError,
     SourceTarget,
+    play_target_value,
     read_source_target,
     save_source_target,
 )
@@ -155,3 +156,24 @@ def test_source_target_oversized_and_nonregular_reads(tmp_path):
     path.mkdir()
     with pytest.raises(SourceConfigurationError, match="unable to read"):
         read_source_target(path)
+
+
+def test_play_target_value_matches_saved_configuration(tmp_path):
+    path = tmp_path / "source_target.json"
+    save_source_target(path, SourceTarget("discovered", "Studio Camera"))
+    assert play_target_value(path) == "Studio Camera"
+    save_source_target(path, SourceTarget("direct", "omt://192.0.2.1:6400"))
+    assert play_target_value(path) == "omt://192.0.2.1:6400"
+    path.unlink()
+    with pytest.raises(SystemExit, match="missing"):
+        play_target_value(path)
+
+
+def test_state_store_cli_prints_play_targets_and_rejects_bad_usage(tmp_path, capsys):
+    from omt_client.state_store import main
+
+    path = tmp_path / "source_target.json"
+    save_source_target(path, SourceTarget("discovered", "Camera"))
+    assert main(["play-target", str(path)]) == 0
+    assert capsys.readouterr().out.strip() == "Camera"
+    assert main(["wrong"]) == 2

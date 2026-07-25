@@ -136,7 +136,7 @@ internal static class Program
             }
             catch (Exception exception)
             {
-                error = exception.Message;
+                error = StatusSanitizer.Sanitize(exception.Message);
             }
         }
 

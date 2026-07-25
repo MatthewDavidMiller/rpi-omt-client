@@ -22,7 +22,7 @@
 | OMT XML settings | `src/omt_client/network_config.py` |
 | Templates and CSS | `src/omt_client/templates/`, `src/omt_client/static/` |
 | About route (presentation) | `src/omt_client/routes/about.py` |
-| About legal texts (service) | `RuntimeDiagnostics.legal_texts()` in `src/omt_client/services/diagnostics.py` |
+| About legal texts (service) | `RuntimeAbout` in `src/omt_client/services/about.py` |
 | Web design tokens and layout | `src/omt_client/static/style.css`, `src/omt_client/static/favicon.svg` |
 | Dev-only preview fakes | `src/omt_client_preview/` |
 | Shell process lifecycle | `deploy/container/runtime-lib.sh`, `deploy/container/start-omt.sh`, `deploy/container/control-omt.sh`, `deploy/container/entrypoint.sh` |
@@ -56,7 +56,7 @@ are POST and CSRF protected.
 |---|---|
 | Installer/uninstaller | `deploy/host/install.sh`, `deploy/host/uninstall.sh` |
 | Host diagnostics | `deploy/host/host-diagnostics.sh` |
-| Reboot validator | `deploy/host/host-reboot.sh` |
+| Reboot validator | `deploy/host/host-reboot.sh`, `deploy/lib/reboot-request.sh` |
 | Shared host helpers | `deploy/lib/host-validation.sh`, `deploy/lib/publication.sh`, `deploy/lib/service-install.sh` |
 | HDMI boot-configuration rules | `deploy/lib/hdmi-config.sh` |
 | Deployment contract | `deploy/manifest-v2.txt`, `deploy/transaction.sh` |

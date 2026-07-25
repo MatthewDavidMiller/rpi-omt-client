@@ -85,6 +85,7 @@ If you cannot run a relevant validation step, say so explicitly in your final ha
 - `src/omt_client/factory.py` and `src/omt_client/routes/`: Flask composition and public routes
 - `src/omt_client/services/`: injected domain boundary and playback/source operations
 - `src/omt_client/services/composition.py`: production composition root
+- `src/omt_client/services/about.py`: version and legal texts for About
 - `src/omt_client/state_store.py`: bounded state and atomic OMT target persistence
 - `src/omt_client/templates/` and `src/omt_client/static/`: web UI
 - `src/omt_client_preview/`: dev-only in-memory fakes; deliberately outside the shipped package

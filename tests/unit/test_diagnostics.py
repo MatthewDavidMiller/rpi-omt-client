@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import time
 import zipfile
@@ -432,6 +433,9 @@ def test_bundle_opt_out_never_streams_raw_capture(tmp_path: Path, monkeypatch):
         assert "host-network.pcap" not in archive.namelist()
         assert "host-network-pcap.txt" in archive.namelist()
         assert b"skipped" in archive.read("current-target-receive-probe.json")
+        discovery = json.loads(archive.read("discovery.json"))
+        assert discovery["ok"] is False
+        assert discovery["error"]
     assert "capture_pcap=0" in request.read_text()
 
 

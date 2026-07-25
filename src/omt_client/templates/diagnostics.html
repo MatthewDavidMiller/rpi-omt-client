@@ -11,7 +11,7 @@
         <dl class="details-list">
             <dt>Version</dt><dd>{{ app_version }}</dd>
             <dt>Current source</dt><dd>{{ current_source if current_source else "Not configured" }}</dd>
-            <dt>Direct address</dt><dd>{{ current_source_url_address if current_source_url_address else "Discovery" }}</dd>
+            <dt>Direct address</dt><dd>{{ current_direct_target if current_direct_target else "Discovery" }}</dd>
             <dt>Controller status</dt><dd><code>{{ omt_status }}</code></dd>
         </dl>
         <div class="button-row">
@@ -34,7 +34,7 @@
                 <label for="direct_address">OMT target</label>
                 <input id="direct_address" name="direct_address" type="text" inputmode="url"
                        aria-describedby="direct_address_help"
-                       value="{{ current_source_url_address }}" placeholder="omt://192.168.1.50:6400" required>
+                       value="{{ current_direct_target }}" placeholder="omt://192.168.1.50:6400" required>
                 <p class="field-help" id="direct_address_help">The check is read-only and never changes the configured source.</p>
             </div>
             <button type="submit" class="button button-secondary">Test direct connect</button>

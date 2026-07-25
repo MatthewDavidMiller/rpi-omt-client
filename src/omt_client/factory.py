@@ -150,20 +150,29 @@ def create_app(
 
         Werkzeug's own HTTP errors keep their status and message; everything else
         is logged with a traceback and reported as an opaque 500, so an
-        exception string never reaches the browser.
+        exception string never reaches the browser. Flask does not re-enter this
+        handler when rendering fails, so the template call is guarded locally.
         """
         if isinstance(error, HTTPException) and error.code is not None:
-            return contextual_error(
-                error.name,
-                error.description or "The request could not be completed.",
-                error.code,
-            )
+            try:
+                return contextual_error(
+                    error.name,
+                    error.description or "The request could not be completed.",
+                    error.code,
+                )
+            except Exception:
+                app.logger.exception("Failed to render HTTP error page for %s", request.path)
+                return (error.description or error.name, error.code)
         app.logger.exception("Unhandled error serving %s", request.path)
-        return contextual_error(
-            "Something went wrong",
-            "The appliance could not complete that request. Check the container logs.",
-            500,
-        )
+        try:
+            return contextual_error(
+                "Something went wrong",
+                "The appliance could not complete that request. Check the container logs.",
+                500,
+            )
+        except Exception:
+            app.logger.exception("Failed to render the operator error page for %s", request.path)
+            return ("Internal Server Error", 500)
 
     @app.errorhandler(429)
     def rate_limited(_error: Exception) -> ResponseReturnValue:

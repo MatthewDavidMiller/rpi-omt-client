@@ -12,6 +12,7 @@
 | `OMT_STORAGE_PATH` | `/etc/omt/omt`, libomtnet storage |
 | `OMT_RUNTIME_CONFIG_FILE` | `$OMT_STORAGE_PATH/settings.xml` |
 | `OMT_PASSWORD_FILE` | `$OMT_CONFIG_DIR/web_password` |
+| `OMT_WEB_PASSWORD` | Emergency plaintext password override (unset in production). When set, the password file is ignored and the value is compared with a constant-time digest rather than a Werkzeug hash. Prefer a hashed `web_password` file. |
 | `OMT_SESSION_LIFETIME_SECONDS` | `43200` |
 | `OMT_MAX_REQUEST_BYTES` | `16384` request body ceiling, minimum `1024` |
 | `OMT_LOGIN_RATE_LIMIT` | `5 per minute` |
@@ -27,9 +28,9 @@
 | `OMT_DIAGNOSTICS_HOST_REQUEST_FILE` | `/host-diagnostics/request` |
 | `OMT_DIAGNOSTICS_HOST_PCAP_FILE` | `/host-diagnostics/host-network.pcap` |
 | `OMT_DIAGNOSTICS_HOST_PCAP_METADATA_FILE` | `/host-diagnostics/host-network-pcap.txt` |
-| `OMT_DIAGNOSTICS_HOST_TIMEOUT_SECONDS` | `30` |
+| `OMT_DIAGNOSTICS_HOST_TIMEOUT_SECONDS` | `30`; must not exceed the bundle budget |
 | `OMT_DIAGNOSTICS_HOST_BUDGET_SECONDS` | `25` (host oneshot; set by `install.sh` on the systemd unit — container env only mirrors this into support bundles) |
-| `OMT_DIAGNOSTICS_BUNDLE_BUDGET_SECONDS` | `60` |
+| `OMT_DIAGNOSTICS_BUNDLE_BUDGET_SECONDS` | `60`; must stay at most `85` so collection finishes before the fixed Gunicorn `--timeout` of `90` seconds in `deploy/container/entrypoint.sh` |
 | `OMT_DIAGNOSTICS_RECEIVE_PROBE` | enabled |
 | `OMT_DIAGNOSTICS_DOWNLOAD_LIMIT` | `10 per hour` |
 | `OMT_DIAGNOSTICS_ACTION_LIMIT` | `30 per hour` |
@@ -42,8 +43,10 @@
 | `OMT_REBOOT_ACTION_LIMIT` | `3 per hour` |
 
 Numeric settings reject malformed, non-finite, and out-of-range values during
-application creation. Legacy `OMT_DEBUG_*`, `OMT_HOST_DEBUG_*`, and
-`PIPELINE_STATUS_STALE_SECONDS` variables fail startup with migration guidance.
+application creation. Bundle budget and host timeout are cross-checked so a
+misconfigured wait cannot outlive the Gunicorn worker. Legacy `OMT_DEBUG_*`,
+`OMT_HOST_DEBUG_*`, and `PIPELINE_STATUS_STALE_SECONDS` variables fail startup
+with migration guidance.
 
 ## Persistent files
 

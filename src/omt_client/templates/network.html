@@ -32,7 +32,7 @@
                 <input id="direct_address" name="direct_address" required
                        aria-describedby="direct_address_help"
                        placeholder="omt://source.example:6400"
-                       value="{{ current_address if current_address else '' }}">
+                       value="{{ current_direct_target if current_direct_target else '' }}">
                 <p class="field-help" id="direct_address_help">An explicit omt://host:port target is required.</p>
             </div>
             <button type="submit" class="button">Save &amp; play direct target</button>

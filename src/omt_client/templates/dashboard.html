@@ -16,10 +16,17 @@
     <section class="card" aria-labelledby="current-heading">
         <h2 id="current-heading">Current source</h2>
         <dl class="details-list">
+            {% if current_direct_target %}
+            <dt>Source</dt>
+            <dd>Direct target</dd>
+            <dt>Direct address</dt>
+            <dd>{{ current_direct_target }}</dd>
+            {% else %}
             <dt>Source name</dt>
             <dd>{{ current_source if current_source else "Not configured" }}</dd>
             <dt>Direct address</dt>
-            <dd>{{ current_source_url_address if current_source_url_address else "Discovery" }}</dd>
+            <dd>Discovery</dd>
+            {% endif %}
         </dl>
         <div class="button-row">
             <form method="POST" action="{{ url_for('dashboard.restart_playback') }}">

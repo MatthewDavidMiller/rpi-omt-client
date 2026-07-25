@@ -17,7 +17,7 @@ from typing import Any
 
 from flask import session
 
-from omt_client.discovery import OmtSourceChoice
+from omt_client.discovery import OmtSourceChoice, is_valid_direct_target
 from omt_client.models import ActionResult, CommandResult, DiagnosticResult, PlaybackSummary
 from omt_client.services import ServiceContainer
 
@@ -123,7 +123,7 @@ class PreviewSourcePlayback:
         return ActionResult(True, message="Preview playback stopped and source cleared.")
 
     def save_direct(self, address: str) -> ActionResult:
-        if not address.startswith("omt://") or ":" not in address[6:]:
+        if not is_valid_direct_target(address):
             return ActionResult(False, error="Invalid direct-connect source or address.")
         self._source, self._address, self._playing = address, address, True
         return ActionResult(True, message="Preview direct source saved and running.")
@@ -148,7 +148,7 @@ class PreviewNetwork:
         return ActionResult(True, message="Preview network settings saved.")
 
 
-class PreviewDiagnostics:
+class PreviewAbout:
     def version(self) -> str:
         return "preview"
 
@@ -168,6 +168,11 @@ class PreviewDiagnostics:
             if notices_result.ok
             else "Third-party notices is unavailable in this image.",
         )
+
+
+class PreviewDiagnostics:
+    def version(self) -> str:
+        return "preview"
 
     def status(self) -> str:
         return "running:4242 overall=running video=running audio=running"
@@ -232,6 +237,7 @@ def preview_services(password: str = "omt-client") -> ServiceContainer:
     source = PreviewSourcePlayback()
     return ServiceContainer(
         auth=PreviewAuthentication(password),
+        about=PreviewAbout(),
         source=source,
         network=PreviewNetwork(),
         diagnostics=PreviewDiagnostics(),

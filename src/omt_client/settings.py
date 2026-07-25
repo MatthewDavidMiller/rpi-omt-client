@@ -38,6 +38,11 @@ ENVIRONMENT_SPECS = (
     EnvironmentSpec("OMT_MAX_REQUEST_BYTES", "16384", "integer", 1024),
 )
 
+# Gunicorn --timeout in deploy/container/entrypoint.sh. Bundle collection must
+# finish before the worker is killed mid-zip; keep a small write/zip margin.
+GUNICORN_WORKER_TIMEOUT_SECONDS = 90
+DIAGNOSTICS_BUNDLE_OVERHEAD_SECONDS = 5
+
 
 def _parse_number(environment: Mapping[str, str], spec: EnvironmentSpec) -> float | int:
     raw = environment.get(spec.name, spec.default)
@@ -133,6 +138,23 @@ def load_settings(environment: Mapping[str, str] | None = None) -> AppSettings:
             "OMT_PLAYBACK_STATUS_STALE_SECONDS."
         )
     parsed = {spec.name: _parse_number(env, spec) for spec in ENVIRONMENT_SPECS}
+    host_timeout = float(parsed["OMT_DIAGNOSTICS_HOST_TIMEOUT_SECONDS"])
+    bundle_budget = float(parsed["OMT_DIAGNOSTICS_BUNDLE_BUDGET_SECONDS"])
+    maximum_bundle = GUNICORN_WORKER_TIMEOUT_SECONDS - DIAGNOSTICS_BUNDLE_OVERHEAD_SECONDS
+    if bundle_budget > maximum_bundle:
+        raise SettingsError(
+            "OMT_DIAGNOSTICS_BUNDLE_BUDGET_SECONDS must be at most "
+            f"{maximum_bundle:g} so collection finishes before the Gunicorn "
+            f"--timeout of {GUNICORN_WORKER_TIMEOUT_SECONDS:g} seconds; "
+            f"received {bundle_budget:g}"
+        )
+    if host_timeout > bundle_budget:
+        raise SettingsError(
+            "OMT_DIAGNOSTICS_HOST_TIMEOUT_SECONDS must not exceed "
+            "OMT_DIAGNOSTICS_BUNDLE_BUDGET_SECONDS; a host wait alone would "
+            f"exhaust the bundle budget (host={host_timeout:g}, "
+            f"bundle={bundle_budget:g})"
+        )
     config_dir = env.get("OMT_CONFIG_DIR", "/etc/omt")
     # Ephemeral per-boot state (lock, PID record, published status). The shipped
     # image points this at a tmpfs, because the status file is rewritten

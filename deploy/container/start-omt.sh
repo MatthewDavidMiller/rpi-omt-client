@@ -18,46 +18,9 @@ if [[ ! "${OMT_HDMI_CONNECTOR}" =~ ^(auto|HDMI-A-1|HDMI-A-2)$ ]]; then
     exit 2
 fi
 
-target="$(
-    python3 - "${OMT_SOURCE_TARGET_FILE}" <<'PY'
-import json
-import os
-import stat
-import sys
-
-from omt_client.discovery import is_valid_direct_target, is_valid_source_name
-
-path = sys.argv[1]
-before = os.lstat(path)
-if stat.S_ISLNK(before.st_mode) or not stat.S_ISREG(before.st_mode) or before.st_size > 1024:
-    raise SystemExit("unsafe OMT source target")
-flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
-fd = os.open(path, flags)
-try:
-    opened = os.fstat(fd)
-    if (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino):
-        raise SystemExit("OMT source target changed while opening")
-    raw = os.read(fd, 1025)
-finally:
-    os.close(fd)
-if len(raw) > 1024:
-    raise SystemExit("OMT source target is oversized")
-document = json.loads(raw)
-if document.get("schema") != 1:
-    raise SystemExit("unsupported OMT source target schema")
-if document.get("kind") == "discovered" and set(document) == {"schema", "kind", "name"}:
-    value = document["name"]
-    if not isinstance(value, str) or not is_valid_source_name(value):
-        raise SystemExit("invalid discovered OMT source name")
-elif document.get("kind") == "direct" and set(document) == {"schema", "kind", "uri"}:
-    value = document["uri"]
-    if not isinstance(value, str) or not is_valid_direct_target(value):
-        raise SystemExit("invalid direct OMT target")
-else:
-    raise SystemExit("invalid OMT source target")
-print(value)
-PY
-)"
+# One shared reader with the Flask services: schema, size, symlink, and
+# validation rules live in omt_client.state_store rather than a second copy here.
+target="$(python3 -m omt_client.state_store play-target "${OMT_SOURCE_TARGET_FILE}")"
 
 mkdir -p "$(dirname -- "${OMT_PLAYBACK_STATUS_FILE}")"
 exec "${OMT_RECEIVER_COMMAND}" play \

@@ -16,6 +16,7 @@ from omt_client.safe_io import atomic_replace
 from omt_client.services import (
     HostSystem,
     PersistentAuthentication,
+    RuntimeAbout,
     RuntimeDiagnostics,
     RuntimeNetwork,
     RuntimeSourcePlayback,
@@ -154,6 +155,34 @@ def test_malformed_session_registry_reads_as_empty(tmp_path, document, request_c
         password_digest=auth.password_digest,
     )
     assert not auth.is_current()
+
+
+def test_one_corrupt_session_row_does_not_wipe_valid_sessions(tmp_path, request_context):
+    """A single bad registry entry must not clear every other operator out.
+
+    authenticate() rewrites the registry from whatever _read_registry returns, so
+    treating one corrupt row as a total wipe would revoke every valid session on
+    the next successful login."""
+    auth = _authentication(tmp_path)
+    first = auth.authenticate(PASSWORD, None)
+    second = auth.authenticate(PASSWORD, None)
+    assert first and second
+    registry_path = tmp_path / "web_sessions.json"
+    document = json.loads(registry_path.read_text(encoding="utf-8"))
+    document["sessions"]["not-a-digest"] = 9999999999.0
+    document["sessions"]["a" * 64] = "soon"
+    registry_path.write_text(json.dumps(document), encoding="utf-8")
+    session.update(
+        authenticated=True,
+        session_id=first,
+        password_digest=auth.password_digest,
+    )
+    assert auth.is_current()
+    third = auth.authenticate(PASSWORD, None)
+    assert third
+    rewritten = json.loads(registry_path.read_text(encoding="utf-8"))
+    assert "not-a-digest" not in rewritten["sessions"]
+    assert len(rewritten["sessions"]) >= 2
 
 
 def test_is_current_requires_authenticated_typed_session_fields(tmp_path, request_context):
@@ -624,7 +653,10 @@ def test_production_container_wires_every_runtime_service(tmp_path):
     (tmp_path / "web_password").write_text(PASSWORD_HASH, encoding="utf-8")
     services = production_services(settings_for(tmp_path))
     assert isinstance(services.auth, PersistentAuthentication)
+    assert isinstance(services.about, RuntimeAbout)
     assert isinstance(services.source, RuntimeSourcePlayback)
     assert isinstance(services.network, RuntimeNetwork)
     assert isinstance(services.diagnostics, RuntimeDiagnostics)
     assert isinstance(services.system, HostSystem)
+    assert services.about.version() == "unknown"
+    assert "unavailable" in services.about.legal_texts()[0]

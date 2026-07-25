@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 import shutil
@@ -63,33 +64,15 @@ def _run_before_deadline(
     return run_command(command, max(0.001, remaining))
 
 
-LEGAL_FILE_LIMIT = 2 * 1024 * 1024
-
-
 class RuntimeDiagnostics:
     def __init__(self, settings: AppSettings, source: SourcePlaybackService) -> None:
         self._settings = settings
         self._source = source
 
     def version(self) -> str:
+        """Return the build version for support bundles and the diagnostics page."""
         result = read_text(self._settings.version_file, 256)
         return result.text.strip() if result.ok and result.text.strip() else "unknown"
-
-    def legal_texts(self) -> tuple[str, str]:
-        """Return the project license and third-party notices for the About page."""
-        return (
-            self._legal_text(self._settings.project_license_file, "Project license"),
-            self._legal_text(
-                self._settings.third_party_notices_file,
-                "Third-party notices",
-            ),
-        )
-
-    def _legal_text(self, path: str, label: str) -> str:
-        result = read_text(path, LEGAL_FILE_LIMIT)
-        if result.ok:
-            return result.text
-        return f"{label} is unavailable in this image."
 
     def status(self) -> str:
         result = run_command(
@@ -354,7 +337,16 @@ class RuntimeDiagnostics:
 
         runtime = self._runtime(deadline).command.stdout
         discovery_result = self._discovery(deadline).command
-        discovery = discovery_result.stdout or discovery_result.error
+        # Keep the archive member named *.json even when discovery fails, so
+        # support tooling does not have to special-case a text error blob.
+        discovery = discovery_result.stdout or json.dumps(
+            {
+                "ok": False,
+                "error": discovery_result.error or discovery_result.stderr or "unavailable",
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
         status_result = _run_before_deadline(
             [self._settings.control_command, "status"],
             self._settings.control_timeout_seconds,

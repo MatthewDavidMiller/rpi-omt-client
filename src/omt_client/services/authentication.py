@@ -109,12 +109,18 @@ class PersistentAuthentication:
             for digest, raw_expiry in raw_sessions.items():
                 # JSON object keys are always strings, so only the shape needs
                 # checking. Validate before converting, so a bool -- which is a
-                # float subclass -- cannot slip through as an expiry.
+                # float subclass -- cannot slip through as an expiry. Skip a bad
+                # row instead of discarding the whole registry: one corrupt entry
+                # must not log every other operator out on the next successful
+                # login rewrite.
                 if not re.fullmatch(r"[0-9a-f]{64}", digest) or isinstance(raw_expiry, bool):
-                    return {}
-                expiry = float(raw_expiry)
+                    continue
+                try:
+                    expiry = float(raw_expiry)
+                except (TypeError, ValueError):
+                    continue
                 if not math.isfinite(expiry):
-                    return {}
+                    continue
                 sessions[digest] = expiry
             return sessions
         except (KeyError, TypeError, ValueError, json.JSONDecodeError):

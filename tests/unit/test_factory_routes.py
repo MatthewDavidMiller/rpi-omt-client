@@ -246,6 +246,36 @@ def test_unhandled_route_failure_is_an_opaque_logged_500(factory_app, factory_cl
     assert "secret-internal-detail" in caplog.text
 
 
+def test_error_page_failure_falls_back_to_plaintext(factory_app, factory_client, monkeypatch):
+    """A failure while rendering the operator error page must stay opaque."""
+    source = factory_app.extensions["omt_client.services"].source
+
+    def explode():
+        raise RuntimeError("primary")
+
+    source.playback = explode
+
+    def broken_render(*_args, **_kwargs):
+        raise RuntimeError("secondary")
+
+    monkeypatch.setattr("omt_client.factory.render_template", broken_render)
+    response = factory_client.get("/")
+    assert response.status_code == 500
+    assert b"Internal Server Error" in response.data
+    assert b"primary" not in response.data
+    assert b"secondary" not in response.data
+
+
+def test_package_exports_are_lazy():
+    import omt_client
+
+    assert callable(omt_client.create_app)
+    assert omt_client.ActionResult is not None
+    assert omt_client.ServiceContainer is not None
+    with pytest.raises(AttributeError):
+        _ = omt_client.not_an_export
+
+
 def test_aborted_http_errors_keep_their_status_and_message():
     """An HTTPException with no dedicated handler falls through the catch-all,
     which must preserve its code rather than reporting everything as a 500."""

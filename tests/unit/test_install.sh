@@ -23,6 +23,9 @@ forbid() {
 
 require 'ARCH.*!=.*aarch64' "installer must reject non-ARM64 hosts"
 require 'HOST_REBOOT_SCRIPT=.*host-reboot\.sh' "reboot helper must be required"
+require 'HOST_REBOOT_REQUEST_LIB=.*reboot-request\.sh' "reboot request helper must be required"
+require 'HOST_REBOOT_REQUEST_LIB_INSTALLED=.*reboot-request\.sh' "reboot request helper must be installed beside the bridge"
+
 require 'PROJECT_LICENSE=.*LICENSE' "project license must be required"
 require 'THIRD_PARTY_NOTICES=.*THIRD_PARTY_NOTICES\.txt' "notices must be required"
 require 'STABLE_VOLUME="omt-config"' "stable OMT volume name must be explicit"

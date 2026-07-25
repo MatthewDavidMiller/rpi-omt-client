@@ -86,6 +86,7 @@ COMPOSE_FILE="${INSTALL_DIR}/deploy/compose.yml"
 COMPOSE_ENV_FILE="${INSTALL_DIR}/deploy/.env"
 HOST_DIAGNOSTICS_SCRIPT="${INSTALL_DIR}/deploy/host/host-diagnostics.sh"
 HOST_REBOOT_SCRIPT="${INSTALL_DIR}/deploy/host/host-reboot.sh"
+HOST_REBOOT_REQUEST_LIB="${INSTALL_DIR}/deploy/lib/reboot-request.sh"
 PROJECT_LICENSE="${INSTALL_DIR}/LICENSE"
 THIRD_PARTY_NOTICES="${INSTALL_DIR}/THIRD_PARTY_NOTICES.txt"
 THIRD_PARTY_SOURCE="${INSTALL_DIR}/THIRD_PARTY_SOURCE.md"
@@ -94,6 +95,7 @@ DEPLOY_ARTIFACT_MANIFEST="${INSTALL_DIR}/deploy/manifest-v2.txt"
 HOST_COMPONENT_DIR="/usr/local/libexec/omt-client"
 HOST_DIAGNOSTICS_INSTALLED_SCRIPT="${HOST_COMPONENT_DIR}/host-diagnostics.sh"
 HOST_REBOOT_INSTALLED_SCRIPT="${HOST_COMPONENT_DIR}/host-reboot.sh"
+HOST_REBOOT_REQUEST_LIB_INSTALLED="${HOST_COMPONENT_DIR}/reboot-request.sh"
 DEPLOY_RECOVERY_HELPER="${HOST_COMPONENT_DIR}/recover-deployment.sh"
 DEPLOY_RECOVERY_MANIFEST="${HOST_COMPONENT_DIR}/manifest-v2.txt"
 STABLE_VOLUME="omt-config"
@@ -134,9 +136,9 @@ if [[ "${EUID}" -ne 0 ]]; then
 fi
 
 for required_file in "${TARBALL}" "${COMPOSE_FILE}" "${HOST_DIAGNOSTICS_SCRIPT}" \
-        "${HOST_REBOOT_SCRIPT}" "${PROJECT_LICENSE}" "${THIRD_PARTY_NOTICES}" \
-        "${THIRD_PARTY_SOURCE}" "${DEPLOY_TRANSACTION_SCRIPT}" \
-        "${DEPLOY_ARTIFACT_MANIFEST}"; do
+        "${HOST_REBOOT_SCRIPT}" "${HOST_REBOOT_REQUEST_LIB}" "${PROJECT_LICENSE}" \
+        "${THIRD_PARTY_NOTICES}" "${THIRD_PARTY_SOURCE}" \
+        "${DEPLOY_TRANSACTION_SCRIPT}" "${DEPLOY_ARTIFACT_MANIFEST}"; do
     if ! host_require_regular_file "${required_file}"; then
         echo "ERROR: Required deployment file not found: ${required_file}"
         exit 1
@@ -397,6 +399,8 @@ host_publish_file "${HOST_DIAGNOSTICS_INSTALLED_SCRIPT}" 0755 root root \
     < "${HOST_DIAGNOSTICS_SCRIPT}"
 host_publish_file "${HOST_REBOOT_INSTALLED_SCRIPT}" 0755 root root \
     < "${HOST_REBOOT_SCRIPT}"
+host_publish_file "${HOST_REBOOT_REQUEST_LIB_INSTALLED}" 0644 root root \
+    < "${HOST_REBOOT_REQUEST_LIB}"
 host_publish_file "${DEPLOY_RECOVERY_HELPER}" 0755 root root \
     < "${DEPLOY_TRANSACTION_SCRIPT}"
 host_publish_file "${DEPLOY_RECOVERY_MANIFEST}" 0644 root root \

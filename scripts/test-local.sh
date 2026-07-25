@@ -79,6 +79,7 @@ run_test "Entrypoint Logic" "${PROJECT_ROOT}/tests/unit/test_entrypoint_logic.sh
 run_test "Start OMT Script" "${PROJECT_ROOT}/tests/unit/test_start_omt.sh"
 run_test "Host Diagnostics" "${PROJECT_ROOT}/tests/unit/test_host_diagnostics.sh"
 run_test "Host Reboot Bridge" "${PROJECT_ROOT}/tests/unit/test_host_reboot.sh"
+run_test "Host Reboot Behavior" "${PROJECT_ROOT}/tests/unit/test_host_reboot_behavior.sh"
 run_test "Host Install Helpers" "${PROJECT_ROOT}/tests/unit/test_host_install_helpers.sh"
 run_test "HDMI Boot Configuration" "${PROJECT_ROOT}/tests/unit/test_hdmi_config.sh"
 run_test "Deployment Transactions" "${PROJECT_ROOT}/tests/unit/test_deployment_transactions.sh"

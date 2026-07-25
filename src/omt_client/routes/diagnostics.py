@@ -12,12 +12,12 @@ diagnostics_blueprint = Blueprint("diagnostics", __name__)
 
 
 def _render(result: DiagnosticResult | None = None) -> ResponseReturnValue:
-    source, address = services().source.configuration()
+    source, direct_target = services().source.configuration()
     return render_template(
         "diagnostics.html",
         app_version=services().diagnostics.version(),
         current_source=source,
-        current_source_url_address=address,
+        current_direct_target=direct_target,
         omt_status=services().diagnostics.status(),
         result=result,
     )
