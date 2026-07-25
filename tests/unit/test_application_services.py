@@ -406,21 +406,22 @@ def test_a_read_failure_mid_drain_reports_the_error_and_stops_the_child(monkeypa
     assert reaped == [True]
 
 
-def test_drain_discards_everything_past_the_limit_without_buffering_it():
-    """Exercised directly rather than through a subprocess: whether a real child
-    happens to fill the buffer exactly, overshoot it, or keep writing afterwards
-    depends on kernel pipe scheduling, and all three are contractual."""
+def _drain_batches(batches: tuple[bytes, ...], limit: int):
+    """Drive `_drain_bounded` over a real pipe fed one discrete batch at a time.
+
+    Each batch is separated by a pause so it arrives as its own `os.read`,
+    which is what makes the boundary cases below reproducible rather than
+    dependent on how the kernel happens to coalesce pipe writes.
+    """
     read_fd, write_fd = os.pipe()
 
-    def write_in_two_batches():
-        # The second batch lands after the limit is already full, which is the
-        # case that must be discarded in place rather than buffered and sliced.
-        os.write(write_fd, b"a" * 4096)
-        time.sleep(0.2)
-        os.write(write_fd, b"b" * 4096)
+    def write_batches():
+        for batch in batches:
+            os.write(write_fd, batch)
+            time.sleep(0.2)
         os.close(write_fd)
 
-    writer = threading.Thread(target=write_in_two_batches)
+    writer = threading.Thread(target=write_batches)
     try:
         writer.start()
 
@@ -435,15 +436,30 @@ def test_drain_discards_everything_past_the_limit_without_buffering_it():
             stdout = Stub(read_fd)
             stderr = None
 
-        monkeypatched_limit = 100
-        with mock.patch.object(command_module, "COMMAND_OUTPUT_LIMIT", monkeypatched_limit):
-            stdout, stderr, stdout_truncated, stderr_truncated, timed_out = (
-                command_module._drain_bounded(cast(Any, FakeProcess()), 5)
-            )
+        with mock.patch.object(command_module, "COMMAND_OUTPUT_LIMIT", limit):
+            return command_module._drain_bounded(cast(Any, FakeProcess()), 5)
     finally:
         writer.join(5)
         os.close(read_fd)
-    assert stdout == b"a" * monkeypatched_limit and stdout_truncated
+
+
+@pytest.mark.parametrize("first_batch", [100, 4096], ids=["exact-fill", "overshoot"])
+def test_drain_discards_everything_past_the_limit_without_buffering_it(first_batch):
+    """Exercised directly rather than through a subprocess: whether a real child
+    happens to fill the buffer exactly or overshoot it depends on kernel pipe
+    scheduling, and both are contractual.
+
+    The two arrive at the cap by different routes. An overshooting batch is
+    sliced and flags the stream in the same step. A batch that lands exactly on
+    the limit leaves the buffer full but *not* yet flagged, so the following
+    batch is the only thing that can mark the stream truncated -- and it must do
+    so without buffering a byte of what it discards.
+    """
+    limit = 100
+    stdout, stderr, stdout_truncated, stderr_truncated, timed_out = _drain_batches(
+        (b"a" * first_batch, b"b" * 4096), limit
+    )
+    assert stdout == b"a" * limit and stdout_truncated
     # A process without a stderr pipe contributes an empty, untruncated stream
     # rather than a KeyError.
     assert stderr == b"" and not stderr_truncated

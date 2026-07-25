@@ -397,6 +397,56 @@ class RuntimeDiagnostics:
 
         bundle = tempfile.SpooledTemporaryFile(max_size=4 * 1024 * 1024)
         timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+        # Both spools can have rolled over to real files by now, and a packet
+        # capture is allowed to reach 64 MB. The container's /tmp is a small
+        # tmpfs, so a failure part-way through the archive must release them
+        # rather than leave them for whenever the collector next runs.
+        try:
+            self._write_archive(
+                bundle,
+                runtime,
+                discovery,
+                controller_status,
+                receive_probe,
+                host_report or _unavailable(host_report_error),
+                # Only embed raw metadata when it validated for this request.
+                # Truthy stale bytes from a prior capture must not win over the
+                # typed error explaining why this run rejected them.
+                metadata_data if metadata is not None else _unavailable(metadata_error),
+                packet_spool if include_packet_capture else None,
+                # Opting in must never silently omit the capture, so an absent
+                # one still owes the operator a stated reason. Opting out owes
+                # nothing, and is the only case that writes neither member.
+                _unavailable(packet_error) if include_packet_capture else b"",
+            )
+        except BaseException:
+            bundle.close()
+            raise
+        finally:
+            if packet_spool is not None:
+                packet_spool.close()
+        bundle.seek(0)
+        return bundle, f"omt-diagnostics-{timestamp}.zip"
+
+    def _write_archive(
+        self,
+        bundle: IO[bytes],
+        runtime: str,
+        discovery: str,
+        controller_status: str,
+        receive_probe: str,
+        host_report: bytes,
+        capture_metadata: bytes,
+        packet_spool: IO[bytes] | None,
+        packet_unavailable: bytes,
+    ) -> None:
+        """Write every archive member. Members arrive resolved, not as outcomes.
+
+        The caller has already decided what each member should contain, so this
+        only lays out the archive. `packet_unavailable` is empty exactly when
+        the capture was not opted into, which is the one case with no raw
+        member and no explanation for its absence. The caller owns the spools.
+        """
         with zipfile.ZipFile(bundle, "w", compression=zipfile.ZIP_DEFLATED) as archive:
             archive.writestr("version.txt", self._about.version() + "\n")
             archive.writestr(
@@ -423,26 +473,10 @@ class RuntimeDiagnostics:
                     if result.ok
                     else _unavailable(result.detail or result.status.value),
                 )
-            archive.writestr(
-                "host-report.txt",
-                host_report if host_report else _unavailable(host_report_error),
-            )
-            archive.writestr(
-                "host-network-pcap.txt",
-                # Only embed raw metadata when it validated for this request.
-                # Truthy stale bytes from a prior capture must not win over the
-                # typed error explaining why this run rejected them.
-                metadata_data if metadata is not None else _unavailable(metadata_error),
-            )
-            if include_packet_capture:
-                if packet_spool is None:
-                    archive.writestr(
-                        "host-network.pcap.unavailable.txt",
-                        _unavailable(packet_error),
-                    )
-                else:
-                    with archive.open("host-network.pcap", "w") as destination:
-                        shutil.copyfileobj(packet_spool, destination, 1024 * 1024)
-                    packet_spool.close()
-        bundle.seek(0)
-        return bundle, f"omt-diagnostics-{timestamp}.zip"
+            archive.writestr("host-report.txt", host_report)
+            archive.writestr("host-network-pcap.txt", capture_metadata)
+            if packet_spool is not None:
+                with archive.open("host-network.pcap", "w") as destination:
+                    shutil.copyfileobj(packet_spool, destination, 1024 * 1024)
+            elif packet_unavailable:
+                archive.writestr("host-network.pcap.unavailable.txt", packet_unavailable)

@@ -25,6 +25,22 @@ MALFORMED_DOCUMENTS = (
     b'<!ENTITY c "&b;&b;&b;&b;&b;&b;&b;&b;&b;&b;">'
     b"]><Settings><DiscoveryServer>&c;</DiscoveryServer></Settings>",
     b'<!DOCTYPE Settings SYSTEM "http://192.0.2.1/x.dtd"><Settings />',
+    # The same two attacks in UTF-16. A document declares its own encoding, so
+    # neither carries a literal "<!DOCTYPE" that a scan of the raw bytes could
+    # find -- while expat decodes the declaration and honours it either way. The
+    # guard has to run inside the parser for these to be rejected at all.
+    (
+        '<?xml version="1.0" encoding="utf-16"?>'
+        "<!DOCTYPE Settings ["
+        '<!ENTITY a "aaaaaaaaaa">'
+        '<!ENTITY b "&a;&a;&a;&a;&a;&a;&a;&a;&a;&a;">'
+        '<!ENTITY c "&b;&b;&b;&b;&b;&b;&b;&b;&b;&b;">'
+        "]><Settings><DiscoveryServer>&c;</DiscoveryServer></Settings>"
+    ).encode("utf-16"),
+    (
+        '<?xml version="1.0" encoding="utf-16"?>'
+        '<!DOCTYPE Settings SYSTEM "http://192.0.2.1/x.dtd"><Settings />'
+    ).encode("utf-16"),
 )
 
 
@@ -116,7 +132,13 @@ def test_read_rejects_wrong_root_duplicates_and_malformed_values(document):
 
 def test_doctype_rejection_names_the_declaration_and_spares_comments():
     with pytest.raises(OmtNetworkConfigurationError, match="doctype or entities"):
+        network_configuration_from_xml(b"<!DOCTYPE Settings><Settings />")
+    # `<!doctype` is not a declaration at all -- XML keywords are case
+    # sensitive -- so it is still refused, as the malformed document it is.
+    with pytest.raises(OmtNetworkConfigurationError, match="XML is invalid"):
         network_configuration_from_xml(b"<!doctype Settings><Settings />")
-    document = b"<Settings><!-- an ordinary comment --><Keep /></Settings>"
+    # A comment that merely mentions the word must still parse: the guard reads
+    # the parse events, not the text, so it cannot be tripped by content.
+    document = b"<Settings><!-- an ordinary DOCTYPE comment --><Keep /></Settings>"
     assert network_configuration_from_xml(document)["discovery_server"] == ""
     assert b"Keep" in update_network_configuration_xml(document, "192.0.2.1")

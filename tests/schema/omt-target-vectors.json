@@ -37,6 +37,14 @@
     {"value": "omt://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.bbbbbbbbbb:6400", "valid": false},
     {"value": "omt://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "valid": false},
     {"value": "omt://host:99999999999999999999", "valid": false},
-    {"value": "", "valid": false}
+    {"value": "", "valid": false},
+    {"value": "omt://CAMERA.local:6400", "valid": true},
+    {"value": "omt://camera.local.:6400", "valid": false},
+    {"value": "omt://192.0.2.010:6400", "valid": true},
+    {"value": "omt://camera.local:06400", "valid": true},
+    {"value": "omt://[fe80::1%25eth0]:6400", "valid": true},
+    {"value": "omt://[fe80::1]:6400", "valid": true},
+    {"value": "omt://[192.0.2.10]:6400", "valid": false},
+    {"value": "omt://[::ffff:192.0.2.10]:6400", "valid": true}
   ]
 }

@@ -5,9 +5,11 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import tempfile
 import time
 import zipfile
 from pathlib import Path
+from typing import Any
 
 import pytest
 from conftest import VirtualClock, raises
@@ -417,6 +419,37 @@ def test_bundle_contains_correlated_report_metadata_and_opted_in_pcap(tmp_path: 
         assert archive.read("host-network.pcap") == PCAP
         assert b"host body" in archive.read("host-report.txt")
     assert "capture_pcap=1" in request.read_text()
+
+
+def test_a_failed_bundle_releases_both_spools(tmp_path: Path, monkeypatch):
+    """Both the archive and the validated capture are spooled temporary files
+    that roll over to real files -- a capture may reach 64 MB. The container's
+    /tmp is a small tmpfs, so a failure part-way through the archive has to
+    release them rather than leave them for whenever the collector runs."""
+    diagnostics = _diagnostics(tmp_path, OMT_DIAGNOSTICS_RECEIVE_PROBE="0")
+    _prepare_bundle(diagnostics, monkeypatch)
+    Path(diagnostics._settings.diagnostics_host_pcap_file).write_bytes(PCAP)
+    Path(diagnostics._settings.diagnostics_host_pcap_metadata_file).write_text(
+        _metadata(), encoding="utf-8"
+    )
+    spools: list[Any] = []
+    original = tempfile.SpooledTemporaryFile
+
+    def record(*args: Any, **kwargs: Any):
+        spool = original(*args, **kwargs)
+        spools.append(spool)
+        return spool
+
+    monkeypatch.setattr(tempfile, "SpooledTemporaryFile", record)
+    monkeypatch.setattr(
+        "omt_client.services.diagnostics.zipfile.ZipFile",
+        raises(OSError("no space left on device")),
+    )
+    with pytest.raises(OSError, match="no space left"):
+        diagnostics.bundle(include_packet_capture=True)
+    # The capture spool and the archive spool, both closed.
+    assert len(spools) == 2
+    assert all(spool.closed for spool in spools)
 
 
 def test_bundle_opt_out_never_streams_raw_capture(tmp_path: Path, monkeypatch):

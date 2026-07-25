@@ -107,6 +107,27 @@ run_case_rejected stale 44444444444444444444444444444444 1 1
 run_case_rejected future 55555555555555555555555555555555 1 "$(($(date +%s) + 600))"
 run_case_rejected invalid wrong 1 0
 
+# A capture was requested but produced nothing publishable. The capture an
+# earlier run left behind describes a different moment and no longer matches the
+# metadata published beside it, so it must not survive this run: the container
+# refuses to ship it either way, but an unfiltered capture of the operator's
+# network should not linger on the SD card waiting to be overwritten.
+failed_id=66666666666666666666666666666666
+retained_pcap="${CASE_DIR}/diagnostics/capture-failed.pcap"
+printf 'previous capture' > "${retained_pcap}"
+cat > "${CASE_DIR}/bin/tcpdump" <<'EOF'
+#!/bin/bash
+printf 'tcpdump: no suitable device found\n' >&2
+exit 1
+EOF
+chmod 0755 "${CASE_DIR}/bin/tcpdump"
+write_request "${failed_id}" 1
+run_diagnostics failed
+grep -qx "request_id=${failed_id}" "${CASE_DIR}/diagnostics/metadata-failed.txt"
+grep -Eq '^capture_status=(failed|unavailable|invalid)$' \
+    "${CASE_DIR}/diagnostics/metadata-failed.txt"
+[[ ! -e "${retained_pcap}" ]]
+
 if OMT_HOST_DEBUG_OUTPUT="${CASE_DIR}/legacy" "${HOST_DIAGNOSTICS}" \
     >"${CASE_DIR}/obsolete.out" 2>&1; then
     echo "obsolete debug setting was accepted" >&2

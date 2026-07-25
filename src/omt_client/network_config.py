@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 import xml.etree.ElementTree as ET
 from typing import cast
 from urllib.parse import urlsplit
@@ -58,21 +57,38 @@ def normalize_discovery_server(value: str) -> str:
     return f"omt://{canonical}:{port}"
 
 
-def _parse_settings(value: str | bytes) -> ET.Element:
-    """Parse one bounded OMT settings document without entity expansion.
+class _DoctypeDeclared(Exception):
+    """Internal signal raised out of the parser target by `_NoDoctypeBuilder`."""
+
+
+class _NoDoctypeBuilder(ET.TreeBuilder):
+    """A tree builder that refuses any document type declaration.
 
     `xml.etree` expands internal entities, so a 64 KB document of nested
-    declarations ("billion laughs") can exhaust memory. No legitimate
-    `settings.xml` carries a doctype, so reject the declaration outright rather
-    than trying to bound the expansion.
+    declarations ("billion laughs") can exhaust memory, and a doctype can also
+    name an external DTD. No legitimate `settings.xml` carries one, so the
+    declaration is rejected outright rather than bounding the expansion.
+
+    Expat calls this after it has decoded the document, so the guard sees the
+    same characters the parser does. A textual pre-scan of the raw bytes cannot:
+    an XML document declares its own encoding, so a UTF-16 `settings.xml`
+    contains no literal "<!DOCTYPE" for such a scan to find while expat still
+    reads and honours the declaration.
     """
-    text = value.decode("utf-8", "replace") if isinstance(value, bytes) else value
-    if isinstance(text, str) and re.search(r"<!(?:DOCTYPE|ENTITY)", text, re.IGNORECASE):
+
+    def doctype(self, name: str, pubid: str, system: str) -> None:
+        raise _DoctypeDeclared
+
+
+def _parse_settings(value: str | bytes) -> ET.Element:
+    """Parse one bounded OMT settings document without entity expansion."""
+    parser = ET.XMLParser(target=_NoDoctypeBuilder())
+    try:
+        return ET.fromstring(value, parser=parser)
+    except _DoctypeDeclared as exc:
         raise OmtNetworkConfigurationError(
             "OMT settings XML must not declare a doctype or entities."
-        )
-    try:
-        return ET.fromstring(value)
+        ) from exc
     except (ET.ParseError, TypeError, ValueError) as exc:
         raise OmtNetworkConfigurationError(f"OMT settings XML is invalid: {exc}") from exc
 

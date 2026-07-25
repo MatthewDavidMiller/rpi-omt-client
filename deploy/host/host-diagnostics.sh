@@ -258,7 +258,6 @@ publish_pcap() {
 
     if [[ "${PCAP_EXIT_STATUS}" == "disabled" ]]; then
         capture_status="disabled"
-        rm -f -- "${PCAP_OUTPUT_FILE}"
     elif [[ "${PCAP_EXIT_STATUS}" == "not_started" ]]; then
         capture_status="unavailable"
     elif [[ -z "${candidate}" ]]; then
@@ -286,6 +285,14 @@ publish_pcap() {
         set_publication_permissions "${candidate}"
         mv -fT "${candidate}" "${PCAP_OUTPUT_FILE}"
         sync -f "${PCAP_OUTPUT_FILE}"
+        sync -d "${OUTPUT_DIR}"
+    else
+        # Nothing publishable this run, so any capture left by an earlier one is
+        # now stale. The container refuses to ship it -- it checks capture_status
+        # against the metadata it just read -- but an unfiltered capture of the
+        # operator's network is not something to leave sitting on the SD card
+        # until some later run happens to overwrite it.
+        rm -f -- "${PCAP_OUTPUT_FILE}"
         sync -d "${OUTPUT_DIR}"
     fi
 
