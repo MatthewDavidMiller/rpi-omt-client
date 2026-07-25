@@ -31,6 +31,13 @@ grep -Fq 'storage='"${CASE_DIR}"'/config/omt' <<< "${output}"
 grep -Fq '<play><--target><Studio Camera><--connector><HDMI-A-2>' <<< "${output}"
 grep -Fq '<--status-file><'"${CASE_DIR}"'/config/run/playback-status.json>' <<< "${output}"
 
+# The shipped image sets OMT_RUNTIME_DIR to a tmpfs path so the continuously
+# rewritten status file never touches the SD-card-backed config volume. The
+# launcher has to follow it there rather than keep its own derived default.
+mkdir -p "${CASE_DIR}/runtime"
+OMT_RUNTIME_DIR="${CASE_DIR}/runtime" run_start auto |
+    grep -Fq '<--status-file><'"${CASE_DIR}"'/runtime/playback-status.json>'
+
 printf '%s\n' '{"schema":1,"kind":"direct","uri":"omt://192.0.2.1:6400"}' \
     > "${CASE_DIR}/config/source_target.json"
 run_start auto | grep -Fq '<--target><omt://192.0.2.1:6400>'

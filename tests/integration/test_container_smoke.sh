@@ -92,10 +92,14 @@ fi
         : > /host-actions/reboot.request' ||
     fail "non-root config and reboot channel initialization failed"
 
+# The tmpfs at /run/omt mirrors deploy/compose.yml: per-boot receiver state is
+# kept off the SD-card-backed config volume. Running without it would only prove
+# the image's own fallback works, and this is the configuration that ships.
 "${CONTAINER_ENGINE}" run -d \
     --name "${CONTAINER_NAME}" \
     -p "${PORT}:5000" \
     -e OMT_REBOOT_ACK_TIMEOUT_SECONDS=5 \
+    --tmpfs /run/omt:size=1m,mode=1777 \
     -v "${config_volume}" \
     -v "${actions_volume}" \
     "${IMAGE_TAG}" >/dev/null || fail "container failed to start"
@@ -121,6 +125,18 @@ health_test="$("${CONTAINER_ENGINE}" inspect --format '{{json .}}' "${IMAGE_TAG}
 [[ "${health_test}" == *'"/opt/venv/bin/python"'* && "${health_test}" == *'/login'* ]] ||
     fail "image declares no usable HEALTHCHECK command"
 pass "image declares a HEALTHCHECK command"
+
+# Per-boot state must land on the tmpfs, in a directory the image user owns
+# privately, and must leave nothing behind on the config volume. A regression
+# here is silent: playback keeps working while the SD card takes the writes.
+runtime_state="$("${CONTAINER_ENGINE}" exec "${CONTAINER_NAME}" /bin/sh -c '
+    printf "%s %s %s\n" \
+        "$(stat -c "%a:%U" "${OMT_RUNTIME_DIR}")" \
+        "$(stat -f -c %T "${OMT_RUNTIME_DIR}")" \
+        "$([ -e /etc/omt/run ] && echo legacy-present || echo legacy-absent)"')"
+[[ "${runtime_state}" == "700:omt tmpfs legacy-absent" ]] ||
+    fail "per-boot state is not private on tmpfs: ${runtime_state}"
+pass "per-boot receiver state is a private tmpfs directory off the config volume"
 
 "${CONTAINER_ENGINE}" exec "${CONTAINER_NAME}" \
     /opt/venv/bin/python -c \

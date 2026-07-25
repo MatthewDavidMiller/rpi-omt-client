@@ -8,7 +8,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from conftest import raises
+from conftest import VirtualClock, raises
 from flask import Flask, session
 from werkzeug.security import generate_password_hash
 
@@ -22,7 +22,7 @@ from omt_client.services import (
     RuntimeSourcePlayback,
     production_services,
 )
-from omt_client.services.command import run_command
+from omt_client.services.command import COMMAND_OUTPUT_LIMIT, run_command
 from omt_client.settings import load_settings
 from omt_client.state_store import SourceTarget, save_source_target
 
@@ -262,6 +262,67 @@ def test_bounded_command_success_timeout_and_os_error(monkeypatch):
     assert "missing" in run_command(["receiver"], 1).error
 
 
+def test_command_output_is_truncated_to_the_limit_and_flagged():
+    """A runaway receiver must not be able to grow a worker's memory through a
+    diagnostics page. The cap is applied on both streams and reported, so an
+    operator can tell a truncated capture from a complete one."""
+    oversized = COMMAND_OUTPUT_LIMIT + 4096
+    result = run_command(
+        [
+            "/bin/sh",
+            "-c",
+            f"yes x | head -c {oversized}; yes y | head -c {oversized} >&2",
+        ],
+        30,
+    )
+    assert len(result.stdout) == COMMAND_OUTPUT_LIMIT
+    assert len(result.stderr) == COMMAND_OUTPUT_LIMIT
+    assert result.stdout_truncated and result.stderr_truncated
+
+    within = run_command(["/bin/sh", "-c", "printf ok"], 5)
+    assert not within.stdout_truncated and not within.stderr_truncated
+
+
+def test_timed_out_command_still_reports_the_partial_output_it_captured(monkeypatch):
+    """`TimeoutExpired.stdout` holds whatever the child wrote before the kill.
+    Discarding it would leave an operator with a bare "exceeded N seconds" for
+    the failure mode that most often explains itself in that partial text."""
+
+    def timeout(*_args, **_kwargs):
+        raise subprocess.TimeoutExpired(
+            "receiver",
+            1,
+            output=b"partial stdout",
+            stderr=b"partial stderr",
+        )
+
+    monkeypatch.setattr(subprocess, "run", timeout)
+    result = run_command(["receiver"], 1)
+    assert result.timed_out and result.returncode is None
+    assert result.stdout == "partial stdout" and result.stderr == "partial stderr"
+    # `error` outranks the partial streams: the timeout is the actual failure.
+    assert result.failure_detail == "Command exceeded 1 seconds."
+
+
+@pytest.mark.parametrize(
+    ("result", "failure_detail", "report_text"),
+    [
+        (command_result(error="spawn failed", stderr="noise", stdout="out"), "spawn failed", "out"),
+        (command_result(stderr=" stderr \n", stdout=" stdout "), "stderr", "stdout"),
+        (command_result(stdout=" stdout "), "stdout", "stdout"),
+        (command_result(), "", "unavailable"),
+    ],
+    ids=["error-wins", "stderr-over-stdout", "stdout-only", "silent"],
+)
+def test_command_detail_and_report_use_opposite_precedence(result, failure_detail, report_text):
+    """The two accessors answer different questions. `failure_detail` is appended
+    to a caller's own error sentence, so a silent failure must contribute nothing
+    rather than the word "unavailable"; `report_text` is shown on its own and so
+    always renders something."""
+    assert result.failure_detail == failure_detail
+    assert result.report_text == report_text
+
+
 def test_atomic_write_is_private_bounded_and_rejects_unsafe_targets(tmp_path):
     target = tmp_path / "value"
     atomic_replace(str(target), b"safe", 4)
@@ -305,6 +366,62 @@ def test_source_discovery_cache_selection_direct_clear_and_restart(tmp_path, mon
     assert service.clear().ok
     assert service.configuration() == ("", "")
     assert not service.restart().ok
+
+
+def test_discovery_cache_ttl_starts_when_the_answer_arrives(tmp_path, monkeypatch):
+    """The TTL must cover the cached answer's own lifetime, not overlap the
+    discovery that produced it. `discover --wait-ms 1500` blocks for seconds, so
+    anchoring the expiry to a pre-command clock spends that time out of the TTL
+    -- and once the discovery outlasts the TTL the entry is born expired, so
+    every dashboard render pays for another multi-second discovery."""
+    clock = VirtualClock()
+    monkeypatch.setattr("omt_client.services.playback.time", clock.module())
+    settings = settings_for(tmp_path, OMT_SOURCE_CACHE_TTL_SECONDS="2")
+    discoveries = 0
+
+    def run(command, _timeout):
+        nonlocal discoveries
+        discoveries += 1
+        clock.sleep(3)  # longer than the TTL, as a real --wait-ms 1500 can be
+        return command_result(stdout='[{"name":"Camera","target":"Camera"}]')
+
+    monkeypatch.setattr("omt_client.services.playback.run_command", run)
+    service = RuntimeSourcePlayback(settings)
+
+    assert [choice.name for choice in service.sources()] == ["Camera"]
+    assert [choice.name for choice in service.sources()] == ["Camera"]
+    assert discoveries == 1, "a cache entry must not expire before it is first read"
+
+    clock.sleep(2)
+    assert [choice.name for choice in service.sources()] == ["Camera"]
+    assert discoveries == 2, "the entry must still expire a full TTL after it was stored"
+
+
+def test_a_failed_discovery_is_cached_so_a_broken_receiver_is_not_hammered(tmp_path, monkeypatch):
+    """The dashboard calls sources() on every render. A receiver that fails fast
+    would otherwise be re-invoked once per request for as long as it stays
+    broken, so the empty answer is cached exactly like a successful one."""
+    clock = VirtualClock()
+    monkeypatch.setattr("omt_client.services.playback.time", clock.module())
+    settings = settings_for(tmp_path, OMT_SOURCE_CACHE_TTL_SECONDS="5")
+    attempts = 0
+
+    def run(command, _timeout):
+        nonlocal attempts
+        attempts += 1
+        return command_result(returncode=1, stderr="receiver is not running")
+
+    monkeypatch.setattr("omt_client.services.playback.run_command", run)
+    service = RuntimeSourcePlayback(settings)
+
+    assert service.sources() == []
+    assert service.sources() == []
+    assert attempts == 1
+
+    # An operator pressing Refresh must still get a real retry immediately.
+    service.refresh()
+    assert service.sources() == []
+    assert attempts == 2
 
 
 def test_saving_discovery_settings_restarts_a_configured_source(tmp_path, monkeypatch):

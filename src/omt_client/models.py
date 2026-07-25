@@ -42,6 +42,26 @@ class CommandResult:
     stderr_truncated: bool = False
     sources: tuple[str, ...] = ()
 
+    @property
+    def failure_detail(self) -> str:
+        """Return the most specific explanation of a failure, or "".
+
+        `error` is this process's own account (timeout, spawn failure), so it
+        outranks anything the command printed; a failing command explains itself
+        on stderr before stdout. Callers append this to their own sentence, so an
+        entirely silent failure contributes nothing rather than "unavailable".
+        """
+        return self.error or self.stderr.strip() or self.stdout.strip()
+
+    @property
+    def report_text(self) -> str:
+        """Return what a command *said*, for display rather than for a failure.
+
+        Inverse precedence to `failure_detail`: a command that both printed a
+        result and failed is being shown for its output here, so stdout wins.
+        """
+        return self.stdout.strip() or self.error or self.stderr.strip() or "unavailable"
+
 
 @dataclass(frozen=True)
 class DiagnosticResult:

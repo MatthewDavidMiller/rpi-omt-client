@@ -5,11 +5,36 @@ umask 077
 OMT_CONFIG_DIR="${OMT_CONFIG_DIR:-/etc/omt}"
 export HOME="${HOME:-${OMT_CONFIG_DIR}}"
 export OMT_STORAGE_PATH="${OMT_STORAGE_PATH:-${OMT_CONFIG_DIR}/omt}"
+export OMT_RUNTIME_DIR="${OMT_RUNTIME_DIR:-${OMT_CONFIG_DIR}/run}"
 CONTROL_OMT_CMD="${CONTROL_OMT_CMD:-/usr/local/bin/control-omt.sh}"
 GUNICORN_CMD="${GUNICORN_CMD:-/opt/venv/bin/gunicorn}"
 WEB_PORT="${WEB_PORT:-5000}"
+LEGACY_RUN_DIR="${OMT_CONFIG_DIR}/run"
 
-mkdir -p "${OMT_CONFIG_DIR}" "${OMT_CONFIG_DIR}/run" "${OMT_STORAGE_PATH}"
+mkdir -p "${OMT_CONFIG_DIR}" "${OMT_STORAGE_PATH}"
+
+# The compose file mounts a tmpfs one level above this, world-writable like any
+# tmpfs mount point. Owning a 0700 directory inside it keeps the lock, PID
+# record, and status file as private as they were on the config volume.
+if [[ -L "${OMT_RUNTIME_DIR}" || ( -e "${OMT_RUNTIME_DIR}" && ! -d "${OMT_RUNTIME_DIR}" ) ]]; then
+    echo "Unsafe OMT runtime directory: ${OMT_RUNTIME_DIR}" >&2
+    exit 1
+fi
+mkdir -p "${OMT_RUNTIME_DIR}"
+chmod 700 "${OMT_RUNTIME_DIR}"
+
+# Upgrades leave the pre-tmpfs runtime state behind on the persistent volume.
+# Every one of these files is per-boot state that nothing reads any more, so
+# clear them by name and remove the directory only if that emptied it.
+if [[ "${OMT_RUNTIME_DIR}" != "${LEGACY_RUN_DIR}" && -d "${LEGACY_RUN_DIR}" &&
+      ! -L "${LEGACY_RUN_DIR}" ]]; then
+    rm -f -- \
+        "${LEGACY_RUN_DIR}/control.lock" \
+        "${LEGACY_RUN_DIR}/omt.pid" \
+        "${LEGACY_RUN_DIR}/playback-status.json" \
+        "${LEGACY_RUN_DIR}/receiver.log"
+    rmdir -- "${LEGACY_RUN_DIR}" 2>/dev/null || true
+fi
 
 sync_replace() {
     local staged="$1" target="$2"

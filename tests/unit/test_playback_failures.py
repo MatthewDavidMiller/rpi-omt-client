@@ -10,15 +10,16 @@ import pytest
 from conftest import REPO_ROOT, raises
 
 from omt_client.models import CommandResult
-from omt_client.services.playback import (
+from omt_client.playback_status import (
     AUDIO_STATES,
+    CONNECTORS,
     PUBLIC_STATES,
     RECEIVER_STATES,
     STATUS_FIELDS,
     VIDEO_STATES,
     PlaybackStatusRecord,
-    RuntimeSourcePlayback,
 )
+from omt_client.services.playback import RuntimeSourcePlayback
 from omt_client.settings import load_settings
 from omt_client.state_store import SourceConfigurationError
 
@@ -69,6 +70,10 @@ def test_consumer_accept_lists_match_the_shared_receiver_contract():
     assert RECEIVER_STATES == set(VECTORS["receiver_states"])
     assert VIDEO_STATES == set(VECTORS["video_states"])
     assert AUDIO_STATES == set(VECTORS["audio_states"])
+    # Parametrising over VECTORS["connectors"] only proves the vectors are
+    # accepted. Equality also proves the reverse: a connector the receiver can
+    # never publish cannot quietly widen the consumer's accept-list.
+    assert CONNECTORS == set(VECTORS["connectors"])
     assert _status_document()["schema"] == VECTORS["schema"]
     # playback() indexes PUBLIC_STATES directly. Only states with a projection row
     # are exercised end to end, so totality has to be asserted rather than sampled.

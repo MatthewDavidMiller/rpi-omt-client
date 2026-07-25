@@ -28,6 +28,21 @@ services:
       - /var/lib/omt-client/avahi:/host-avahi:ro
       - /var/lib/omt-client/diagnostics:/host-diagnostics
       - /var/lib/omt-client/host-actions:/host-actions
+      # Per-boot receiver state. The receiver republishes playback status on
+      # every change and then at a heartbeat, so keeping it on the SD-card-backed
+      # omt-config volume meant a continuous write + fsync + rename onto flash.
+      # It is all state that must not survive a restart anyway. Capped because a
+      # tmpfs is RAM; the lock, PID record, and status document total under 1 KB.
+      - type: tmpfs
+        target: /run/omt
+        tmpfs:
+          size: 1048576
+          # 0o1777 in decimal, the one spelling every YAML parser in this repo
+          # and in Compose reads identically. The mode must be explicit: the
+          # default differs by engine (Docker 1777, Podman 700 owned by
+          # container root), and this image runs as the unprivileged omt user,
+          # which could not then create its own directory here.
+          mode: 1023
     tmpfs:
       - /tmp
     group_add:

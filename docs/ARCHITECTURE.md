@@ -69,9 +69,17 @@ field can select a command or argument.
 ## Persistent state
 
 The external `omt-config` volume contains credentials, sessions,
-`source_target.json`, OMT `settings.xml`, TLS material, and runtime status.
+`source_target.json`, OMT `settings.xml`, TLS material, and the receiver log.
 Source state is one atomic schema-versioned record, not a pair of files. The
 installer never migrates legacy NDI state.
+
+Per-boot state is kept off that volume. The control lock, PID record, and
+published playback status live in `$OMT_RUNTIME_DIR`, a size-capped tmpfs
+mounted at `/run/omt`; the entrypoint owns a 0700 directory inside that
+world-writable mount point. The receiver republishes status on every change and
+then at a 500 ms heartbeat, so keeping it on the volume put a permanent
+write + fsync + rename load on SD-card-backed flash for state that is
+meaningless after a restart.
 
 ## Deployment capsule
 

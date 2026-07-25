@@ -76,7 +76,7 @@ class RuntimeDiagnostics:
             [self._settings.control_command, "status"],
             self._settings.control_timeout_seconds,
         )
-        return result.stdout.strip() or result.error or result.stderr.strip() or "unavailable"
+        return result.report_text
 
     def discovery(self) -> DiagnosticResult:
         return self._discovery(time.monotonic() + 5)
@@ -349,12 +349,7 @@ class RuntimeDiagnostics:
             self._settings.control_timeout_seconds,
             deadline,
         )
-        controller_status = (
-            status_result.stdout.strip()
-            or status_result.error
-            or status_result.stderr.strip()
-            or "unavailable"
-        ) + "\n"
+        controller_status = status_result.report_text + "\n"
         source, _address = self._source.configuration()
         if self._settings.diagnostics_receive_probe and source:
             remaining = max(0.0, deadline - time.monotonic())

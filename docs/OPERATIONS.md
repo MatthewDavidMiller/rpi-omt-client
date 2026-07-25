@@ -81,4 +81,7 @@ receiver.
 - Waiting for HDMI: verify `/sys/class/drm/*/status` and the selected connector.
 - Unsupported format: configure the sender for at most 1920×1080 at 60 fps.
 - Video without audio: inspect ALSA devices and ELD; video remains degraded.
-- Stale status: inspect controller status and `run/receiver.log`.
+- Stale status: inspect controller status and `receiver.log` in the config
+  volume. Per-boot state (lock, PID record, published status) lives on a tmpfs
+  at `/run/omt/state` and is gone after a restart; the log is kept on the volume
+  precisely so it survives one.

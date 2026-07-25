@@ -60,6 +60,7 @@ class AppSettings:
     """Effective non-secret application settings."""
 
     config_dir: str
+    runtime_dir: str
     password_file: str
     session_lifetime_seconds: int
     max_request_bytes: int
@@ -130,6 +131,11 @@ def load_settings(environment: Mapping[str, str] | None = None) -> AppSettings:
         )
     parsed = {spec.name: _parse_number(env, spec) for spec in ENVIRONMENT_SPECS}
     config_dir = env.get("OMT_CONFIG_DIR", "/etc/omt")
+    # Ephemeral per-boot state (lock, PID record, published status). The shipped
+    # image points this at a tmpfs, because the status file is rewritten
+    # continuously and the config volume is SD-card-backed flash. The fallback
+    # keeps a bare `docker run` without that mount working.
+    runtime_dir = env.get("OMT_RUNTIME_DIR", os.path.join(config_dir, "run"))
     runtime_override = env.get("OMT_RUNTIME_CONFIG_FILE")
     sdk_override = env.get("OMT_STORAGE_PATH")
     if runtime_override:
@@ -140,6 +146,7 @@ def load_settings(environment: Mapping[str, str] | None = None) -> AppSettings:
         runtime_file = os.path.join(sdk_dir, "settings.xml")
     return AppSettings(
         config_dir=config_dir,
+        runtime_dir=runtime_dir,
         password_file=env.get("OMT_PASSWORD_FILE", os.path.join(config_dir, "web_password")),
         session_lifetime_seconds=int(parsed["OMT_SESSION_LIFETIME_SECONDS"]),
         max_request_bytes=int(parsed["OMT_MAX_REQUEST_BYTES"]),
@@ -152,7 +159,7 @@ def load_settings(environment: Mapping[str, str] | None = None) -> AppSettings:
             "OMT_SOURCE_TARGET_FILE", os.path.join(config_dir, "source_target.json")
         ),
         playback_status_file=env.get(
-            "OMT_PLAYBACK_STATUS_FILE", os.path.join(config_dir, "run", "playback-status.json")
+            "OMT_PLAYBACK_STATUS_FILE", os.path.join(runtime_dir, "playback-status.json")
         ),
         sdk_config_dir=sdk_dir,
         runtime_config_file=runtime_file,

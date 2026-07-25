@@ -5,7 +5,7 @@ from .composition import production_services
 from .diagnostics import RuntimeDiagnostics
 from .host_system import HostSystem
 from .network import RuntimeNetwork
-from .playback import PlaybackStatusRecord, RuntimeSourcePlayback
+from .playback import RuntimeSourcePlayback
 from .protocols import (
     AuthenticationService,
     DiagnosticsService,
@@ -21,7 +21,6 @@ __all__ = (
     "HostSystem",
     "NetworkService",
     "PersistentAuthentication",
-    "PlaybackStatusRecord",
     "RuntimeDiagnostics",
     "RuntimeNetwork",
     "RuntimeSourcePlayback",

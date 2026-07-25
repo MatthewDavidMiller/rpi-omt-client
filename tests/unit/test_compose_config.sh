@@ -79,6 +79,19 @@ assert_not_contains '^[[:space:]]*-[[:space:]]+/proc(/|:)' \
     "proc subpaths are not bind-mounted because current runc rejects them"
 assert_contains '^[[:space:]]*-[[:space:]]+/tmp[[:space:]]*$' \
     "tmpfs is mounted at /tmp"
+# Playback status is rewritten continuously, so a runtime directory left on the
+# omt-config volume is a permanent write load on SD-card-backed flash.
+assert_contains '^[[:space:]]*target:[[:space:]]+/run/omt[[:space:]]*$' \
+    "per-boot receiver state is mounted as tmpfs at /run/omt"
+assert_contains '^[[:space:]]*size:[[:space:]]+[0-9]+[[:space:]]*$' \
+    "the runtime tmpfs is size-capped so it cannot consume RAM"
+# Left implicit, the mode is whatever the engine defaults to -- Docker 1777,
+# Podman 700 owned by container root -- and the unprivileged image user cannot
+# create its own directory under the latter, so the container never starts.
+assert_contains '^[[:space:]]*mode:[[:space:]]+1023[[:space:]]*$' \
+    "the runtime tmpfs mode is explicit rather than engine-dependent"
+assert_not_contains '^[[:space:]]*-[[:space:]]+omt-config:/etc/omt/run' \
+    "the runtime directory is not bound back onto the persistent volume"
 assert_contains '^[[:space:]]*-[[:space:]]+"\$\{OMT_VIDEO_GID:-44\}"[[:space:]]*(#.*)?$' \
     "video group uses an installer-provided GID with a safe fallback"
 assert_contains '^[[:space:]]*-[[:space:]]+"\$\{OMT_RENDER_GID:-106\}"[[:space:]]*(#.*)?$' \

@@ -62,6 +62,30 @@ def test_the_request_ceiling_cannot_be_set_below_a_usable_form_post():
         load_settings({"OMT_MAX_REQUEST_BYTES": "1023"})
 
 
+def test_playback_status_follows_the_runtime_directory_off_the_config_volume():
+    """The shipped image puts per-boot state on a tmpfs, because the receiver
+    rewrites the status document continuously and the config volume is
+    SD-card-backed flash. The status path has to follow OMT_RUNTIME_DIR there;
+    deriving it from OMT_CONFIG_DIR would leave the web worker reading a stale
+    file on the volume while the receiver published to tmpfs."""
+    default = load_settings({"OMT_CONFIG_DIR": "/etc/omt"})
+    assert default.runtime_dir == "/etc/omt/run"
+    assert default.playback_status_file == "/etc/omt/run/playback-status.json"
+
+    tmpfs = load_settings({"OMT_CONFIG_DIR": "/etc/omt", "OMT_RUNTIME_DIR": "/run/omt/state"})
+    assert tmpfs.runtime_dir == "/run/omt/state"
+    assert tmpfs.playback_status_file == "/run/omt/state/playback-status.json"
+
+    # An explicit status path still wins over the directory it would sit in.
+    explicit = load_settings(
+        {
+            "OMT_RUNTIME_DIR": "/run/omt/state",
+            "OMT_PLAYBACK_STATUS_FILE": "/elsewhere/status.json",
+        }
+    )
+    assert explicit.playback_status_file == "/elsewhere/status.json"
+
+
 def test_runtime_override_derives_sdk_directory_unless_explicit():
     derived = load_settings({"OMT_RUNTIME_CONFIG_FILE": "/tmp/sdk/settings.xml"})
     explicit = load_settings(

@@ -305,6 +305,117 @@ public sealed class CoreTests
             File.ReadAllText(Path.Combine(AppContext.BaseDirectory, fileName)));
 }
 
+public sealed class StatusPublishPolicyTests
+{
+    private long _now;
+
+    /// <summary>
+    /// Converts a duration to Stopwatch ticks with integer arithmetic only.
+    /// Accumulating fractional seconds instead would let a step land a tick
+    /// under a heartbeat boundary and make these assertions measure rounding.
+    /// </summary>
+    private static long Ticks(TimeSpan span) =>
+        System.Diagnostics.Stopwatch.Frequency * span.Ticks / TimeSpan.TicksPerSecond;
+
+    private void Advance(TimeSpan span) => _now += Ticks(span);
+
+    private StatusPublishPolicy Policy(TimeSpan? heartbeat = null) =>
+        new(heartbeat, () => _now);
+
+    [Fact]
+    public void AnUnchangedProjectionIsWrittenOncePerHeartbeatRatherThanPerFrame()
+    {
+        // The real driver is the decode loop and the audio worker, each
+        // publishing an identical projection per frame. Every write is an fsync
+        // and a rename on the SD-card-backed config volume.
+        TimeSpan heartbeat = TimeSpan.FromMilliseconds(500);
+        TimeSpan frameInterval = TimeSpan.FromMilliseconds(10);
+        StatusPublishPolicy policy = Policy(heartbeat);
+        PlaybackProjection playing = new("running", "running", "running", "Playing OMT video.");
+
+        Assert.True(policy.ShouldPublish(playing, "HDMI-A-1"));
+
+        int written = 0;
+        for (int frame = 0; frame < 100; frame++)
+        {
+            Advance(frameInterval);
+            if (policy.ShouldPublish(playing, "HDMI-A-1"))
+            {
+                written++;
+            }
+        }
+
+        // One second of identical frames: two heartbeats, not a hundred writes.
+        Assert.Equal(2, written);
+    }
+
+    [Fact]
+    public void EveryChangeIsPublishedImmediatelyWithoutWaitingForTheHeartbeat()
+    {
+        StatusPublishPolicy policy = Policy(TimeSpan.FromSeconds(30));
+        PlaybackProjection playing = new("running", "running", "running", "Playing OMT video.");
+        Assert.True(policy.ShouldPublish(playing, "HDMI-A-1"));
+
+        // A detail-only change still matters: it is the text the operator reads.
+        PlaybackProjection interlaced = playing with { Detail = "Playing interlaced input." };
+        Assert.True(policy.ShouldPublish(interlaced, "HDMI-A-1"));
+
+        PlaybackProjection degraded =
+            new("degraded", "running", "failed", "Audio unavailable.");
+        Assert.True(policy.ShouldPublish(degraded, "HDMI-A-1"));
+
+        // The same projection on a different output is a different fact.
+        Assert.True(policy.ShouldPublish(degraded, "HDMI-A-2"));
+        Assert.False(policy.ShouldPublish(degraded, "HDMI-A-2"));
+    }
+
+    [Fact]
+    public void TheHeartbeatIsMeasuredFromTheLastWriteAndStaysInsideTheStaleWindow()
+    {
+        // OMT_PLAYBACK_STATUS_STALE_SECONDS accepts a minimum of 1, so the
+        // default heartbeat has to leave room under even that setting or the
+        // dashboard reads a throttled record as "Playback status stale".
+        Assert.True(StatusPublishPolicy.DefaultHeartbeat < TimeSpan.FromSeconds(1));
+
+        StatusPublishPolicy policy = Policy();
+        TimeSpan half = StatusPublishPolicy.DefaultHeartbeat / 2;
+        PlaybackProjection playing = new("running", "running", "running", "Playing OMT video.");
+        Assert.True(policy.ShouldPublish(playing, "HDMI-A-1"));
+
+        Advance(half);
+        Assert.False(policy.ShouldPublish(playing, "HDMI-A-1"));
+
+        // Suppressed calls must not restart the interval, or a busy loop would
+        // hold the record just under the threshold forever and never refresh it.
+        Advance(half);
+        Assert.True(policy.ShouldPublish(playing, "HDMI-A-1"));
+    }
+
+    [Fact]
+    public void AForcedPublishOverridesTheHeartbeatAndRestartsTheInterval()
+    {
+        // The shutdown path forces its terminal record so the file an operator
+        // is left looking at carries a current timestamp. Going through the
+        // policy rather than around it keeps that write inside the interval
+        // bookkeeping, so the next heartbeat is measured from the real one.
+        StatusPublishPolicy policy = Policy(TimeSpan.FromSeconds(10));
+        PlaybackProjection stopped = new("stopped", "stopped", "stopped", "Playback stopped.");
+        Assert.True(policy.ShouldPublish(stopped, "none"));
+        Assert.False(policy.ShouldPublish(stopped, "none"));
+
+        Advance(TimeSpan.FromSeconds(4));
+        Assert.True(policy.ShouldPublish(stopped, "none", force: true));
+
+        // Six more seconds is ten since the throttled call but only six since
+        // the forced write, so the heartbeat must not be due yet.
+        Advance(TimeSpan.FromSeconds(6));
+        Assert.False(policy.ShouldPublish(stopped, "none"));
+
+        Advance(TimeSpan.FromSeconds(4));
+        Assert.True(policy.ShouldPublish(stopped, "none"));
+    }
+}
+
 public sealed class HdmiConnectorTests : IDisposable
 {
     private readonly string _root = Directory.CreateTempSubdirectory("omt-drm").FullName;

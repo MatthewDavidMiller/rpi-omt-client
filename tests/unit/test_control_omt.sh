@@ -65,4 +65,27 @@ if run_control start >/dev/null 2>&1; then
     exit 1
 fi
 
+# The shipped image puts per-boot state on a tmpfs, so the controller has to
+# take its lock, PID record, and status file from OMT_RUNTIME_DIR. Deriving them
+# from OMT_CONFIG_DIR instead would silently keep writing status to flash while
+# the receiver published it somewhere else entirely.
+RUNTIME_DIR="${CASE_DIR}/runtime"
+mkdir -p "${RUNTIME_DIR}"
+printf '%s\n' '{"schema":1,"kind":"discovered","name":"Camera"}' \
+    > "${CASE_DIR}/config/source_target.json"
+printf '999999 1\n' > "${RUNTIME_DIR}/omt.pid"
+printf '{"state":"running"}\n' > "${RUNTIME_DIR}/playback-status.json"
+if OMT_RUNTIME_DIR="${RUNTIME_DIR}" run_control status >/dev/null 2>&1; then
+    echo "stale PID record in the runtime directory was trusted" >&2
+    exit 1
+fi
+[[ ! -e "${RUNTIME_DIR}/omt.pid" ]]
+[[ ! -e "${RUNTIME_DIR}/playback-status.json" ]]
+[[ -e "${RUNTIME_DIR}/control.lock" ]]
+# The receiver log is the only account of a failure that predates a restart, so
+# it stays on the persistent volume rather than following the state to tmpfs.
+[[ ! -e "${RUNTIME_DIR}/receiver.log" ]]
+OMT_RUNTIME_DIR="${RUNTIME_DIR}" run_control start >/dev/null 2>&1 || true
+[[ -e "${CASE_DIR}/config/receiver.log" ]]
+
 echo "OMT controller tests passed"

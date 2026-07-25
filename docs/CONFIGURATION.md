@@ -8,6 +8,7 @@
 | `RPI_OMT_CLIENT_VERSION` | Build version embedded in image/receiver |
 | `RPI_OMT_CLIENT_VERSION_FILE` | `/app/RPI_OMT_CLIENT_VERSION` |
 | `OMT_CONFIG_DIR` | `/etc/omt` persistent application state |
+| `OMT_RUNTIME_DIR` | `/run/omt/state` in the shipped image (tmpfs); per-boot lock, PID record, and playback status. Falls back to `$OMT_CONFIG_DIR/run` when unset |
 | `OMT_STORAGE_PATH` | `/etc/omt/omt`, libomtnet storage |
 | `OMT_RUNTIME_CONFIG_FILE` | `$OMT_STORAGE_PATH/settings.xml` |
 | `OMT_PASSWORD_FILE` | `$OMT_CONFIG_DIR/web_password` |
@@ -19,8 +20,8 @@
 | `OMT_CONTROL_TIMEOUT_SECONDS` | `8` |
 | `OMT_SOURCE_CACHE_TTL_SECONDS` | `5` |
 | `OMT_SOURCE_TARGET_FILE` | `$OMT_CONFIG_DIR/source_target.json` |
-| `OMT_PLAYBACK_STATUS_FILE` | `$OMT_CONFIG_DIR/run/playback-status.json` |
-| `OMT_PLAYBACK_STATUS_STALE_SECONDS` | `5` |
+| `OMT_PLAYBACK_STATUS_FILE` | `$OMT_RUNTIME_DIR/playback-status.json` |
+| `OMT_PLAYBACK_STATUS_STALE_SECONDS` | `5`, minimum `1`; must stay above the receiver's 500 ms status heartbeat |
 | `OMT_HDMI_CONNECTOR` | `auto`, `HDMI-A-1`, or `HDMI-A-2` |
 | `OMT_DIAGNOSTICS_HOST_REPORT_FILE` | `/host-diagnostics/host-report.txt` |
 | `OMT_DIAGNOSTICS_HOST_REQUEST_FILE` | `/host-diagnostics/request` |
@@ -54,7 +55,15 @@ application creation. Legacy `OMT_DEBUG_*`, `OMT_HOST_DEBUG_*`, and
 | `source_target.json` | Schema 1; either `{"kind":"discovered","name":...}` or `{"kind":"direct","uri":"omt://..."}` |
 | `omt/settings.xml` | `<Settings>` with at most one `<DiscoveryServer>` |
 | `ssl/key.pem`, `ssl/cert.pem` | Entrypoint-managed HTTPS key/certificate |
-| `run/playback-status.json` | Atomic receiver state and timestamp |
+| `receiver.log` | Appended receiver stdout/stderr; kept here so it outlives a restart |
+
+Per-boot state is deliberately **not** in this volume. `control.lock`,
+`omt.pid`, and `playback-status.json` live in `$OMT_RUNTIME_DIR`, a size-capped
+tmpfs mounted at `/run/omt`. The receiver rewrites the status document on every
+change and then at a 500 ms heartbeat, so holding it on the SD-card-backed
+volume meant a permanent write + fsync + rename load on flash. None of it is
+meaningful after a restart. An upgrade's leftover `run/` directory is removed by
+the entrypoint on first boot.
 
 A Discovery Server may be a host, `host:port`, or `omt://host:port`. Omitted
 ports become 6399. mDNS remains enabled. A direct source must be an explicit

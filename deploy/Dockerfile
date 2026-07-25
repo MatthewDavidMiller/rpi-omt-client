@@ -84,8 +84,9 @@ RUN apk add --no-cache \
         zlib \
     && addgroup -S omt \
     && adduser -S -D -H -G omt -h /etc/omt -s /sbin/nologin omt \
-    && mkdir -p /app/legal /etc/omt /usr/local/lib \
-    && chown omt:omt /etc/omt
+    && mkdir -p /app/legal /etc/omt /usr/local/lib /run/omt \
+    && chown omt:omt /etc/omt /run/omt \
+    && chmod 700 /run/omt
 
 COPY --from=python-builder /opt/venv /opt/venv
 COPY --from=receiver-builder /out/receiver/omt-receiver /usr/local/bin/omt-receiver
@@ -127,6 +128,12 @@ RUN chmod 0755 \
 ENV HOME=/etc/omt
 ENV OMT_CONFIG_DIR=/etc/omt
 ENV OMT_STORAGE_PATH=/etc/omt/omt
+# Per-boot state, deliberately off the SD-card-backed config volume. compose.yml
+# mounts a tmpfs at /run/omt; the entrypoint owns this 0700 directory inside it.
+# /run/omt is pre-created and owned above, because /run itself is root-owned and
+# this image runs as omt: without it a run that does not mount the tmpfs could
+# not create the directory at all.
+ENV OMT_RUNTIME_DIR=/run/omt/state
 ENV FLASK_APP=omt_client.wsgi:app
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1
 ENV PYTHONUNBUFFERED=1

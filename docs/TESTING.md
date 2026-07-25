@@ -56,10 +56,15 @@ against, so a change on one side fails the other:
 | `omt-target-vectors.json` | Source-name and direct-target validation |
 | `playback-status-vectors.json` | Playback status fields, state enums, and projections |
 
-`PlaybackStatusRecord.parse` requires the field set to match exactly, so adding
-or renaming a status field in only one language would make the receiver's output
-unparseable and pin the dashboard to "Playback status stale". Update the vector
-file and both suites together.
+`PlaybackStatusRecord.parse` (in `src/omt_client/playback_status.py`) requires
+the field set to match exactly, so adding or renaming a status field in only one
+language would make the receiver's output unparseable and pin the dashboard to
+"Playback status stale". Update the vector file and both suites together.
+
+The receiver publishes an unchanged projection at most once per
+`StatusPublishPolicy.DefaultHeartbeat`, so that heartbeat must stay well under
+the smallest accepted `OMT_PLAYBACK_STATUS_STALE_SECONDS`. The receiver suite
+asserts that relationship directly.
 
 ## Lint gates
 

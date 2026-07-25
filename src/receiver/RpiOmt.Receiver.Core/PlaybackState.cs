@@ -114,6 +114,65 @@ public sealed class PlaybackStateModel
     }
 }
 
+/// <summary>
+/// Decides which status projections are worth committing to disk.
+/// </summary>
+/// <remarks>
+/// Every decoded video and audio frame drives a projection, but publishing is a
+/// write + fsync + rename onto the SD-card-backed config volume. At 1080p60 that
+/// is well over a hundred fsync cycles a second, forever -- flash wear, and a
+/// synchronous stall inside the presentation loop -- to restate a record whose
+/// only changing field is its timestamp.
+///
+/// So a projection identical to the last published one is written only once per
+/// heartbeat. Any change to the state, detail, or connector is published
+/// immediately, because the dashboard must show transitions at once.
+/// The heartbeat stays well inside OMT_PLAYBACK_STATUS_STALE_SECONDS, whose
+/// minimum accepted value is one second, so the consumer never reads the record
+/// as stale purely because of this throttle.
+/// </remarks>
+public sealed class StatusPublishPolicy(TimeSpan? heartbeat = null, Func<long>? clock = null)
+{
+    public static readonly TimeSpan DefaultHeartbeat = TimeSpan.FromMilliseconds(500);
+
+    private readonly TimeSpan _heartbeat = heartbeat ?? DefaultHeartbeat;
+    private readonly Func<long> _clock = clock ?? System.Diagnostics.Stopwatch.GetTimestamp;
+    private PlaybackProjection? _published;
+    private string _connector = "";
+    private long _publishedAt;
+
+    /// <summary>
+    /// Reports whether <paramref name="projection"/> should be written now, and
+    /// records it as published when the answer is yes.
+    /// </summary>
+    /// <param name="force">
+    /// Publish regardless of the heartbeat. The caller still goes through this
+    /// method rather than around it, so a forced write also restarts the
+    /// interval instead of leaving the policy describing an older record.
+    /// </param>
+    public bool ShouldPublish(
+        PlaybackProjection projection,
+        string connector,
+        bool force = false)
+    {
+        long now = _clock();
+        bool changed = _published is null ||
+            _published != projection ||
+            !string.Equals(_connector, connector, StringComparison.Ordinal);
+        if (!force &&
+            !changed &&
+            System.Diagnostics.Stopwatch.GetElapsedTime(_publishedAt, now) < _heartbeat)
+        {
+            return false;
+        }
+
+        _published = projection;
+        _connector = connector;
+        _publishedAt = now;
+        return true;
+    }
+}
+
 public sealed record PlaybackStatusDocument(
     int Schema,
     string State,

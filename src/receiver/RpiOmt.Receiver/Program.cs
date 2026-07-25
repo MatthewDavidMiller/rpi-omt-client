@@ -294,6 +294,11 @@ internal static class Program
                     {
                         device.SetPresenter(null);
                         presenter.Dispose();
+                        // Drop the reference with the object. FindNearestMode and
+                        // the DRMPresenter constructor below both allocate DRM
+                        // resources and can throw; the finally block would then
+                        // dispose this same presenter a second time.
+                        presenter = null;
                     }
                     width = frame.Width;
                     height = frame.Height;
@@ -303,7 +308,6 @@ internal static class Program
                         width, height, frameRate, false);
                     if (mode is null)
                     {
-                        presenter = null;
                         status.UnsupportedFormat(
                             $"Display has no mode for {width}x{height}.", selection);
                         continue;
@@ -375,6 +379,7 @@ internal sealed class PlaybackStatus
     private readonly string _path;
     private readonly string _target;
     private readonly PlaybackStateModel _model = new();
+    private readonly StatusPublishPolicy _policy = new();
 
     public PlaybackStatus(string path, string target)
     {
@@ -409,15 +414,26 @@ internal sealed class PlaybackStatus
     public void AudioStopped(HdmiConnector? connector) =>
         Publish(_model.AudioStopped(), connector);
 
+    /// <summary>
+    /// Publishes the terminal projection. This one bypasses the heartbeat
+    /// throttle: it is the last record the process writes, so its timestamp has
+    /// to be current or the dashboard reads a stale file after a clean exit.
+    /// </summary>
     public void Stopped(string detail, HdmiConnector? connector) =>
-        Publish(_model.Stopped(detail), connector);
+        Publish(_model.Stopped(detail), connector, force: true);
 
     private void Publish(
         PlaybackProjection projection,
-        HdmiConnector? connector)
+        HdmiConnector? connector,
+        bool force = false)
     {
         lock (_sync)
         {
+            if (!_policy.ShouldPublish(projection, connector?.Name ?? "none", force))
+            {
+                return;
+            }
+
             string directory = Path.GetDirectoryName(_path) ??
                 throw new InvalidOperationException("Status path has no directory.");
             Directory.CreateDirectory(directory);

@@ -9,12 +9,17 @@ OMT_RUNTIME_LIB="${OMT_RUNTIME_LIB:-$(dirname -- "${BASH_SOURCE[0]}")/runtime-li
 source "${OMT_RUNTIME_LIB}"
 
 OMT_CONFIG_DIR="${OMT_CONFIG_DIR:-/etc/omt}"
-RUN_DIR="${OMT_CONFIG_DIR}/run"
+# Per-boot state only. The shipped image points this at a tmpfs so the
+# continuously rewritten status file does not wear the SD card.
+RUN_DIR="${OMT_RUNTIME_DIR:-${OMT_CONFIG_DIR}/run}"
 SOURCE_FILE="${OMT_SOURCE_TARGET_FILE:-${OMT_CONFIG_DIR}/source_target.json}"
 LOCK_FILE="${RUN_DIR}/control.lock"
 PID_FILE="${RUN_DIR}/omt.pid"
 STATUS_FILE="${OMT_PLAYBACK_STATUS_FILE:-${RUN_DIR}/playback-status.json}"
-LOG_FILE="${RUN_DIR}/receiver.log"
+# The log stays on the persistent volume: it is the only record of why playback
+# failed before a restart, and an unbounded append belongs nowhere near a small
+# tmpfs.
+LOG_FILE="${OMT_CONFIG_DIR}/receiver.log"
 START_OMT_CMD="${START_OMT_CMD:-/usr/local/bin/start-omt.sh}"
 OMT_RECEIVER_COMMAND="${OMT_RECEIVER_COMMAND:-/usr/local/bin/omt-receiver}"
 PID_FILE_MAX_BYTES=128
