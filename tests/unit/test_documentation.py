@@ -3,7 +3,7 @@ import re
 from conftest import REPO_ROOT
 
 from omt_client import create_app
-from omt_client.settings import ENVIRONMENT_SPECS, load_settings
+from omt_client.settings import ENVIRONMENT_SPECS, RATE_LIMIT_SPECS, load_settings
 from omt_client_preview import preview_services
 
 
@@ -20,7 +20,7 @@ def test_local_markdown_links_resolve():
 def test_public_application_settings_are_documented():
     configuration = (REPO_ROOT / "docs" / "CONFIGURATION.md").read_text(encoding="utf-8")
     settings_source = (REPO_ROOT / "src" / "omt_client" / "settings.py").read_text(encoding="utf-8")
-    public_names = {spec.name for spec in ENVIRONMENT_SPECS}
+    public_names = {spec.name for spec in (*ENVIRONMENT_SPECS, *RATE_LIMIT_SPECS)}
     public_names.update(re.findall(r'env\.get\("([A-Z][A-Z0-9_]+)"', settings_source))
     missing = [name for name in sorted(public_names) if f"`{name}`" not in configuration]
     assert not missing

@@ -44,7 +44,11 @@
 
 Numeric settings reject malformed, non-finite, and out-of-range values during
 application creation. Bundle budget and host timeout are cross-checked so a
-misconfigured wait cannot outlive the Gunicorn worker. Legacy `OMT_DEBUG_*`,
+misconfigured wait cannot outlive the Gunicorn worker. The four rate limits are
+parsed with Flask-Limiter's own parser at startup: it skips a limit string it
+cannot parse and serves the request unthrottled, so an unvalidated typo in
+`OMT_LOGIN_RATE_LIMIT` would remove brute-force protection silently. Legacy
+`OMT_DEBUG_*`,
 `OMT_HOST_DEBUG_*`, and `PIPELINE_STATUS_STALE_SECONDS` variables fail startup
 with migration guidance.
 

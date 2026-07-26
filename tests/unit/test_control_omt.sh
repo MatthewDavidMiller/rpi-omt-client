@@ -208,6 +208,44 @@ OMT_RUNTIME_DIR="${RUNTIME_DIR}" run_control start >/dev/null 2>&1 || true
 [[ -e "${CASE_DIR}/config/receiver.log" ]]
 [[ ! -e "${RUNTIME_DIR}/receiver.log" ]]
 
+# ─── A launch that never becomes the receiver ───────────────────────────────
+#
+# start-omt.sh reads the saved target through Python before it execs the
+# receiver, so for a moment every healthy start looks exactly like this. The
+# controller has to treat "still not the receiver" as a failed start *and* take
+# the process down with it: nothing else knows the pid -- no PID record is
+# written -- so a survivor would hold /dev/dri against every later start with
+# no way to stop it. Waiting on it instead would block this controller, holding
+# its exclusive lock, for as long as that process lived.
+install_receiver <<'EOF'
+#!/bin/bash
+printf '%s\n' "$$" > "${STRAY_PID_FILE}"
+while true; do sleep 0.2; done
+EOF
+configure_target
+STRAY_PID_FILE="${CASE_DIR}/stray.pid"
+rm -f "${STRAY_PID_FILE}"
+if OMT_CONFIG_DIR="${CASE_DIR}/config" \
+   OMT_RUNTIME_LIB="${RUNTIME}" \
+   OMT_RECEIVER_COMMAND="${CASE_DIR}/never-the-receiver" \
+   START_OMT_CMD="${CASE_DIR}/receiver" \
+   STRAY_PID_FILE="${STRAY_PID_FILE}" \
+       timeout 20 "${CONTROL}" start >/dev/null 2>&1; then
+    echo "a launch that never became the receiver was reported as started" >&2
+    exit 1
+fi
+read -r ORPHAN_PID < "${STRAY_PID_FILE}"
+STRAY_PIDS+=("${ORPHAN_PID}")
+for _attempt in $(seq 1 50); do
+    kill -0 "${ORPHAN_PID}" 2>/dev/null || break
+    sleep 0.1
+done
+if kill -0 "${ORPHAN_PID}" 2>/dev/null; then
+    echo "the failed launch was left running with no PID record naming it" >&2
+    exit 1
+fi
+[[ ! -e "${CASE_DIR}/config/run/omt.pid" ]]
+
 # ─── PID record schema edges ────────────────────────────────────────────────
 #
 # Malformed records must never be treated as a live managed process. Oversized

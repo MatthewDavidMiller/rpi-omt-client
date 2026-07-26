@@ -10,11 +10,22 @@ from ..models import ActionResult, DiagnosticResult, PlaybackSummary
 
 
 class SourceChoice(Protocol):
+    """Everything `dashboard.html` renders for one selectable source.
+
+    The template consumes this contract directly rather than testing each
+    attribute for existence, so any service that supplies sources owes the
+    dashboard all of it -- including `backend`, which the discovered-source
+    list shows as a badge.
+    """
+
     @property
     def name(self) -> str: ...
 
     @property
     def address(self) -> str: ...
+
+    @property
+    def backend(self) -> str: ...
 
     @property
     def selection_value(self) -> str: ...

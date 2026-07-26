@@ -2,7 +2,12 @@ import math
 
 import pytest
 
-from omt_client.settings import ENVIRONMENT_SPECS, SettingsError, load_settings
+from omt_client.settings import (
+    ENVIRONMENT_SPECS,
+    RATE_LIMIT_SPECS,
+    SettingsError,
+    load_settings,
+)
 
 
 def test_settings_defaults_and_diagnostic_output_are_stable():
@@ -55,6 +60,25 @@ def test_request_and_login_limits_are_settings_driven():
     )
     assert overridden.max_request_bytes == 2048
     assert overridden.login_rate_limit == "2 per minute"
+
+
+@pytest.mark.parametrize("spec", RATE_LIMIT_SPECS)
+@pytest.mark.parametrize("value", ["", "nonsense", "5 per fortnight", "per minute", "5"])
+def test_unparseable_rate_limits_fail_startup_instead_of_serving_unthrottled(spec, value):
+    """Flask-Limiter skips a limit string it cannot parse and serves the request,
+    so an unvalidated typo here silently removes the throttle -- on the login
+    form, that is brute-force protection gone with nothing to notice."""
+    with pytest.raises(SettingsError, match=spec.name):
+        load_settings({spec.name: value})
+
+
+@pytest.mark.parametrize("spec", RATE_LIMIT_SPECS)
+def test_every_rate_limit_is_overridable_and_reported_in_a_support_bundle(spec):
+    """A throttle an operator cannot see is a throttle they cannot diagnose, and
+    all four are attached to real endpoints in `factory.create_app`."""
+    reported = spec.name.removeprefix("OMT_").lower()
+    assert f"{reported}={spec.default}" in load_settings({}).diagnostic_lines()
+    assert f"{reported}=7 per hour" in load_settings({spec.name: "7 per hour"}).diagnostic_lines()
 
 
 def test_the_request_ceiling_cannot_be_set_below_a_usable_form_post():

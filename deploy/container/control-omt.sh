@@ -23,6 +23,11 @@ LOG_FILE="${OMT_CONFIG_DIR}/receiver.log"
 START_OMT_CMD="${START_OMT_CMD:-/usr/local/bin/start-omt.sh}"
 OMT_RECEIVER_COMMAND="${OMT_RECEIVER_COMMAND:-/usr/local/bin/omt-receiver}"
 PID_FILE_MAX_BYTES=128
+# How long a launch has to become the receiver itself. start-omt.sh runs a
+# Python target reader before it execs, so this window has to cover an
+# interpreter start on cold SD-card-backed flash, not just a fork.
+START_READY_ATTEMPTS=150
+START_READY_INTERVAL=0.02
 # Crash loops append forever; keep the persistent log size-capped so a bad
 # target cannot fill the SD-card-backed config volume.
 LOG_FILE_MAX_BYTES=$((1024 * 1024))
@@ -132,7 +137,7 @@ start_locked() {
     setsid "${START_OMT_CMD}" >>"${LOG_FILE}" 2>&1 </dev/null 9>&- &
     pid=$!
     start_time=""
-    for attempt in $(seq 1 50); do
+    for attempt in $(seq 1 "${START_READY_ATTEMPTS}"); do
         if ! kill -0 "${pid}" 2>/dev/null; then
             break
         fi
@@ -141,10 +146,19 @@ start_locked() {
            omt_process_matches_command "${pid}" "${OMT_RECEIVER_COMMAND}"; then
             break
         fi
-        sleep 0.02
+        sleep "${START_READY_INTERVAL}"
     done
     if [[ -z "${start_time}" ]] ||
        ! omt_process_matches_command "${pid}" "${OMT_RECEIVER_COMMAND}"; then
+        # This launch failed, but it may still be alive -- a launcher that has
+        # not reached its exec yet looks exactly like one that never will. It
+        # must not survive: no PID record names it, so nothing would ever stop
+        # it, and it would hold /dev/dri against the next start. `setsid` gave
+        # it its own session, so signalling the group by pid takes the launcher
+        # and anything it spawned. Only then is `wait` bounded -- waiting on a
+        # live receiver would block here, holding this exclusive lock, for as
+        # long as playback ran.
+        kill -KILL -- "-${pid}" 2>/dev/null || kill -KILL "${pid}" 2>/dev/null || true
         wait "${pid}" 2>/dev/null || true
         echo "OMT receiver failed to stay running" >&2
         return 1

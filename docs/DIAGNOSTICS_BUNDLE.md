@@ -27,6 +27,11 @@ request with a random request ID and `capture_pcap=0|1` to a pre-created
 fixed-inode channel. It starts container-side checks immediately and accepts
 only a stable bounded host report carrying the same request ID.
 
+That report's header is composed after collection, so its `status` describes the
+run that actually happened: `complete` when every section ran, and `partial`
+when the host wall budget (`OMT_DIAGNOSTICS_HOST_BUDGET_SECONDS`) ran out and
+later sections were skipped. Both are accepted; anything else is rejected.
+
 Raw PCAP is unchecked by default. An unchecked request removes stale capture
 output and never starts the unfiltered capture. A checked request retains the
 64 MiB cap; before streaming the PCAP into the spooled archive, the Web service

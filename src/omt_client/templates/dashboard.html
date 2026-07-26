@@ -51,9 +51,7 @@
                 <select id="source" name="source" required>
                     <option value="">Select a source</option>
                     {% for src in sources %}
-                    {% set source_value = src.selection_value if src.selection_value is defined else src %}
-                    {% set source_name = src.name if src.name is defined else src %}
-                    <option value="{{ source_value }}" {{ "selected" if source_name == current_source else "" }}>{{ src.display_label if src.display_label is defined else src }}</option>
+                    <option value="{{ src.selection_value }}" {{ "selected" if src.name == current_source else "" }}>{{ src.display_label }}</option>
                     {% endfor %}
                 </select>
             </div>
@@ -69,7 +67,7 @@
         <h3 id="discovered-heading">Discovered sources</h3>
         <ul class="source-list" aria-labelledby="discovered-heading">
             {% for src in sources %}
-            <li><span class="badge">{{ src.backend if src.backend is defined else "OMT discovery" }}</span> {{ src.name if src.name is defined else src }}</li>
+            <li><span class="badge">{{ src.backend }}</span> {{ src.name }}</li>
             {% endfor %}
         </ul>
         {% endif %}

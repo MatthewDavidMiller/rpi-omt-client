@@ -85,6 +85,21 @@ def test_dashboard_uses_one_heading_navigation_health_and_new_actions(factory_cl
     assert "About" in html
 
 
+def test_dashboard_renders_sources_through_the_typed_choice_contract(
+    factory_client,
+    factory_app,
+):
+    """The template used to hedge every attribute against a bare string, from
+    when `sources()` returned names. It now reads `SourceChoice` directly, so
+    the option value, label, and badge must all come from the choice itself --
+    a service returning something thinner is a type error, not a blank badge."""
+    html = factory_client.get("/").get_data(as_text=True)
+    for choice in factory_app.extensions["omt_client.services"].source.sources():
+        assert f'value="{choice.selection_value}"' in html
+        assert f">{choice.display_label}</option>" in html
+        assert f'<span class="badge">{choice.backend}</span> {choice.name}' in html
+
+
 def test_dashboard_actions_use_injected_source_service(factory_client, factory_app):
     source = factory_app.extensions["omt_client.services"].source
     selected = factory_client.post(

@@ -99,6 +99,7 @@ fi
 mkdir -p "${OUTPUT_DIR}"
 chmod 2750 "${OUTPUT_DIR}"
 TMP_FILE="$(mktemp "${OUTPUT_FILE}.tmp.XXXXXX")"
+BODY_FILE="$(mktemp "${OUTPUT_FILE}.body.XXXXXX")"
 MDNS_CAPTURE="$(mktemp "${OUTPUT_FILE}.mdns.XXXXXX")"
 OMT_CAPTURE="$(mktemp "${OUTPUT_FILE}.omt.XXXXXX")"
 PCAP_METADATA_TMP="$(mktemp "${PCAP_METADATA_FILE}.tmp.XXXXXX")"
@@ -109,6 +110,10 @@ TEXT_CAPTURE_PIDS=()
 PCAP_PID=""
 PCAP_EXIT_STATUS="not_started"
 PCAP_CAPTURE_SECONDS=0
+# Set by `run` when the wall budget runs out mid-collection. The container reads
+# the header before it reads anything else, so this is what tells an operator
+# that missing sections are a budget outcome rather than a broken host.
+SECTIONS_SKIPPED=false
 
 cleanup() {
     local pid
@@ -120,7 +125,7 @@ cleanup() {
         kill "${PCAP_PID}" 2>/dev/null || true
         wait "${PCAP_PID}" 2>/dev/null || true
     fi
-    rm -f "${TMP_FILE}" "${MDNS_CAPTURE}" "${OMT_CAPTURE}" \
+    rm -f "${TMP_FILE}" "${BODY_FILE}" "${MDNS_CAPTURE}" "${OMT_CAPTURE}" \
         "${PCAP_METADATA_TMP}" "${PCAP_CAPTURE_BASE}" \
         "${PCAP_CAPTURE_BASE}0" "${PCAP_CAPTURE_BASE}1" "${PCAP_STATS}"
     rmdir "${PCAP_STAGE_DIR}" 2>/dev/null || true
@@ -146,6 +151,7 @@ run() {
     section "${label}"
     remaining="$(remaining_seconds)"
     if (( remaining <= 0 )); then
+        SECTIONS_SKIPPED=true
         echo "skipped=host diagnostics budget exhausted"
         return 0
     fi
@@ -322,10 +328,11 @@ publish_pcap() {
 # therefore cannot consume the mDNS capture's packet limit.
 start_packet_captures
 
+# The body is collected first and the header composed from what it cost. The
+# header's `status` is the container's only summary of this run, so it cannot be
+# asserted before the run happens: written up front it would claim "complete"
+# for a collection the budget cut short.
 {
-    printf 'version=1\n'
-    printf 'request_id=%s\n' "${REQUEST_ID}"
-    printf 'status=complete\n'
     section "metadata"
     printf 'request_id=%s\n' "${REQUEST_ID}"
     printf 'diagnostics_host_budget_seconds=%s\n' "${DIAGNOSTICS_BUDGET_SECONDS}"
@@ -449,6 +456,17 @@ start_packet_captures
     section "budget summary"
     printf 'elapsed_seconds=%s\n' "${SECONDS}"
     printf 'budget_exhausted=%s\n' "$(( SECONDS >= DIAGNOSTICS_BUDGET_SECONDS ))"
+} > "${BODY_FILE}"
+
+REPORT_STATUS=complete
+if [[ "${SECTIONS_SKIPPED}" == "true" ]]; then
+    REPORT_STATUS=partial
+fi
+{
+    printf 'version=1\n'
+    printf 'request_id=%s\n' "${REQUEST_ID}"
+    printf 'status=%s\n' "${REPORT_STATUS}"
+    cat "${BODY_FILE}"
 } > "${TMP_FILE}"
 
 chmod 640 "${TMP_FILE}"

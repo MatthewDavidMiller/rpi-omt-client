@@ -37,13 +37,15 @@ EOF
 chmod 0755 "${CASE_DIR}/bin/tcpdump"
 
 # Run one collection against per-label output paths. Every caller needs the same
-# eight environment overrides, so they live here rather than in each case.
+# eight environment overrides, so they live here rather than in each case. The
+# budget stays at one second unless a case asks for more: the `ip` stub above
+# outlasts it, so these runs deliberately exercise a curtailed collection.
 run_diagnostics() {
-    local label="$1"
+    local label="$1" budget="${2:-1}"
     PATH="${CASE_DIR}/bin:${PATH}" \
     OMT_DIAGNOSTICS_HOST_REPORT_FILE="${CASE_DIR}/diagnostics/report-${label}.txt" \
     OMT_DIAGNOSTICS_HOST_REQUEST_FILE="${CASE_DIR}/diagnostics/request" \
-    OMT_DIAGNOSTICS_HOST_BUDGET_SECONDS=1 \
+    OMT_DIAGNOSTICS_HOST_BUDGET_SECONDS="${budget}" \
     OMT_DIAGNOSTICS_HOST_PCAP_FILE="${CASE_DIR}/diagnostics/capture-${label}.pcap" \
     OMT_DIAGNOSTICS_HOST_PCAP_METADATA_FILE="${CASE_DIR}/diagnostics/metadata-${label}.txt" \
     OMT_INSTALL_DIR="${CASE_DIR}/install" \
@@ -66,7 +68,12 @@ run_case() {
     run_diagnostics "${label}"
     grep -qx 'version=1' "${report}"
     grep -qx "request_id=${request_id}" "${report}"
-    grep -qx 'status=complete' "${report}"
+    # These runs cannot finish inside their one-second budget, and the header is
+    # the container's only summary of the run. A fixed "complete" written before
+    # collection would tell an operator staring at a report of skipped sections
+    # that nothing was missing.
+    grep -qx 'status=partial' "${report}"
+    grep -q 'skipped=host diagnostics budget exhausted' "${report}"
     grep -qx "request_id=${request_id}" "${metadata}"
     grep -qx 'max_bytes=67108864' "${metadata}"
 }
@@ -127,6 +134,31 @@ grep -qx "request_id=${failed_id}" "${CASE_DIR}/diagnostics/metadata-failed.txt"
 grep -Eq '^capture_status=(failed|unavailable|invalid)$' \
     "${CASE_DIR}/diagnostics/metadata-failed.txt"
 [[ ! -e "${retained_pcap}" ]]
+
+# A collection that skipped nothing is the only one allowed to say so. The
+# container accepts "complete" and "partial" and nothing else, so both halves of
+# that contract need a producer.
+cat > "${CASE_DIR}/bin/ip" <<'EOF'
+#!/bin/bash
+printf 'link/ether 02:00:00:00:00:01\n'
+EOF
+chmod 0755 "${CASE_DIR}/bin/ip"
+cat > "${CASE_DIR}/bin/tcpdump" <<'EOF'
+#!/bin/bash
+printf 'bounded filtered packet sample\n'
+EOF
+chmod 0755 "${CASE_DIR}/bin/tcpdump"
+
+complete_id=77777777777777777777777777777777
+write_request "${complete_id}" 0
+run_diagnostics complete 120
+grep -qx "request_id=${complete_id}" "${CASE_DIR}/diagnostics/report-complete.txt"
+grep -qx 'status=complete' "${CASE_DIR}/diagnostics/report-complete.txt"
+if grep -q 'skipped=host diagnostics budget exhausted' \
+    "${CASE_DIR}/diagnostics/report-complete.txt"; then
+    echo "a report claiming completeness skipped sections" >&2
+    exit 1
+fi
 
 if OMT_HOST_DEBUG_OUTPUT="${CASE_DIR}/legacy" "${HOST_DIAGNOSTICS}" \
     >"${CASE_DIR}/obsolete.out" 2>&1; then
