@@ -70,6 +70,23 @@ def test_atomic_replace_rejects_unsafe_parent_and_destination(tmp_path: Path):
         safe_io.atomic_replace(directory_target, b"x", 1)
 
 
+def test_atomic_replace_does_not_add_a_fallible_chmod_after_commit(tmp_path: Path, monkeypatch):
+    """The private stage already has its final mode. A second chmod after rename
+    can only turn a committed update into a reported failure."""
+    target = tmp_path / "value"
+    target.write_bytes(b"old")
+    monkeypatch.setattr(
+        os,
+        "chmod",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("chmod failed")),
+    )
+
+    safe_io.atomic_replace(target, b"new", 3)
+
+    assert target.read_bytes() == b"new"
+    assert target.stat().st_mode & 0o777 == 0o600
+
+
 def test_bounded_read_reports_open_read_and_postread_races(tmp_path: Path, monkeypatch):
     target = tmp_path / "value"
     target.write_bytes(b"value")

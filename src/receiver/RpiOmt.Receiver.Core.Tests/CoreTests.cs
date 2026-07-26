@@ -162,6 +162,12 @@ public sealed class CoreTests
         Assert.Contains("😀", sanitized);
         Assert.True(sanitized.Length <= 512);
         Assert.Equal("space allowed", StatusSanitizer.Sanitize(" space allowed "));
+        Assert.Equal(
+            new string('x', 510) + "😀",
+            StatusSanitizer.Sanitize(new string('x', 510) + "😀"));
+        Assert.Equal(
+            new string('x', 511),
+            StatusSanitizer.Sanitize(new string('x', 511) + "😀"));
     }
 
     [Fact]

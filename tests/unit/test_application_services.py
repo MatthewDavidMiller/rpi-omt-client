@@ -152,6 +152,12 @@ def test_session_registry_evicts_the_oldest_entries_past_the_cap(
         '{"version":1,"sessions":{"' + "a" * 64 + '":"soon"}}',
         '{"version":1,"sessions":{"' + "a" * 64 + '":true}}',
         '{"version":1,"sessions":{"' + "a" * 64 + '":1e999}}',
+        '{"version":true,"sessions":{}}',
+        '{"version":1,"sessions":{},"extra":true}',
+        '{"version":2,"version":1,"sessions":{}}',
+        '{"version":1,"sessions":{"' + "a" * 64 + '":1,"' + "a" * 64 + '":2}}',
+        '{"version":1,"sessions":{"' + "a" * 64 + '":NaN}}',
+        '{"version":1,"sessions":{"' + "a" * 64 + '":1' + "0" * 1000 + "}}",
     ],
 )
 def test_malformed_session_registry_reads_as_empty(tmp_path, document, request_context):
@@ -586,9 +592,10 @@ def test_a_failed_discovery_is_cached_so_a_broken_receiver_is_not_hammered(tmp_p
     assert attempts == 2
 
 
-def test_concurrent_source_requests_share_one_discovery(tmp_path, monkeypatch):
+@pytest.mark.parametrize("cache_ttl", ["0", "5"])
+def test_concurrent_source_requests_share_one_discovery(tmp_path, monkeypatch, cache_ttl):
     """Two dashboard callers must not launch duplicate receiver discoveries."""
-    settings = settings_for(tmp_path, OMT_SOURCE_CACHE_TTL_SECONDS="5")
+    settings = settings_for(tmp_path, OMT_SOURCE_CACHE_TTL_SECONDS=cache_ttl)
     discovery_started = threading.Event()
     release_discovery = threading.Event()
     second_discovery_started = threading.Event()
@@ -673,6 +680,30 @@ def test_saving_discovery_settings_without_a_target_reports_no_restart(tmp_path)
     outcome = network.save("discovery.example")
     assert outcome.ok
     assert "restarted" not in outcome.message
+
+
+def test_unchanged_discovery_settings_skip_the_write_refresh_and_restart(tmp_path, monkeypatch):
+    """An idempotent form submission must not fsync the config volume or bounce
+    a healthy receiver when the effective Discovery Server did not change."""
+    settings = settings_for(tmp_path)
+    Path(settings.runtime_config_file).write_text(
+        "<Settings><DiscoveryServer>omt://discovery.example:6399</DiscoveryServer></Settings>",
+        encoding="utf-8",
+    )
+    source = mock.Mock()
+    network = RuntimeNetwork(settings, source)
+    monkeypatch.setattr(
+        "omt_client.services.network.atomic_replace",
+        raises(AssertionError("unchanged settings must not be rewritten")),
+    )
+
+    outcome = network.save("discovery.example")
+
+    assert outcome.ok
+    assert "already up to date" in outcome.message
+    source.refresh.assert_not_called()
+    source.configuration.assert_not_called()
+    source.restart.assert_not_called()
 
 
 def test_session_registry_lock_that_is_not_a_regular_file_fails_closed(tmp_path):

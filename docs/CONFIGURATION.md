@@ -78,6 +78,9 @@ the entrypoint on first boot.
 A Discovery Server may be a host, `host:port`, or `omt://host:port`. Omitted
 ports become 6399. mDNS remains enabled. A direct source must be an explicit
 `omt://host:port` URI with no credentials, path, query, or fragment.
+Saving a Discovery Server that is already effective is an idempotent operation:
+the Web service preserves the existing XML and does not restart playback or
+issue another durable write.
 
 ## Host firewall
 

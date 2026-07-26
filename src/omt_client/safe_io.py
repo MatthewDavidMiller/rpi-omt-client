@@ -204,7 +204,9 @@ def atomic_replace(
         _regular_destination(destination)
         os.replace(temporary, destination)
         committed = True
-        os.chmod(destination, mode, follow_symlinks=False)
+        # The stage already has the exact requested mode from fchmod, and rename
+        # preserves it. A chmod after replace is redundant and, if it fails,
+        # reports the operation as failed after the new value is already live.
         sync_directory(parent)
     finally:
         if descriptor >= 0:

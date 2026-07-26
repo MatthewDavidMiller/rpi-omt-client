@@ -170,12 +170,17 @@ public static class FormatPolicy
 
 public static class StatusSanitizer
 {
+    private const int MaximumUtf16CodeUnits = 512;
+
     public static string Sanitize(string value)
     {
         StringBuilder result = new();
         foreach (Rune rune in value.EnumerateRunes())
         {
-            if (result.Length >= 512)
+            // StringBuilder.Length counts UTF-16 code units, so a supplementary
+            // rune needs two slots. Checking only the current length lets an
+            // emoji appended at length 511 produce a 513-unit result.
+            if (result.Length + rune.Utf16SequenceLength > MaximumUtf16CodeUnits)
             {
                 break;
             }

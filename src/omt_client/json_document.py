@@ -43,4 +43,6 @@ def load_json_document(value: str | bytes) -> object:
         )
     except json.JSONDecodeError as exc:
         raise JsonDocumentError(str(exc)) from exc
+    except RecursionError as exc:
+        raise JsonDocumentError("JSON nesting is too deep") from exc
     return document

@@ -141,6 +141,22 @@ public sealed class ActionControllerTests
         Assert.Equal("starting", controller.Stage);
         controller.Finish(OperationState.Failed);
     }
+
+    [Fact]
+    public void ProgressCannotStartOrResurrectAnOperation()
+    {
+        var controller = new ActionController();
+        controller.Progress(new ProgressEventArgs("too early", stage: "upload"));
+        Assert.Equal(OperationState.Idle, controller.State);
+        Assert.Equal("idle", controller.Stage);
+
+        Assert.True(controller.Start());
+        controller.Finish(OperationState.Succeeded);
+        controller.Progress(new ProgressEventArgs("too late", stage: "cleanup"));
+        Assert.Equal(OperationState.Succeeded, controller.State);
+        Assert.Equal("complete", controller.Stage);
+        Assert.False(controller.Cancellable);
+    }
 }
 
 public sealed class ArtifactTests : IDisposable

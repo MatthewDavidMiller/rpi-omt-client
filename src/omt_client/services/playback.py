@@ -31,6 +31,7 @@ class RuntimeSourcePlayback:
         self._cache: tuple[float, list[OmtSourceChoice]] = (0.0, [])
         self._cache_condition = threading.Condition()
         self._discovery_in_progress = False
+        self._cache_generation = 0
 
     def _target(self) -> SourceTarget | None:
         return read_source_target(self._settings.source_target_file)
@@ -39,9 +40,15 @@ class RuntimeSourcePlayback:
         with self._cache_condition:
             if time.monotonic() < self._cache[0]:
                 return list(self._cache[1])
+            observed_generation = self._cache_generation
             while self._discovery_in_progress:
                 self._cache_condition.wait()
-                if time.monotonic() < self._cache[0]:
+                # A caller that actually waited for this discovery shares its
+                # answer even when caching is disabled with a zero TTL. Without
+                # a generation check, every awakened waiter sees the new entry
+                # as already expired and launches the same receiver command
+                # again in sequence.
+                if self._cache_generation != observed_generation:
                     return list(self._cache[1])
             self._discovery_in_progress = True
         try:
@@ -74,6 +81,7 @@ class RuntimeSourcePlayback:
         # dashboard render pay for another multi-second discovery.
         with self._cache_condition:
             self._cache = (time.monotonic() + self._settings.source_cache_ttl_seconds, choices)
+            self._cache_generation += 1
             self._discovery_in_progress = False
             self._cache_condition.notify_all()
         return list(choices)

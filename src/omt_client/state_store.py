@@ -105,7 +105,6 @@ def save_source_target(
         if len(encoded) > SOURCE_TARGET_MAX_BYTES:
             raise SourceConfigurationError("saved OMT target is oversized")
         atomic_replace(target_path, encoded, SOURCE_TARGET_MAX_BYTES)
-        sync_directory(directory)
     except SourceConfigurationError:
         raise
     except OSError as exc:

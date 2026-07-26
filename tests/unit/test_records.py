@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import pytest
 
+from omt_client.json_document import JsonDocumentError, load_json_document
 from omt_client.records import parse_key_value_record
 
 REQUIRED = frozenset({"version", "request_id", "status"})
@@ -57,3 +58,9 @@ def test_a_trailing_newline_is_not_treated_as_a_body():
     the host scripts actually write."""
     assert parse_key_value_record(RECORD, REQUIRED, allow_body=True) is not None
     assert parse_key_value_record(RECORD.rstrip("\n"), REQUIRED) is not None
+
+
+def test_strict_json_decoder_reports_excessive_nesting_as_a_document_error():
+    value = "[" * 20_000 + "0" + "]" * 20_000
+    with pytest.raises(JsonDocumentError, match="nesting is too deep"):
+        load_json_document(value)

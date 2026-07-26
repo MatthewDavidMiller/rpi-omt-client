@@ -25,6 +25,14 @@ public sealed class ActionController
 
     public void Progress(ProgressEventArgs progress)
     {
+        // Progress callbacks are dispatched asynchronously by the UI. Ignore a
+        // callback that arrives before Start or after Finish; it must not
+        // resurrect an idle or terminal operation as Running.
+        if (!IsActive)
+        {
+            return;
+        }
+
         if (State != OperationState.Cancelling)
         {
             State = OperationState.Running;

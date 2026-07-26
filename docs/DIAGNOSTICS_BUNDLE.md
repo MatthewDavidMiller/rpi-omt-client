@@ -37,3 +37,6 @@ output and never starts the unfiltered capture. A checked request retains the
 64 MiB cap; before streaming the PCAP into the spooled archive, the Web service
 validates metadata version, request ID, status, declared size, magic, stable
 inode, and SHA-256. Capture metadata is included for both choices.
+Text members use ZIP deflate compression. The validated PCAP member is stored
+without recompression because packet data compresses poorly and deflating up to
+64 MiB would spend the Pi's CPU inside the fixed Web request budget.

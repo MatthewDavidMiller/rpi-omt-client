@@ -18,6 +18,7 @@ from contextlib import contextmanager
 from flask import session
 from werkzeug.security import check_password_hash
 
+from ..json_document import JsonDocumentError, load_json_document
 from ..safe_io import atomic_replace, read_text
 from ..settings import AppSettings
 
@@ -101,9 +102,16 @@ class PersistentAuthentication:
         if not result.ok:
             return {}
         try:
-            document = json.loads(result.text)
-            raw_sessions = document["sessions"]
-            if document["version"] != 1 or not isinstance(raw_sessions, dict):
+            document = load_json_document(result.data)
+            if (
+                not isinstance(document, dict)
+                or set(document) != {"version", "sessions"}
+                or type(document.get("version")) is not int
+                or document.get("version") != 1
+            ):
+                return {}
+            raw_sessions = document.get("sessions")
+            if not isinstance(raw_sessions, dict):
                 return {}
             sessions: dict[str, float] = {}
             for digest, raw_expiry in raw_sessions.items():
@@ -117,13 +125,13 @@ class PersistentAuthentication:
                     continue
                 try:
                     expiry = float(raw_expiry)
-                except (TypeError, ValueError):
+                except (OverflowError, TypeError, ValueError):
                     continue
                 if not math.isfinite(expiry):
                     continue
                 sessions[digest] = expiry
             return sessions
-        except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+        except (JsonDocumentError, TypeError, ValueError):
             return {}
 
     def _write_registry(self, sessions: dict[str, float]) -> None:

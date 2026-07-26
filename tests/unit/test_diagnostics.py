@@ -19,6 +19,7 @@ from omt_client.services.about import RuntimeAbout
 from omt_client.services.diagnostics import (
     PCAP_MAX_BYTES,
     RuntimeDiagnostics,
+    _discovery_json,
     _parse_header,
 )
 from omt_client.services.playback import RuntimeSourcePlayback
@@ -86,6 +87,56 @@ def test_header_parser_is_exact_and_stops_at_body():
     assert _parse_header("a=1", {"a", "b"}) is None
 
 
+def test_discovery_json_is_always_valid_and_failures_do_not_publish_sources(
+    tmp_path: Path, monkeypatch
+):
+    malformed = CommandResult(command="discover", returncode=0, stdout="not-json")
+    assert json.loads(_discovery_json(malformed)) == {
+        "ok": False,
+        "error": "Receiver returned invalid discovery JSON.",
+    }
+    failed = CommandResult(
+        command="discover",
+        returncode=1,
+        stdout='[{"name":"Stale","target":"Stale"}]',
+        stderr="discovery failed",
+    )
+    assert json.loads(_discovery_json(failed)) == {
+        "ok": False,
+        "error": "discovery failed",
+    }
+
+    diagnostics = _diagnostics(tmp_path)
+    monkeypatch.setattr(
+        "omt_client.services.diagnostics.run_command",
+        lambda _command, _timeout: failed,
+    )
+    assert diagnostics.discovery().command.sources == ()
+
+
+def test_runtime_check_applies_each_commands_own_exit_code_contract(tmp_path: Path, monkeypatch):
+    diagnostics = _diagnostics(tmp_path)
+    results = iter(
+        [
+            CommandResult(command="version", returncode=3),
+            CommandResult(command="status", returncode=0),
+        ]
+    )
+    monkeypatch.setattr(
+        "omt_client.services.diagnostics.run_command",
+        lambda _command, _timeout: next(results),
+    )
+    assert diagnostics.runtime().command.returncode == 1
+
+    results = iter(
+        [
+            CommandResult(command="version", returncode=0),
+            CommandResult(command="status", returncode=3),
+        ]
+    )
+    assert diagnostics.runtime().command.returncode == 0
+
+
 def test_host_request_is_fixed_inode_and_correlated(tmp_path: Path):
     diagnostics = _diagnostics(tmp_path)
     request = Path(diagnostics._settings.diagnostics_host_request_file)
@@ -126,6 +177,10 @@ def test_fresh_host_report_accepts_only_matching_bounded_schema(tmp_path: Path):
         (lambda value: value.replace("version=1", "version=2"), "does not match"),
         (lambda value: value.replace("capture_status=complete", "capture_status=odd"), "status"),
         (lambda value: value.replace(f"size_bytes={len(PCAP)}", "size_bytes=bad"), "size"),
+        (
+            lambda value: value.replace(f"size_bytes={len(PCAP)}", "size_bytes=" + "9" * 5000),
+            "size",
+        ),
         (lambda value: value.replace(f"max_bytes={PCAP_MAX_BYTES}", "max_bytes=1"), "limit"),
         (lambda value: value.replace("sha256=", "sha256=nothex"), "digest"),
         (lambda value: value.replace("pcap_magic=d4c3b2a1", "pcap_magic=00"), "magic"),
@@ -417,6 +472,8 @@ def test_bundle_contains_correlated_report_metadata_and_opted_in_pcap(tmp_path: 
             "host-network.pcap",
         } <= names
         assert archive.read("host-network.pcap") == PCAP
+        assert archive.getinfo("host-network.pcap").compress_type == zipfile.ZIP_STORED
+        assert archive.getinfo("host-report.txt").compress_type == zipfile.ZIP_DEFLATED
         assert b"host body" in archive.read("host-report.txt")
     assert "capture_pcap=1" in request.read_text()
 

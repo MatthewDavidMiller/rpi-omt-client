@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import IO
 
 from ..discovery import is_valid_direct_target, parse_omt_sources
+from ..json_document import JsonDocumentError, load_json_document
 from ..models import CommandResult, DiagnosticResult
 from ..records import parse_key_value_record
 from ..safe_io import read_bytes, read_text, write_fixed_inode
@@ -64,6 +65,29 @@ def _run_before_deadline(
     return run_command(command, max(0.001, remaining))
 
 
+def _discovery_json(result: CommandResult) -> str:
+    """Return a valid JSON member for one receiver discovery result."""
+    if result.returncode == 0:
+        try:
+            document = load_json_document(result.stdout)
+        except JsonDocumentError:
+            document = None
+        if isinstance(document, list):
+            return json.dumps(
+                document,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+        detail = "Receiver returned invalid discovery JSON."
+    else:
+        detail = result.failure_detail or "Discovery command failed."
+    return json.dumps(
+        {"ok": False, "error": detail},
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+
+
 class RuntimeDiagnostics:
     def __init__(
         self,
@@ -101,7 +125,7 @@ class RuntimeDiagnostics:
         )
         enriched = replace(
             result,
-            sources=tuple(parse_omt_sources(result.stdout)),
+            sources=(tuple(parse_omt_sources(result.stdout)) if result.returncode == 0 else ()),
         )
         return DiagnosticResult("OMT discovery check", enriched)
 
@@ -125,7 +149,10 @@ class RuntimeDiagnostics:
             f"$ {result.command}\n{result.stdout}{result.stderr}{result.error}"
             for result in results
         )
-        ok = all(result.returncode in (0, 3) for result in results)
+        # `--version` has one successful exit code. Controller status also uses
+        # 3 for the valid "not running" state; applying that allowance to both
+        # commands would report a broken receiver version check as healthy.
+        ok = results[0].returncode == 0 and results[1].returncode in (0, 3)
         return DiagnosticResult(
             "Runtime check",
             CommandResult(
@@ -247,7 +274,10 @@ class RuntimeDiagnostics:
             "invalid",
         }:
             return result.data, None, "capture metadata status is invalid"
-        if not re.fullmatch(r"[0-9]+", fields["size_bytes"]):
+        # The hard ceiling is eight decimal digits. Bounding the text before
+        # int() also avoids Python's deliberate huge-integer conversion error
+        # turning malformed host metadata into an unhandled bundle failure.
+        if not re.fullmatch(r"[0-9]{1,8}", fields["size_bytes"]):
             return result.data, None, "capture metadata size is invalid"
         size = int(fields["size_bytes"])
         if size > PCAP_MAX_BYTES or fields["max_bytes"] != str(PCAP_MAX_BYTES):
@@ -340,16 +370,9 @@ class RuntimeDiagnostics:
 
         runtime = self._runtime(deadline).command.stdout
         discovery_result = self._discovery(deadline).command
-        # Keep the archive member named *.json even when discovery fails, so
-        # support tooling does not have to special-case a text error blob.
-        discovery = discovery_result.stdout or json.dumps(
-            {
-                "ok": False,
-                "error": discovery_result.error or discovery_result.stderr or "unavailable",
-            },
-            ensure_ascii=False,
-            separators=(",", ":"),
-        )
+        # Keep the archive member valid JSON even when the command fails or a
+        # damaged receiver emits malformed output.
+        discovery = _discovery_json(discovery_result)
         status_result = _run_before_deadline(
             [self._settings.control_command, "status"],
             self._settings.control_timeout_seconds,
@@ -476,7 +499,16 @@ class RuntimeDiagnostics:
             archive.writestr("host-report.txt", host_report)
             archive.writestr("host-network-pcap.txt", capture_metadata)
             if packet_spool is not None:
-                with archive.open("host-network.pcap", "w") as destination:
+                # Raw captures are already dense binary data and may reach
+                # 64 MiB. Deflating them burns the Pi's CPU inside the fixed
+                # Gunicorn request budget for little benefit; store this one
+                # member while retaining compression for the text diagnostics.
+                packet_info = zipfile.ZipInfo(
+                    "host-network.pcap",
+                    date_time=datetime.now().timetuple()[:6],
+                )
+                packet_info.compress_type = zipfile.ZIP_STORED
+                with archive.open(packet_info, "w") as destination:
                     shutil.copyfileobj(packet_spool, destination, 1024 * 1024)
             elif packet_unavailable:
                 archive.writestr("host-network.pcap.unavailable.txt", packet_unavailable)
