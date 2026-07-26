@@ -115,6 +115,8 @@ def test_every_contracted_connector_is_accepted(connector: str):
     "changes",
     [
         {"schema": 2},
+        {"schema": True},
+        {"schema": 1.0},
         {"state": "unknown"},
         {"detail": 1},
         {"updated_at": "bad"},
@@ -135,6 +137,14 @@ def test_status_schema_rejects_malformed_records(changes):
 def test_status_schema_rejects_non_documents(document: bytes):
     with pytest.raises(ValueError):
         PlaybackStatusRecord.parse(document)
+
+
+def test_status_schema_rejects_duplicate_keys_and_non_utf8_encoding():
+    raw = json.dumps(_status_document()).replace('"schema": 1', '"schema": 2, "schema": 1')
+    with pytest.raises(ValueError, match="valid JSON"):
+        PlaybackStatusRecord.parse(raw.encode())
+    with pytest.raises(ValueError, match="valid JSON"):
+        PlaybackStatusRecord.parse(json.dumps(_status_document()).encode("utf-16"))
 
 
 def test_status_schema_rejects_oversized_detail():

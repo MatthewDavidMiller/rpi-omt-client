@@ -13,12 +13,12 @@ of its callers.
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TypeGuard
 
 from .discovery import is_valid_direct_target, is_valid_source_name
+from .json_document import JsonDocumentError, load_json_document
 
 STATUS_FILE_LIMIT = 4096
 STATUS_FUTURE_SKEW_SECONDS = 5
@@ -91,12 +91,13 @@ class PlaybackStatusRecord:
     @classmethod
     def parse(cls, value: bytes) -> PlaybackStatusRecord:
         try:
-            document = json.loads(value)
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            document = load_json_document(value)
+        except JsonDocumentError as exc:
             raise ValueError("status is not valid JSON") from exc
         if (
             not isinstance(document, dict)
             or set(document) != STATUS_FIELDS
+            or type(document.get("schema")) is not int
             or document.get("schema") != 1
         ):
             raise ValueError("status has an invalid schema")

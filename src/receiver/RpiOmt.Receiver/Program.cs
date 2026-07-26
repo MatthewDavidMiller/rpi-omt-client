@@ -171,7 +171,7 @@ internal static class Program
             {
                 status.WaitingForDiscovery(
                     "The Avahi system bus is unavailable.", null);
-                Wait(1_000);
+                Wait(1_000, () => status.Heartbeat(null));
                 continue;
             }
             HdmiConnector? selection = connectors.Find(connectorPreference);
@@ -179,7 +179,7 @@ internal static class Program
             {
                 status.WaitingForHdmi(
                     "No supported HDMI display is connected.", null);
-                Wait(1_000);
+                Wait(1_000, () => status.Heartbeat(null));
                 continue;
             }
 
@@ -191,7 +191,9 @@ internal static class Program
             {
                 status.VideoRetrying(
                     StatusSanitizer.Sanitize(exception.Message), selection);
-                Wait(command.RetrySeconds * 1_000);
+                Wait(
+                    command.RetrySeconds * 1_000,
+                    () => status.Heartbeat(selection));
             }
         }
 
@@ -265,6 +267,7 @@ internal static class Program
             {
                 if (!receiver.Receive(OMTFrameType.Video, 500, ref frame))
                 {
+                    status.Heartbeat(selection);
                     if (Stopwatch.GetElapsedTime(lastFrame).TotalSeconds >= 5)
                     {
                         status.VideoRetrying("Waiting for video frames.", selection);
@@ -336,16 +339,8 @@ internal static class Program
         }
     }
 
-    private static void Wait(int milliseconds)
-    {
-        int remaining = milliseconds;
-        while (_running && remaining > 0)
-        {
-            int slice = Math.Min(remaining, 100);
-            Thread.Sleep(slice);
-            remaining -= slice;
-        }
-    }
+    private static void Wait(int milliseconds, Action? heartbeat = null) =>
+        InterruptibleWait.Run(milliseconds, () => _running, heartbeat);
 
     private static string BuildVersion()
     {
@@ -441,6 +436,8 @@ internal sealed class PlaybackStatus
         Publish(connector);
     }
 
+    public void Heartbeat(HdmiConnector? connector) => Publish(connector);
+
     /// <summary>
     /// Publishes the terminal projection. This one bypasses the heartbeat
     /// throttle: it is the last record the process writes, so its timestamp has
@@ -466,10 +463,6 @@ internal sealed class PlaybackStatus
                 return;
             }
 
-            string directory = Path.GetDirectoryName(_path) ??
-                throw new InvalidOperationException("Status path has no directory.");
-            Directory.CreateDirectory(directory);
-            string temporary = $"{_path}.tmp.{Environment.ProcessId}";
             PlaybackStatusDocument document = new(
                 1,
                 current.State,
@@ -481,24 +474,7 @@ internal sealed class PlaybackStatus
                 connector?.DevicePath ?? "none",
                 connector?.AlsaDevice ?? "none",
                 DateTimeOffset.UtcNow);
-            try
-            {
-                using (FileStream stream = new(
-                           temporary,
-                           FileMode.Create,
-                           FileAccess.Write,
-                           FileShare.None))
-                {
-                    stream.Write(StatusSerializer.Serialize(document));
-                    stream.Flush(true);
-                }
-                File.Move(temporary, _path, true);
-                File.SetUnixFileMode(_path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
-            }
-            finally
-            {
-                File.Delete(temporary);
-            }
+            AtomicFilePublisher.Replace(_path, StatusSerializer.Serialize(document));
         }
     }
 }

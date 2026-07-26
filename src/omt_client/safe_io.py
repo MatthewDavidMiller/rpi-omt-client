@@ -38,6 +38,17 @@ def _identity(value: os.stat_result) -> tuple[int, int]:
     return value.st_dev, value.st_ino
 
 
+def _snapshot(value: os.stat_result) -> tuple[int, int, int, int, int]:
+    """Return the fields that change when file contents or identity change."""
+    return (
+        value.st_dev,
+        value.st_ino,
+        value.st_size,
+        value.st_mtime_ns,
+        value.st_ctime_ns,
+    )
+
+
 def _os_error(exc: OSError, action: str) -> ReadResult:
     if exc.errno == errno.ENOENT:
         return ReadResult(ReadStatus.MISSING, detail="file does not exist")
@@ -76,7 +87,7 @@ def read_bytes(path: str | os.PathLike[str], maximum_bytes: int) -> ReadResult:
     try:
         descriptor = os.open(path_text, flags)
         opened = os.fstat(descriptor)
-        if not stat.S_ISREG(opened.st_mode) or _identity(opened) != _identity(before):
+        if not stat.S_ISREG(opened.st_mode) or _snapshot(opened) != _snapshot(before):
             return ReadResult(ReadStatus.UNSAFE, detail="file changed while opening")
         while len(data) <= maximum_bytes:
             chunk = os.read(descriptor, min(64 * 1024, maximum_bytes + 1 - len(data)))
@@ -97,10 +108,8 @@ def read_bytes(path: str | os.PathLike[str], maximum_bytes: int) -> ReadResult:
     except OSError as exc:
         return _os_error(exc, "file changed after read")
     if (
-        _identity(before) != _identity(after_descriptor)
-        or _identity(after_descriptor) != _identity(after_path)
-        or before.st_size != after_descriptor.st_size
-        or after_descriptor.st_size != after_path.st_size
+        _snapshot(before) != _snapshot(after_descriptor)
+        or _snapshot(after_descriptor) != _snapshot(after_path)
         or stat.S_ISLNK(after_path.st_mode)
     ):
         return ReadResult(ReadStatus.UNSAFE, detail="file changed while being read")

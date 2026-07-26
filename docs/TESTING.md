@@ -25,9 +25,11 @@ reboot request correlation, and runtime adapters, at a 98% branch-coverage
 floor. The suite imports the
 package straight from `src/` via the `pythonpath` setting in `pyproject.toml`,
 so no install step is required.
-`make test-receiver` performs locked restore, analyzer-enabled build, shared
-validation vectors, event-ordering tests, HDMI connector selection against a
-synthetic DRM sysfs tree, and a 95% receiver-core branch gate.
+`make test-receiver` performs locked restore, an analyzer-enabled core build, a
+compile of the production receiver composition, shared validation vectors,
+event-ordering and heartbeat-wait tests, atomic status-publication tests, HDMI
+connector selection against a synthetic DRM sysfs tree, and a 95% receiver-core
+branch gate.
 `make test-deployer` performs locked restore, formatting/analyzers, unit and
 headless Avalonia tests, and 95% coverage. Shell tests exercise entrypoint,
 controller, deployment transactions, install/uninstall contracts, host helpers,

@@ -7,6 +7,7 @@
 | Native receiver | `src/receiver/RpiOmt.Receiver/Program.cs` |
 | Receiver policy/status core | `src/receiver/RpiOmt.Receiver.Core` |
 | Status projection and publish throttle | `src/receiver/RpiOmt.Receiver.Core/PlaybackState.cs` |
+| Receiver heartbeat waits and atomic status publication | `src/receiver/RpiOmt.Receiver.Core/InterruptibleWait.cs`, `src/receiver/RpiOmt.Receiver.Core/AtomicFilePublisher.cs` |
 | HDMI connector selection | `src/receiver/RpiOmt.Receiver.Core/HdmiConnectors.cs` |
 | Audited OMT source | `third_party/omt/PROVENANCE.md`, `third_party/omt/libomtnet`, `third_party/omt/libvmx`, `third_party/omt/omtplayer` |
 | Flask composition | `src/omt_client/factory.py`, `src/omt_client/wsgi.py` |
@@ -16,6 +17,7 @@
 | Routes | `src/omt_client/routes/` |
 | Safe I/O and persistent state | `src/omt_client/safe_io.py`, `src/omt_client/state_store.py` |
 | Shared host `key=value` record parsing | `src/omt_client/records.py` |
+| Strict schema-bound JSON parsing | `src/omt_client/json_document.py` |
 | Receiver status contract (consumer half) | `src/omt_client/playback_status.py` |
 | Discovery and URI validation | `src/omt_client/discovery.py` |
 | Shared ASCII host grammar | `src/omt_client/hostnames.py` |

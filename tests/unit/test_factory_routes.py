@@ -63,7 +63,18 @@ def test_authentication_storage_failures_fail_closed(factory_app, monkeypatch):
     monkeypatch.setattr(auth, "revoke", fail)
     response = client.post("/logout")
     assert response.status_code == 503
-    assert b"Unable to revoke this session" in response.data
+    assert b"Signed out locally" in response.data
+    assert client.get("/").headers["Location"].endswith("/login")
+
+
+def test_malformed_old_session_ids_do_not_block_login_or_logout(factory_app):
+    client = factory_app.test_client()
+    with client.session_transaction() as browser_session:
+        browser_session["session_id"] = 42
+    assert client.post("/login", data={"password": "factory-password"}).status_code == 302
+    with client.session_transaction() as browser_session:
+        browser_session["session_id"] = 42
+    assert client.post("/logout").status_code == 302
 
 
 def test_dashboard_uses_one_heading_navigation_health_and_new_actions(factory_client):

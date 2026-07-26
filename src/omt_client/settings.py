@@ -98,8 +98,18 @@ def _parse_rate_limit(environment: Mapping[str, str], spec: RateLimitSpec) -> st
     return raw
 
 
-def _enabled(value: str) -> bool:
-    return value.lower() not in {"0", "false", "no", "off"}
+def _parse_boolean(environment: Mapping[str, str], name: str, default: str) -> bool:
+    raw = environment.get(name, default)
+    if not isinstance(raw, str):
+        raise SettingsError(f"{name} must be a boolean; received {raw!r}")
+    normalized = raw.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise SettingsError(
+        f"{name} must be one of 1/0, true/false, yes/no, or on/off; received {raw!r}"
+    )
 
 
 @dataclass(frozen=True)
@@ -251,7 +261,7 @@ def load_settings(environment: Mapping[str, str] | None = None) -> AppSettings:
         diagnostics_host_timeout_seconds=float(parsed["OMT_DIAGNOSTICS_HOST_TIMEOUT_SECONDS"]),
         diagnostics_host_budget_seconds=int(parsed["OMT_DIAGNOSTICS_HOST_BUDGET_SECONDS"]),
         diagnostics_bundle_budget_seconds=float(parsed["OMT_DIAGNOSTICS_BUNDLE_BUDGET_SECONDS"]),
-        diagnostics_receive_probe=_enabled(env.get("OMT_DIAGNOSTICS_RECEIVE_PROBE", "1")),
+        diagnostics_receive_probe=_parse_boolean(env, "OMT_DIAGNOSTICS_RECEIVE_PROBE", "1"),
         diagnostics_download_limit=rate_limits["OMT_DIAGNOSTICS_DOWNLOAD_LIMIT"],
         diagnostics_action_limit=rate_limits["OMT_DIAGNOSTICS_ACTION_LIMIT"],
         version_file=env.get("RPI_OMT_CLIENT_VERSION_FILE", "/app/RPI_OMT_CLIENT_VERSION"),

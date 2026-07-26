@@ -77,9 +77,11 @@ Per-boot state is kept off that volume. The control lock, PID record, and
 published playback status live in `$OMT_RUNTIME_DIR`, a size-capped tmpfs
 mounted at `/run/omt`; the entrypoint owns a 0700 directory inside that
 world-writable mount point. The receiver republishes status on every change and
-then at a 500 ms heartbeat, so keeping it on the volume put a permanent
-write + fsync + rename load on SD-card-backed flash for state that is
-meaningless after a restart.
+then at a 500 ms heartbeat, including while discovery, HDMI, media, or retry
+waits are in progress. Status publication uses a private, uniquely named stage
+and an atomic replacement. Keeping it on the volume put a permanent write +
+fsync + rename load on SD-card-backed flash for state that is meaningless
+after a restart.
 
 ## Deployment capsule
 

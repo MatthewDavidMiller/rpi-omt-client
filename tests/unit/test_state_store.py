@@ -71,6 +71,11 @@ def test_invalid_targets_are_rejected(tmp_path, target):
         b'{"schema":1,"kind":"discovered","name":"bad\\nname"}',
         b'{"schema":1,"kind":"direct","uri":"host:1"}',
         b'{"schema":1,"kind":"direct","uri":"omt://host:1","extra":true}',
+        b'{"schema":true,"kind":"discovered","name":"Camera"}',
+        b'{"schema":1.0,"kind":"discovered","name":"Camera"}',
+        b'{"schema":NaN,"kind":"discovered","name":"Camera"}',
+        b'{"schema":2,"schema":1,"kind":"discovered","name":"Camera"}',
+        '{"schema":1,"kind":"discovered","name":"Camera"}'.encode("utf-16"),
     ],
 )
 def test_invalid_persisted_documents_fail_closed(tmp_path, document):

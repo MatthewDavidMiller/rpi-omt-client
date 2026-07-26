@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .discovery import is_valid_direct_target, is_valid_source_name
+from .json_document import JsonDocumentError, load_json_document
 from .safe_io import (
     ReadStatus,
     atomic_replace,
@@ -41,10 +42,14 @@ def read_source_target(path: str | os.PathLike[str]) -> SourceTarget | None:
             f"unable to read saved OMT target: {result.detail or result.status.value}"
         )
     try:
-        document = json.loads(result.data)
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        document = load_json_document(result.data)
+    except JsonDocumentError as exc:
         raise SourceConfigurationError(f"saved OMT target is invalid JSON: {exc}") from exc
-    if not isinstance(document, dict) or document.get("schema") != 1:
+    if (
+        not isinstance(document, dict)
+        or type(document.get("schema")) is not int
+        or document.get("schema") != 1
+    ):
         raise SourceConfigurationError("saved OMT target has an invalid schema")
     if set(document) == {"schema", "kind", "name"} and document.get("kind") == "discovered":
         value = document.get("name")

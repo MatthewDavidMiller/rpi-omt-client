@@ -416,6 +416,66 @@ public sealed class StatusPublishPolicyTests
     }
 }
 
+public sealed class RuntimePrimitiveTests : IDisposable
+{
+    private readonly string _root = Directory.CreateTempSubdirectory("omt-runtime").FullName;
+
+    [Fact]
+    public void InterruptibleWaitSlicesDelaysAndOffersEveryHeartbeat()
+    {
+        List<int> slices = [];
+        int heartbeats = 0;
+
+        InterruptibleWait.Run(
+            250,
+            () => true,
+            () => heartbeats++,
+            slices.Add);
+
+        Assert.Equal([100, 100, 50], slices);
+        Assert.Equal(3, heartbeats);
+
+        bool running = true;
+        InterruptibleWait.Run(
+            500,
+            () => running,
+            delay: _ => running = false);
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => InterruptibleWait.Run(-1, () => true));
+        Assert.Throws<ArgumentNullException>(
+            () => InterruptibleWait.Run(1, null!));
+    }
+
+    [Fact]
+    public void AtomicPublisherUsesAPrivateUniqueStageAndReplacesSymlinks()
+    {
+        string target = Path.Combine(_root, "status.json");
+        string victim = Path.Combine(_root, "victim");
+        File.WriteAllText(victim, "keep");
+        File.CreateSymbolicLink(target, victim);
+
+        AtomicFilePublisher.Replace(target, "first"u8);
+        AtomicFilePublisher.Replace(target, "second"u8);
+
+        Assert.Equal("second", File.ReadAllText(target));
+        Assert.Equal("keep", File.ReadAllText(victim));
+        Assert.Empty(Directory.GetFiles(_root, ".status.json.*"));
+        if (OperatingSystem.IsLinux())
+        {
+            Assert.Equal(
+                UnixFileMode.UserRead | UnixFileMode.UserWrite,
+                File.GetUnixFileMode(target));
+        }
+
+        Assert.Throws<ArgumentException>(
+            () => AtomicFilePublisher.Replace("", "x"u8));
+        Assert.Throws<ArgumentException>(
+            () => AtomicFilePublisher.Replace("status.json", "x"u8));
+    }
+
+    public void Dispose() => Directory.Delete(_root, true);
+}
+
 public sealed class HdmiConnectorTests : IDisposable
 {
     private readonly string _root = Directory.CreateTempSubdirectory("omt-drm").FullName;

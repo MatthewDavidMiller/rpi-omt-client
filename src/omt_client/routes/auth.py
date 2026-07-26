@@ -17,8 +17,10 @@ def login() -> ResponseReturnValue:
         # MAX_CONTENT_LENGTH, and that RequestEntityTooLarge must reach Flask's
         # 413 handler instead of being reported as a storage failure.
         submitted_password = request.form.get("password", "")
+        previous = session.get("session_id")
+        previous_session_id = previous if isinstance(previous, str) else None
         try:
-            session_id = services().auth.authenticate(submitted_password, session.get("session_id"))
+            session_id = services().auth.authenticate(submitted_password, previous_session_id)
         except Exception:
             current_app.logger.exception("Unable to create a persistent web session")
             return render_template(
@@ -38,14 +40,22 @@ def login() -> ResponseReturnValue:
 
 @auth_blueprint.post("/logout")
 def logout() -> ResponseReturnValue:
+    stored = session.get("session_id")
+    session_id = stored if isinstance(stored, str) else None
     try:
-        services().auth.revoke(session.get("session_id"))
+        services().auth.revoke(session_id)
     except Exception:
         current_app.logger.exception("Unable to revoke the persistent web session")
+        # Clear the signed browser cookie even when the durable registry is
+        # unavailable. Leaving the local session authenticated after an
+        # explicit logout request is the least safe possible fallback.
+        session.clear()
         return render_template(
-            "error.html",
-            title="Logout failed",
-            message="Unable to revoke this session. Please try again.",
+            "login.html",
+            error=(
+                "Signed out locally, but the server session could not be revoked. "
+                "Close this browser and check configuration storage."
+            ),
         ), 503
     session.clear()
     return redirect(url_for("auth.login"))

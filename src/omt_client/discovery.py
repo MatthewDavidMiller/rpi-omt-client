@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import json
 import unicodedata
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
 from .hostnames import canonical_host
+from .json_document import JsonDocumentError, load_json_document
 
 MAX_SOURCE_NAME_BYTES = 63
 MAX_DISCOVERY_OUTPUT_BYTES = 256 * 1024
@@ -116,8 +116,8 @@ def parse_omt_sources(output: object) -> list[str]:
     if len(raw.encode("utf-8")) > MAX_DISCOVERY_OUTPUT_BYTES:
         return []
     try:
-        document = json.loads(raw)
-    except (TypeError, ValueError):
+        document = load_json_document(raw)
+    except (JsonDocumentError, TypeError):
         return []
     if not isinstance(document, list):
         return []

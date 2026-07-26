@@ -82,9 +82,18 @@ def test_direct_target_boundaries(value):
         ('["Camera"]', []),
         ('[{"name":"Camera"}]', []),
         ('{"name":"Camera"}', []),
+        ('[{"name":"Other","name":"Camera","target":"Camera"}]', []),
         ("[" + ",".join(['{"name":"a","target":"a"}'] * 20000) + "]", []),
     ],
-    ids=["none", "bytes", "bare-strings", "missing-target", "not-an-array", "oversized"],
+    ids=[
+        "none",
+        "bytes",
+        "bare-strings",
+        "missing-target",
+        "not-an-array",
+        "duplicate-key",
+        "oversized",
+    ],
 )
 def test_discovery_output_must_be_a_bounded_typed_array(output, expected):
     assert parse_omt_sources(output) == expected

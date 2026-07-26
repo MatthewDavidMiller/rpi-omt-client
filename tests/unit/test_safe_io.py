@@ -177,6 +177,27 @@ def test_bounded_read_rejects_a_file_replaced_during_the_read(tmp_path: Path, mo
     assert "changed while being read" in result.detail
 
 
+def test_bounded_read_rejects_same_size_in_place_mutation(tmp_path: Path, monkeypatch):
+    """Identity and size alone do not prove stability when a writer truncates
+    and rewrites the same inode with an equally sized record."""
+    target = tmp_path / "value"
+    target.write_bytes(b"12345")
+    original_read = os.read
+    mutated = False
+
+    def mutating_read(descriptor: int, count: int) -> bytes:
+        nonlocal mutated
+        if not mutated:
+            mutated = True
+            target.write_bytes(b"abcde")
+        return original_read(descriptor, count)
+
+    monkeypatch.setattr(os, "read", mutating_read)
+    result = safe_io.read_bytes(target, 16)
+    assert result.status is safe_io.ReadStatus.UNSAFE
+    assert "changed while being read" in result.detail
+
+
 def test_atomic_replace_tolerates_a_stage_removed_by_someone_else(tmp_path: Path, monkeypatch):
     """The rollback must not mask the original failure with a spurious
     FileNotFoundError when the stage is already gone."""

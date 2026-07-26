@@ -31,7 +31,7 @@
 | `OMT_DIAGNOSTICS_HOST_TIMEOUT_SECONDS` | `30`; must not exceed the bundle budget |
 | `OMT_DIAGNOSTICS_HOST_BUDGET_SECONDS` | `25` (host oneshot; set by `install.sh` on the systemd unit — container env only mirrors this into support bundles) |
 | `OMT_DIAGNOSTICS_BUNDLE_BUDGET_SECONDS` | `60`; must stay at most `85` so collection finishes before the fixed Gunicorn `--timeout` of `90` seconds in `deploy/container/entrypoint.sh` |
-| `OMT_DIAGNOSTICS_RECEIVE_PROBE` | enabled |
+| `OMT_DIAGNOSTICS_RECEIVE_PROBE` | `1` (enabled); accepts `1/0`, `true/false`, `yes/no`, or `on/off` |
 | `OMT_DIAGNOSTICS_DOWNLOAD_LIMIT` | `10 per hour` |
 | `OMT_DIAGNOSTICS_ACTION_LIMIT` | `30 per hour` |
 | `OMT_RUNTIME_INTEGRITY_MANIFEST` | `/app/runtime-sha256.manifest` |
@@ -51,6 +51,9 @@ cannot parse and serves the request unthrottled, so an unvalidated typo in
 `OMT_DEBUG_*`,
 `OMT_HOST_DEBUG_*`, and `PIPELINE_STATUS_STALE_SECONDS` variables fail startup
 with migration guidance.
+
+Boolean settings are parsed strictly as documented. An unknown value fails
+startup instead of silently enabling the diagnostics receive probe.
 
 ## Persistent files
 

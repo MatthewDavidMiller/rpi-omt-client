@@ -7,6 +7,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 DOTNET="${PROJECT_ROOT}/.build/dotnet/dotnet"
 CORE="${PROJECT_ROOT}/src/receiver/RpiOmt.Receiver.Core/RpiOmt.Receiver.Core.csproj"
+RECEIVER="${PROJECT_ROOT}/src/receiver/RpiOmt.Receiver/RpiOmt.Receiver.csproj"
 TESTS="${PROJECT_ROOT}/src/receiver/RpiOmt.Receiver.Core.Tests/RpiOmt.Receiver.Core.Tests.csproj"
 
 if [[ ! -x "${DOTNET}" ]]; then
@@ -20,7 +21,11 @@ export DOTNET_NOLOGO=1
 
 "${DOTNET}" restore "${TESTS}" --locked-mode \
     -p:NuGetAudit=true -p:NuGetAuditMode=all -p:TreatWarningsAsErrors=true
+"${DOTNET}" restore "${RECEIVER}" --locked-mode \
+    -p:NuGetAudit=true -p:NuGetAuditMode=all -p:TreatWarningsAsErrors=true
 "${DOTNET}" build "${CORE}" --no-restore -c Release \
+    -p:TreatWarningsAsErrors=true
+"${DOTNET}" build "${RECEIVER}" --no-restore -c Release \
     -p:TreatWarningsAsErrors=true
 "${DOTNET}" test "${TESTS}" --no-restore -c Release \
     --settings "${PROJECT_ROOT}/src/receiver/RpiOmt.Receiver.Core.Tests/coverage.runsettings" \

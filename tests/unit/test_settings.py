@@ -1,4 +1,5 @@
 import math
+from typing import cast
 
 import pytest
 
@@ -60,6 +61,28 @@ def test_request_and_login_limits_are_settings_driven():
     )
     assert overridden.max_request_bytes == 2048
     assert overridden.login_rate_limit == "2 per minute"
+
+
+@pytest.mark.parametrize("value", ["1", "true", "YES", " on "])
+def test_receive_probe_accepts_documented_true_values(value):
+    assert load_settings({"OMT_DIAGNOSTICS_RECEIVE_PROBE": value}).diagnostics_receive_probe
+
+
+@pytest.mark.parametrize("value", ["0", "false", "NO", " off "])
+def test_receive_probe_accepts_documented_false_values(value):
+    assert not load_settings({"OMT_DIAGNOSTICS_RECEIVE_PROBE": value}).diagnostics_receive_probe
+
+
+@pytest.mark.parametrize("value", ["", "enabled", "flase", "2"])
+def test_receive_probe_rejects_ambiguous_values(value):
+    with pytest.raises(SettingsError, match="OMT_DIAGNOSTICS_RECEIVE_PROBE"):
+        load_settings({"OMT_DIAGNOSTICS_RECEIVE_PROBE": value})
+
+
+def test_receive_probe_rejects_non_text_from_custom_environment_maps():
+    malformed = cast(dict[str, str], {"OMT_DIAGNOSTICS_RECEIVE_PROBE": None})
+    with pytest.raises(SettingsError, match="must be a boolean"):
+        load_settings(malformed)
 
 
 @pytest.mark.parametrize("spec", RATE_LIMIT_SPECS)
