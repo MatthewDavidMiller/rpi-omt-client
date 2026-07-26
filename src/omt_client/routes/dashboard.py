@@ -14,13 +14,14 @@ dashboard_blueprint = Blueprint("dashboard", __name__)
 @login_required
 def dashboard() -> ResponseReturnValue:
     source = services().source
-    current_source, current_direct_target = source.configuration()
+    available_sources = source.sources()
+    playback = source.playback()
     return render_template(
         "dashboard.html",
-        sources=source.sources(),
-        current_source=current_source,
-        current_direct_target=current_direct_target,
-        playback=source.playback(),
+        sources=available_sources,
+        current_source=playback.source,
+        current_direct_target=playback.direct_address,
+        playback=playback,
     )
 
 

@@ -150,6 +150,11 @@ class PlaybackStatusRecord:
             updated.astimezone(UTC),
         )
 
+    def require_target(self, expected_target: str) -> None:
+        """Reject a fresh record left behind by a different playback target."""
+        if self.target != expected_target:
+            raise ValueError("status target does not match the configured target")
+
     def require_fresh(self, now: datetime, maximum_age_seconds: float) -> None:
         """Raise `ValueError` unless this record was published recently enough.
 

@@ -21,8 +21,9 @@ make test
 against both the preview fakes and the real `ServiceContainer`, rate limits on
 every throttled endpoint — including that an unparseable limit string fails
 startup rather than silently serving unthrottled — About/System workflows,
-reboot request correlation, and runtime adapters, at a 98% branch-coverage
-floor. The suite imports the
+reboot request correlation, target-correlated playback status, single-flight
+source discovery, and runtime adapters, at a 98% branch-coverage floor. The
+suite imports the
 package straight from `src/` via the `pythonpath` setting in `pyproject.toml`,
 so no install step is required.
 `make test-receiver` performs locked restore, an analyzer-enabled core build, a

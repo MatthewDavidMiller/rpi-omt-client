@@ -29,37 +29,53 @@ class RuntimeSourcePlayback:
     def __init__(self, settings: AppSettings) -> None:
         self._settings = settings
         self._cache: tuple[float, list[OmtSourceChoice]] = (0.0, [])
-        self._cache_lock = threading.Lock()
+        self._cache_condition = threading.Condition()
+        self._discovery_in_progress = False
 
     def _target(self) -> SourceTarget | None:
         return read_source_target(self._settings.source_target_file)
 
     def sources(self) -> list[OmtSourceChoice]:
-        with self._cache_lock:
+        with self._cache_condition:
             if time.monotonic() < self._cache[0]:
                 return list(self._cache[1])
-        result = run_command(
-            [
-                self._settings.receiver_command,
-                "discover",
-                "--wait-ms",
-                "1500",
-                "--json",
-            ],
-            max(3.0, self._settings.control_timeout_seconds),
-        )
-        choices = (
-            [OmtSourceChoice(name) for name in parse_omt_sources(result.stdout)]
-            if result.returncode == 0
-            else []
-        )
+            while self._discovery_in_progress:
+                self._cache_condition.wait()
+                if time.monotonic() < self._cache[0]:
+                    return list(self._cache[1])
+            self._discovery_in_progress = True
+        try:
+            result = run_command(
+                [
+                    self._settings.receiver_command,
+                    "discover",
+                    "--wait-ms",
+                    "1500",
+                    "--json",
+                ],
+                max(3.0, self._settings.control_timeout_seconds),
+            )
+            choices = (
+                [OmtSourceChoice(name) for name in parse_omt_sources(result.stdout)]
+                if result.returncode == 0
+                else []
+            )
+        except BaseException:
+            # Never strand callers behind an in-flight marker if an unexpected
+            # dependency failure escapes the bounded command adapter.
+            with self._cache_condition:
+                self._discovery_in_progress = False
+                self._cache_condition.notify_all()
+            raise
         # Anchor the expiry to the moment the answer became known. Discovery
         # blocks for at least --wait-ms, so anchoring to the pre-command clock
         # would spend that time out of the TTL -- and with a TTL shorter than
         # the discovery itself the entry would be born expired, making every
         # dashboard render pay for another multi-second discovery.
-        with self._cache_lock:
+        with self._cache_condition:
             self._cache = (time.monotonic() + self._settings.source_cache_ttl_seconds, choices)
+            self._discovery_in_progress = False
+            self._cache_condition.notify_all()
         return list(choices)
 
     def configuration(self) -> tuple[str, str]:
@@ -103,7 +119,7 @@ class RuntimeSourcePlayback:
         return self._save_and_restart(target, backend)
 
     def refresh(self) -> None:
-        with self._cache_lock:
+        with self._cache_condition:
             self._cache = (0.0, [])
 
     def restart(self) -> ActionResult:
@@ -150,14 +166,24 @@ class RuntimeSourcePlayback:
         return self._save_and_restart(SourceTarget("direct", address), "OMT direct target")
 
     def playback(self) -> PlaybackSummary:
-        source, address = self.configuration()
-        if not source:
+        try:
+            target = self._target()
+        except SourceConfigurationError as exc:
+            return PlaybackSummary(
+                "configuration-error",
+                "Source configuration invalid",
+                str(exc),
+                "danger",
+            )
+        if target is None:
             return PlaybackSummary(
                 "unconfigured",
                 "No source configured",
                 "Select a discovered source or configure a direct OMT target.",
                 "neutral",
             )
+        source = target.value
+        address = source if target.kind == "direct" else ""
         result = read_bytes(self._settings.playback_status_file, STATUS_FILE_LIMIT)
         if not result.ok:
             control = self._control("status")
@@ -180,6 +206,7 @@ class RuntimeSourcePlayback:
             )
         try:
             status = PlaybackStatusRecord.parse(result.data)
+            status.require_target(source)
             status.require_fresh(
                 datetime.now(UTC),
                 self._settings.playback_status_stale_seconds,

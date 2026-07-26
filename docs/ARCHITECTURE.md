@@ -79,9 +79,11 @@ mounted at `/run/omt`; the entrypoint owns a 0700 directory inside that
 world-writable mount point. The receiver republishes status on every change and
 then at a 500 ms heartbeat, including while discovery, HDMI, media, or retry
 waits are in progress. Status publication uses a private, uniquely named stage
-and an atomic replacement. Keeping it on the volume put a permanent write +
-fsync + rename load on SD-card-backed flash for state that is meaningless
-after a restart.
+and an atomic replacement. The Web consumer accepts fresh status only when its
+target matches the current atomic source record, so a source change cannot
+briefly present the previous receiver session as current. Keeping status on
+the volume put a permanent write + fsync + rename load on SD-card-backed flash
+for state that is meaningless after a restart.
 
 ## Deployment capsule
 

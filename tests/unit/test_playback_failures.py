@@ -200,11 +200,26 @@ def test_lone_surrogate_detail_is_rejected_rather_than_crashing():
         PlaybackStatusRecord.parse(raw.encode())
 
 
-def test_unreadable_saved_target_presents_as_unconfigured(tmp_path: Path):
+def test_unreadable_saved_target_is_not_mislabeled_as_unconfigured(tmp_path: Path):
     service = _service(tmp_path)
     Path(service._settings.source_target_file).write_text("not-json", encoding="utf-8")
     assert service.configuration() == ("", "")
-    assert service.playback().state == "unconfigured"
+    summary = service.playback()
+    assert summary.state == "configuration-error"
+    assert summary.tone == "danger"
+    assert "invalid JSON" in summary.detail
+
+
+def test_fresh_status_for_a_previous_target_is_rejected(tmp_path: Path):
+    """A source switch can leave the old receiver record fresh for a few seconds."""
+    service = _service(tmp_path)
+    Path(service._settings.playback_status_file).write_text(
+        json.dumps(_status_document(target="Previous Camera")),
+        encoding="utf-8",
+    )
+    summary = service.playback()
+    assert summary.state == "stale"
+    assert summary.source == "Camera"
 
 
 def test_restart_failures_surface_the_controller_detail(tmp_path: Path, monkeypatch):

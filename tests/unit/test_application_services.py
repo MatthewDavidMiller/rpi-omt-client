@@ -586,6 +586,67 @@ def test_a_failed_discovery_is_cached_so_a_broken_receiver_is_not_hammered(tmp_p
     assert attempts == 2
 
 
+def test_concurrent_source_requests_share_one_discovery(tmp_path, monkeypatch):
+    """Two dashboard callers must not launch duplicate receiver discoveries."""
+    settings = settings_for(tmp_path, OMT_SOURCE_CACHE_TTL_SECONDS="5")
+    discovery_started = threading.Event()
+    release_discovery = threading.Event()
+    second_discovery_started = threading.Event()
+    attempts = 0
+
+    def run(command, _timeout):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            discovery_started.set()
+        else:
+            second_discovery_started.set()
+        assert release_discovery.wait(2)
+        return command_result(stdout='[{"name":"Camera","target":"Camera"}]')
+
+    monkeypatch.setattr("omt_client.services.playback.run_command", run)
+    service = RuntimeSourcePlayback(settings)
+    results: list[list[str]] = []
+
+    def discover():
+        results.append([choice.name for choice in service.sources()])
+
+    first = threading.Thread(target=discover)
+    second = threading.Thread(target=discover)
+    first.start()
+    assert discovery_started.wait(1)
+    second.start()
+    assert not second_discovery_started.wait(0.1)
+    release_discovery.set()
+    first.join(2)
+    second.join(2)
+
+    assert not first.is_alive() and not second.is_alive()
+    assert results == [["Camera"], ["Camera"]]
+    assert attempts == 1
+
+
+def test_failed_discovery_releases_waiters_for_a_retry(tmp_path, monkeypatch):
+    """An unexpected adapter failure must not leave discovery marked in flight."""
+    settings = settings_for(tmp_path)
+    attempts = 0
+
+    def run(command, _timeout):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("adapter failed")
+        return command_result(stdout='[{"name":"Camera","target":"Camera"}]')
+
+    monkeypatch.setattr("omt_client.services.playback.run_command", run)
+    service = RuntimeSourcePlayback(settings)
+
+    with pytest.raises(RuntimeError, match="adapter failed"):
+        service.sources()
+    assert [choice.name for choice in service.sources()] == ["Camera"]
+    assert attempts == 2
+
+
 def test_saving_discovery_settings_restarts_a_configured_source(tmp_path, monkeypatch):
     """A Discovery Server change only takes effect on restart, so a configured
     target must be restarted and the operator told that it was."""

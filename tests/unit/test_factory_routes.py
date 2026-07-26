@@ -96,6 +96,23 @@ def test_dashboard_uses_one_heading_navigation_health_and_new_actions(factory_cl
     assert "About" in html
 
 
+def test_dashboard_uses_the_playback_snapshot_for_current_source(
+    factory_client,
+    factory_app,
+    monkeypatch,
+):
+    """Do not reread target state after playback has already captured it."""
+    source = factory_app.extensions["omt_client.services"].source
+
+    def duplicate_read():
+        raise AssertionError("dashboard performed a second configuration read")
+
+    monkeypatch.setattr(source, "configuration", duplicate_read)
+    response = factory_client.get("/")
+    assert response.status_code == 200
+    assert b"STUDIO-PC (OBS Studio)" in response.data
+
+
 def test_dashboard_renders_sources_through_the_typed_choice_contract(
     factory_client,
     factory_app,
