@@ -11,7 +11,7 @@ import stat
 import tempfile
 import time
 import zipfile
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import IO
@@ -86,6 +86,36 @@ def _discovery_json(result: CommandResult) -> str:
         ensure_ascii=False,
         separators=(",", ":"),
     )
+
+
+@dataclass(frozen=True)
+class _ContainerReport:
+    """The container's own answers, already resolved into archive members."""
+
+    runtime: str
+    discovery: str
+    controller_status: str
+    receive_probe: str
+
+
+@dataclass(frozen=True)
+class _HostReport:
+    """The privileged collector's answer to one correlated request.
+
+    `capture_requested` is carried rather than inferred: an absent capture that
+    nobody asked for writes no member at all, while one that was asked for owes
+    the operator `packet_capture_error` as its stated reason.
+    """
+
+    report: bytes
+    capture_metadata: bytes
+    packet_capture: IO[bytes] | None
+    packet_capture_error: str
+    capture_requested: bool
+
+    def close(self) -> None:
+        if self.packet_capture is not None:
+            self.packet_capture.close()
 
 
 class RuntimeDiagnostics:
@@ -231,8 +261,11 @@ class RuntimeDiagnostics:
                 ):
                     return result.data, ""
                 last_detail = "host diagnostic report did not match this request"
-            elif result.detail:
-                last_detail = result.detail
+            else:
+                # Same fallback as `_capture_metadata`: a typed read failure
+                # always names itself, and the status value is the answer when
+                # it does not.
+                last_detail = result.detail or result.status.value
             time.sleep(0.05)
         return b"", last_detail
 
@@ -359,26 +392,15 @@ class RuntimeDiagnostics:
             if not succeeded:
                 spool.close()
 
-    def bundle(self, include_packet_capture: bool = False) -> tuple[IO[bytes], str]:
-        started = time.monotonic()
-        deadline = started + self._settings.diagnostics_bundle_budget_seconds
-        request_id = os.urandom(16).hex()
-        host_request_error = self._request_host_report(
-            request_id,
-            include_packet_capture,
-        )
-
+    def _collect_container(self, deadline: float) -> _ContainerReport:
+        """Answer everything the container can see, inside the shared deadline."""
         runtime = self._runtime(deadline).command.stdout
         discovery_result = self._discovery(deadline).command
-        # Keep the archive member valid JSON even when the command fails or a
-        # damaged receiver emits malformed output.
-        discovery = _discovery_json(discovery_result)
         status_result = _run_before_deadline(
             [self._settings.control_command, "status"],
             self._settings.control_timeout_seconds,
             deadline,
         )
-        controller_status = status_result.report_text + "\n"
         source, _address = self._source.configuration()
         if self._settings.diagnostics_receive_probe and source:
             remaining = max(0.0, deadline - time.monotonic())
@@ -398,25 +420,65 @@ class RuntimeDiagnostics:
             receive_probe = probe.stdout or probe.error or probe.stderr
         else:
             receive_probe = "skipped: no current target or receive probe disabled\n"
+        return _ContainerReport(
+            runtime=runtime,
+            # Keep the archive member valid JSON even when the command fails or
+            # a damaged receiver emits malformed output.
+            discovery=_discovery_json(discovery_result),
+            controller_status=status_result.report_text + "\n",
+            receive_probe=receive_probe,
+        )
 
-        host_report = b""
-        host_report_error = host_request_error
-        if not host_request_error:
-            host_report, host_report_error = self._fresh_host_report(
-                request_id,
-                deadline,
-            )
+    def _collect_host(
+        self,
+        request_id: str,
+        deadline: float,
+        capture_requested: bool,
+        request_error: str,
+    ) -> _HostReport:
+        """Wait for the privileged collector's answer to exactly this request."""
+        report = b""
+        report_error = request_error
+        if not request_error:
+            report, report_error = self._fresh_host_report(request_id, deadline)
         metadata_data, metadata, metadata_error = self._capture_metadata(request_id)
 
         packet_spool: IO[bytes] | None = None
         packet_error = ""
-        if include_packet_capture:
+        if capture_requested:
             if metadata is None:
                 packet_error = metadata_error
             elif metadata["capture_status"] not in RAW_CAPTURE_STATUSES:
                 packet_error = "host packet capture status is " + metadata["capture_status"]
             else:
                 packet_spool, packet_error = self._validated_pcap(metadata)
+        return _HostReport(
+            report=report or _unavailable(report_error),
+            # Only embed raw metadata when it validated for this request. Truthy
+            # stale bytes from a prior capture must not win over the typed error
+            # explaining why this run rejected them.
+            capture_metadata=(
+                metadata_data if metadata is not None else _unavailable(metadata_error)
+            ),
+            packet_capture=packet_spool,
+            packet_capture_error=packet_error,
+            capture_requested=capture_requested,
+        )
+
+    def bundle(self, include_packet_capture: bool = False) -> tuple[IO[bytes], str]:
+        """Collect one support archive: submit, gather, then lay out the zip."""
+        deadline = time.monotonic() + self._settings.diagnostics_bundle_budget_seconds
+        request_id = os.urandom(16).hex()
+        # Submit first so the host collector runs while the container gathers
+        # its own answers, rather than after them.
+        request_error = self._request_host_report(request_id, include_packet_capture)
+        container = self._collect_container(deadline)
+        host = self._collect_host(
+            request_id,
+            deadline,
+            include_packet_capture,
+            request_error,
+        )
 
         bundle = tempfile.SpooledTemporaryFile(max_size=4 * 1024 * 1024)
         timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
@@ -425,50 +487,25 @@ class RuntimeDiagnostics:
         # tmpfs, so a failure part-way through the archive must release them
         # rather than leave them for whenever the collector next runs.
         try:
-            self._write_archive(
-                bundle,
-                runtime,
-                discovery,
-                controller_status,
-                receive_probe,
-                host_report or _unavailable(host_report_error),
-                # Only embed raw metadata when it validated for this request.
-                # Truthy stale bytes from a prior capture must not win over the
-                # typed error explaining why this run rejected them.
-                metadata_data if metadata is not None else _unavailable(metadata_error),
-                packet_spool if include_packet_capture else None,
-                # Opting in must never silently omit the capture, so an absent
-                # one still owes the operator a stated reason. Opting out owes
-                # nothing, and is the only case that writes neither member.
-                _unavailable(packet_error) if include_packet_capture else b"",
-            )
+            self._write_archive(bundle, container, host)
         except BaseException:
             bundle.close()
             raise
         finally:
-            if packet_spool is not None:
-                packet_spool.close()
+            host.close()
         bundle.seek(0)
         return bundle, f"omt-diagnostics-{timestamp}.zip"
 
     def _write_archive(
         self,
         bundle: IO[bytes],
-        runtime: str,
-        discovery: str,
-        controller_status: str,
-        receive_probe: str,
-        host_report: bytes,
-        capture_metadata: bytes,
-        packet_spool: IO[bytes] | None,
-        packet_unavailable: bytes,
+        container: _ContainerReport,
+        host: _HostReport,
     ) -> None:
         """Write every archive member. Members arrive resolved, not as outcomes.
 
-        The caller has already decided what each member should contain, so this
-        only lays out the archive. `packet_unavailable` is empty exactly when
-        the capture was not opted into, which is the one case with no raw
-        member and no explanation for its absence. The caller owns the spools.
+        The collection steps have already decided what each member should
+        contain, so this only lays out the archive. The caller owns the spools.
         """
         with zipfile.ZipFile(bundle, "w", compression=zipfile.ZIP_DEFLATED) as archive:
             archive.writestr("version.txt", self._about.version() + "\n")
@@ -476,10 +513,10 @@ class RuntimeDiagnostics:
                 "runtime-settings.txt",
                 "\n".join(self._settings.diagnostic_lines()) + "\n",
             )
-            archive.writestr("runtime.txt", runtime)
-            archive.writestr("discovery.json", discovery)
-            archive.writestr("controller-status.txt", controller_status)
-            archive.writestr("current-target-receive-probe.json", receive_probe)
+            archive.writestr("runtime.txt", container.runtime)
+            archive.writestr("discovery.json", container.discovery)
+            archive.writestr("controller-status.txt", container.controller_status)
+            archive.writestr("current-target-receive-probe.json", container.receive_probe)
             for name, path, limit in (
                 ("playback-status.json", self._settings.playback_status_file, 4096),
                 ("omt-settings.xml", self._settings.runtime_config_file, 65536),
@@ -496,9 +533,9 @@ class RuntimeDiagnostics:
                     if result.ok
                     else _unavailable(result.detail or result.status.value),
                 )
-            archive.writestr("host-report.txt", host_report)
-            archive.writestr("host-network-pcap.txt", capture_metadata)
-            if packet_spool is not None:
+            archive.writestr("host-report.txt", host.report)
+            archive.writestr("host-network-pcap.txt", host.capture_metadata)
+            if host.packet_capture is not None:
                 # Raw captures are already dense binary data and may reach
                 # 64 MiB. Deflating them burns the Pi's CPU inside the fixed
                 # Gunicorn request budget for little benefit; store this one
@@ -509,6 +546,12 @@ class RuntimeDiagnostics:
                 )
                 packet_info.compress_type = zipfile.ZIP_STORED
                 with archive.open(packet_info, "w") as destination:
-                    shutil.copyfileobj(packet_spool, destination, 1024 * 1024)
-            elif packet_unavailable:
-                archive.writestr("host-network.pcap.unavailable.txt", packet_unavailable)
+                    shutil.copyfileobj(host.packet_capture, destination, 1024 * 1024)
+            elif host.capture_requested:
+                # Opting in must never silently omit the capture, so an absent
+                # one still owes the operator a stated reason. Opting out owes
+                # nothing, and is the only case that writes neither member.
+                archive.writestr(
+                    "host-network.pcap.unavailable.txt",
+                    _unavailable(host.packet_capture_error),
+                )

@@ -54,10 +54,47 @@ def test_body_is_ignored_only_when_the_caller_opts_in():
 
 
 def test_a_trailing_newline_is_not_treated_as_a_body():
-    """splitlines() drops the final terminator, so both modes accept the record
-    the host scripts actually write."""
+    """The final terminator is not a line, so both modes accept the record the
+    host scripts actually write."""
     assert parse_key_value_record(RECORD, REQUIRED, allow_body=True) is not None
     assert parse_key_value_record(RECORD.rstrip("\n"), REQUIRED) is not None
+
+
+# `host-reboot.sh` and `host-diagnostics.sh` terminate every field with a
+# literal `\n`. `str.splitlines` breaks on these as well, so using it here would
+# read one field value as two lines.
+@pytest.mark.parametrize(
+    "separator",
+    ["\v", "\f", "\x1c", "\x1d", "\x1e", "\x85", "\u2028", "\u2029"],
+)
+def test_only_a_newline_separates_fields(separator: str):
+    record = f"version=1\nrequest_id=abc\nstatus=a{separator}b\n"
+    assert parse_key_value_record(record, REQUIRED) == {
+        "version": "1",
+        "request_id": "abc",
+        "status": f"a{separator}b",
+    }
+    # With a body allowed the same character used to truncate the value in
+    # place, quietly handing the caller half of what the host published.
+    assert parse_key_value_record(record, REQUIRED, allow_body=True) == {
+        "version": "1",
+        "request_id": "abc",
+        "status": f"a{separator}b",
+    }
+
+
+def test_a_carriage_return_stays_inside_the_value_it_belongs_to():
+    """A CRLF record is not the contract, so `\\r` is data, not a separator."""
+    assert parse_key_value_record("version=1\r\nrequest_id=abc\nstatus=ok\n", REQUIRED) == {
+        "version": "1\r",
+        "request_id": "abc",
+        "status": "ok",
+    }
+
+
+def test_a_blank_line_is_a_rejection_unless_a_body_is_allowed():
+    assert parse_key_value_record(RECORD + "\n", REQUIRED) is None
+    assert parse_key_value_record(RECORD + "\n", REQUIRED, allow_body=True) is not None
 
 
 def test_strict_json_decoder_reports_excessive_nesting_as_a_document_error():

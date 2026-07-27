@@ -9,7 +9,22 @@
     {"value": "Café", "valid": false},
     {"value": "Camera\nTwo", "valid": false},
     {"value": "Camera​Two", "valid": false},
-    {"value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "valid": false}
+    {"value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "valid": false},
+    {"value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "valid": true},
+    {"value": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀", "valid": true},
+    {"value": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀", "valid": false},
+    {"value": "﻿", "valid": false},
+    {"value": "a﻿b", "valid": false},
+    {"value": "a‍b", "valid": false},
+    {"value": "a\tb", "valid": false},
+    {"value": "a\rb", "valid": false},
+    {"value": "a b", "valid": false},
+    {"value": "a b", "valid": false},
+    {"value": " ", "valid": false},
+    {"value": "a b", "valid": true},
+    {"value": "", "valid": true},
+    {"value": "-a-", "valid": true},
+    {"value": "omt://camera:6400", "valid": true}
   ],
   "direct_targets": [
     {"value": "omt://camera.local:6400", "valid": true},
@@ -32,8 +47,8 @@
     {"value": "omt://2001:db8::10:6400", "valid": false},
     {"value": "host:1", "valid": false},
     {"value": "omt://ho\u0000st:1", "valid": false},
-    {"value": "omt://host\u007f:1", "valid": false},
-    {"value": "omt://c\u00e1mara.local:6400", "valid": false},
+    {"value": "omt://host:1", "valid": false},
+    {"value": "omt://cámara.local:6400", "valid": false},
     {"value": "omt://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.bbbbbbbbbb:6400", "valid": false},
     {"value": "omt://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "valid": false},
     {"value": "omt://host:99999999999999999999", "valid": false},
@@ -45,6 +60,24 @@
     {"value": "omt://[fe80::1%25eth0]:6400", "valid": true},
     {"value": "omt://[fe80::1]:6400", "valid": true},
     {"value": "omt://[192.0.2.10]:6400", "valid": false},
-    {"value": "omt://[::ffff:192.0.2.10]:6400", "valid": true}
+    {"value": "omt://[::ffff:192.0.2.10]:6400", "valid": true},
+    {"value": "omt://host:1:2", "valid": false},
+    {"value": "omt://[::1", "valid": false},
+    {"value": "omt://[::1]1", "valid": false},
+    {"value": "omt://host:+1", "valid": false},
+    {"value": "omt://host:-1", "valid": false},
+    {"value": "omt://host: 1", "valid": false},
+    {"value": "omt://host:1 ", "valid": false},
+    {"value": "omt://host:1\t", "valid": false},
+    {"value": "omt:/host:1", "valid": false},
+    {"value": "omt://:pw@host:1", "valid": false},
+    {"value": "omt://.a:1", "valid": false},
+    {"value": "omt://a-.b:1", "valid": false},
+    {"value": "omt://a--b:1", "valid": true},
+    {"value": "omt://0:1", "valid": true},
+    {"value": "omt://255.255.255.255:1", "valid": true},
+    {"value": "omt://999.1.1.1:1", "valid": true},
+    {"value": "omt://xn--caf-dma.local:6400", "valid": true},
+    {"value": "omt://host:65535", "valid": true}
   ]
 }

@@ -150,6 +150,39 @@ def test_unexpected_os_errors_are_reported_as_io_errors(tmp_path: Path):
     assert nested.status is safe_io.ReadStatus.UNSAFE
 
 
+def test_a_read_that_fails_midway_is_reported_and_still_closes_the_descriptor(
+    tmp_path: Path,
+    monkeypatch,
+):
+    """The open succeeded, so the failure arrives with a descriptor in hand.
+
+    A status file on a failing SD card fails here rather than at open. The
+    descriptor has to be released on the way out: this runs inside a long-lived
+    Gunicorn worker that reads status on every dashboard render, so leaking one
+    per failure would exhaust the process's descriptors.
+    """
+    target = tmp_path / "value"
+    target.write_bytes(b"value")
+    closed: list[int] = []
+    original_close = os.close
+
+    def recording_close(descriptor: int) -> None:
+        closed.append(descriptor)
+        original_close(descriptor)
+
+    monkeypatch.setattr(os, "close", recording_close)
+    monkeypatch.setattr(
+        os,
+        "read",
+        lambda *_args: (_ for _ in ()).throw(OSError(errno.EIO, "input/output error")),
+    )
+
+    result = safe_io.read_bytes(target, 10)
+    assert result.status is safe_io.ReadStatus.IO_ERROR
+    assert "unable to read file" in result.detail
+    assert len(closed) == 1
+
+
 def test_bounded_read_rejects_a_file_that_grows_past_the_limit(tmp_path: Path, monkeypatch):
     """lstat reports a size within the limit, then the file grows before the
     read. Trusting the first stat would return a partial record as if it were

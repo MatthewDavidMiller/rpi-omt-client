@@ -654,6 +654,73 @@ def test_failed_discovery_releases_waiters_for_a_retry(tmp_path, monkeypatch):
     assert attempts == 2
 
 
+def test_a_waiter_runs_its_own_discovery_when_the_one_it_waited_on_fails(tmp_path, monkeypatch):
+    """The failure path wakes waiters without publishing a cache entry.
+
+    A waiter released that way sees an unchanged generation, so it must go back
+    to the in-flight check and take over the discovery itself. Returning the
+    cache on the strength of the wakeup alone would hand the dashboard the empty
+    startup list as though discovery had answered with no sources.
+    """
+    settings = settings_for(tmp_path)
+    first_started = threading.Event()
+    release_first = threading.Event()
+    attempts = 0
+
+    def run(command, _timeout):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            first_started.set()
+            assert release_first.wait(2)
+            raise RuntimeError("adapter failed")
+        return command_result(stdout='[{"name":"Camera","target":"Camera"}]')
+
+    monkeypatch.setattr("omt_client.services.playback.run_command", run)
+    service = RuntimeSourcePlayback(settings)
+
+    # Park the waiter deterministically: releasing the first discovery before
+    # the second thread has actually blocked would let it run its own discovery
+    # from the start and never reach the wakeup this test is about.
+    waiting = threading.Event()
+    condition_wait = service._cache_condition.wait
+
+    def announce_wait(timeout=None):
+        waiting.set()
+        return condition_wait(timeout)
+
+    monkeypatch.setattr(service._cache_condition, "wait", announce_wait)
+
+    waiter_result: list[list[str]] = []
+    failure: list[BaseException] = []
+
+    def wait_for_the_first_discovery():
+        waiter_result.append([choice.name for choice in service.sources()])
+
+    def fail_the_first_discovery():
+        try:
+            service.sources()
+        except RuntimeError as exc:
+            failure.append(exc)
+
+    waiter = threading.Thread(target=wait_for_the_first_discovery)
+    failing = threading.Thread(target=fail_the_first_discovery)
+    failing.start()
+    assert first_started.wait(1)
+    waiter.start()
+    assert waiting.wait(1)
+    assert attempts == 1
+
+    release_first.set()
+    failing.join(2)
+    waiter.join(2)
+
+    assert not failing.is_alive() and not waiter.is_alive()
+    assert [type(error) for error in failure] == [RuntimeError]
+    assert waiter_result == [["Camera"]]
+    assert attempts == 2
+
+
 def test_saving_discovery_settings_restarts_a_configured_source(tmp_path, monkeypatch):
     """A Discovery Server change only takes effect on restart, so a configured
     target must be restarted and the operator told that it was."""

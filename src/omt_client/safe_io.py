@@ -82,10 +82,16 @@ def read_bytes(path: str | os.PathLike[str], maximum_bytes: int) -> ReadResult:
         )
 
     flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
-    descriptor = -1
     data = bytearray()
+    # Open outside the guarded block. A descriptor that was never acquired has
+    # nothing to release, so folding this into the try below would need a -1
+    # sentinel whose "nothing to close" arm is unreachable: every path that
+    # reaches the close has a real descriptor.
     try:
         descriptor = os.open(path_text, flags)
+    except OSError as exc:
+        return _os_error(exc, "unable to read file")
+    try:
         opened = os.fstat(descriptor)
         if not stat.S_ISREG(opened.st_mode) or _snapshot(opened) != _snapshot(before):
             return ReadResult(ReadStatus.UNSAFE, detail="file changed while opening")
@@ -98,8 +104,7 @@ def read_bytes(path: str | os.PathLike[str], maximum_bytes: int) -> ReadResult:
     except OSError as exc:
         return _os_error(exc, "unable to read file")
     finally:
-        if descriptor >= 0:
-            os.close(descriptor)
+        os.close(descriptor)
 
     if len(data) > maximum_bytes or after_descriptor.st_size > maximum_bytes:
         return ReadResult(ReadStatus.OVERSIZED, detail=f"file exceeds {maximum_bytes} bytes")
