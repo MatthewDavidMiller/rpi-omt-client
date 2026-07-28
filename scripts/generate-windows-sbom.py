@@ -37,7 +37,7 @@ def main() -> int:
                 "type": "application",
                 "name": "Raspberry Pi OMT Client Deployer",
                 "version": arguments.version,
-                "licenses": [{"license": {"name": "LicenseRef-Proprietary"}}],
+                "licenses": [{"license": {"id": "MIT"}}],
             }
         },
         "components": sorted(components, key=lambda item: item["name"].casefold()),

@@ -139,7 +139,7 @@ def main() -> int:
                 "type": "application",
                 "name": "Raspberry Pi OMT Client",
                 "version": arguments.version,
-                "licenses": [{"license": {"name": "LicenseRef-Proprietary"}}],
+                "licenses": [{"license": {"id": "MIT"}}],
             }
         },
         "components": sorted(

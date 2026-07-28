@@ -1,69 +1,21 @@
-RASPBERRY PI OMT CLIENT PROPRIETARY SOFTWARE LICENSE
+MIT License
 
-Copyright © 2026 Matthew David Miller. All rights reserved.
+Copyright (c) 2026 Matthew David Miller
 
-1. License Grant
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
 
-Subject to the terms of this license, Matthew David Miller ("Licensor")
-grants you a limited, non-exclusive, non-transferable, revocable license to
-install and use an unmodified copy of Raspberry Pi OMT Client ("Software") on
-devices that you own or control, solely for your personal or internal
-business purposes.
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
 
-2. Restrictions
-
-Except where applicable law expressly requires otherwise, you may not:
-
-* copy or redistribute the Software to another person or organization;
-* publish, sell, rent, lease, sublicense, or commercially exploit the Software;
-* modify, adapt, translate, or create derivative works of the Software;
-* reverse engineer, decompile, or disassemble the Software; or
-* remove or alter copyright, license, attribution, or proprietary notices.
-
-No patent, trademark, source-code, redistribution, or other right is granted
-except the limited right to install and use the unmodified Software stated
-above.
-
-3. Third-Party Software
-
-The Software includes third-party components governed by their own licenses.
-Those components are not licensed under this proprietary license. Their
-licenses, notices, attribution, and source-code information are provided in
-THIRD_PARTY_NOTICES.txt and the accompanying third_party materials. If this
-license conflicts with a third-party license for that third-party component,
-the third-party license controls for that component.
-
-4. Ownership
-
-The Software is licensed, not sold. Licensor retains all right, title, and
-interest in the Software except for rights held by third-party licensors.
-
-5. Termination
-
-This license terminates automatically if you breach its terms. On termination,
-you must stop using and delete all copies of the Software in your possession or
-control. Sections 2 through 7 survive termination.
-
-6. Disclaimer of Warranty
-
-THE SOFTWARE IS PROVIDED "AS IS" AND "AS AVAILABLE", WITHOUT WARRANTY OF ANY
-KIND, EXPRESS OR IMPLIED, INCLUDING WARRANTIES OF MERCHANTABILITY, FITNESS FOR
-A PARTICULAR PURPOSE, TITLE, AND NON-INFRINGEMENT. YOU ASSUME ALL RISK ARISING
-FROM INSTALLATION, USE, OUTPUT, AVAILABILITY, AND PERFORMANCE OF THE SOFTWARE.
-
-7. Limitation of Liability
-
-TO THE MAXIMUM EXTENT PERMITTED BY LAW, LICENSOR WILL NOT BE LIABLE FOR ANY
-INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, CONSEQUENTIAL, OR PUNITIVE DAMAGES,
-OR FOR LOSS OF DATA, PROFITS, REVENUE, BUSINESS, OR USE, ARISING FROM OR RELATED
-TO THE SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGES. LICENSOR'S
-TOTAL LIABILITY ARISING FROM OR RELATED TO THE SOFTWARE WILL NOT EXCEED THE
-AMOUNT YOU PAID LICENSOR FOR THE SOFTWARE.
-
-If applicable law does not allow a disclaimer or limitation stated above, that
-disclaimer or limitation applies only to the maximum extent permitted.
-
-8. Entire License
-
-This document is the complete license for the Licensor-owned portions of the
-Software. Any waiver or amendment must be in writing and signed by Licensor.
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

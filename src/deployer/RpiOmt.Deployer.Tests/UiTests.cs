@@ -33,7 +33,7 @@ public sealed class AvaloniaUiTests
         Assert.IsType<ScrollViewer>(tabItems.Single(item => item.Header?.ToString() == "Wi-Fi").Content);
         Assert.IsType<ScrollViewer>(tabItems.Single(item => item.Header?.ToString() == "About").Content);
         Assert.Contains("Matthew David Miller", viewModel.CopyrightNotice, StringComparison.Ordinal);
-        Assert.Contains("PROPRIETARY SOFTWARE LICENSE", viewModel.ProjectLicense, StringComparison.Ordinal);
+        Assert.Contains("MIT License", viewModel.ProjectLicense, StringComparison.Ordinal);
         Assert.Contains("THIRD-PARTY", viewModel.ThirdPartyNotices, StringComparison.Ordinal);
         var splitters = window.GetLogicalDescendants().OfType<GridSplitter>().ToArray();
         Assert.Equal(2, splitters.Length);

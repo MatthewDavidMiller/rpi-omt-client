@@ -143,7 +143,7 @@ ENV PATH="/opt/venv/bin:${PATH}"
 
 LABEL org.opencontainers.image.title="Raspberry Pi OMT Client"
 LABEL org.opencontainers.image.version="${RPI_OMT_CLIENT_VERSION}"
-LABEL org.opencontainers.image.licenses="LicenseRef-Proprietary"
+LABEL org.opencontainers.image.licenses="MIT"
 
 USER omt
 EXPOSE ${WEB_PORT}

@@ -7,7 +7,7 @@
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
     <AssemblyTitle>Raspberry Pi OMT Client Deployer</AssemblyTitle>
     <Product>Raspberry Pi OMT Client</Product>
-    <Copyright>Copyright © 2026 Matthew David Miller. All rights reserved.</Copyright>
+    <Copyright>Copyright (c) 2026 Matthew David Miller</Copyright>
     <Version>0.0.0</Version>
     <InformationalVersion Condition="'$(RPI_OMT_CLIENT_VERSION)' == ''">unknown</InformationalVersion>
     <InformationalVersion Condition="'$(RPI_OMT_CLIENT_VERSION)' != ''">$(RPI_OMT_CLIENT_VERSION)</InformationalVersion>

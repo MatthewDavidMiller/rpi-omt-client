@@ -10,7 +10,7 @@ name = "rpi-omt-client"
 version = "0.9.28"
 description = "Raspberry Pi OMT Client web application"
 requires-python = ">=3.11"
-license = "LicenseRef-Proprietary"
+license = "MIT"
 license-files = ["LICENSE"]
 # Names only. requirements/runtime.txt holds the hash-pinned versions that the
 # image installs, so the two files cannot disagree about a version.

@@ -1,4 +1,5 @@
-// Copyright (c) 2026 Matthew David Miller. All rights reserved.
+// Copyright (c) 2026 Matthew David Miller
+// SPDX-License-Identifier: MIT
 // Playback code is derived from the MIT-licensed Open Media Transport
 // omtplayer project. See THIRD_PARTY_NOTICES.txt.
 

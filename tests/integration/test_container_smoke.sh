@@ -170,8 +170,8 @@ about_page="$(
 for required_text in \
     "Raspberry Pi OMT Client" \
     "vtest" \
-    "Copyright © 2026 Matthew David Miller. All rights reserved." \
-    "PROPRIETARY SOFTWARE LICENSE" \
+    "Copyright (c) 2026 Matthew David Miller" \
+    "MIT License" \
     "THIRD-PARTY SOFTWARE NOTICES" \
     "Open Media Transport"; do
     grep -Fq "${required_text}" <<<"${about_page}" ||

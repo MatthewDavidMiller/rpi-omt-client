@@ -65,9 +65,9 @@ third-party notices on its About tab.
 
 ## License
 
-Copyright © 2026 Matthew David Miller. All rights reserved.
+Copyright (c) 2026 Matthew David Miller
 
-The project-owned code is proprietary; see [LICENSE](LICENSE). Third-party
-components retain their own terms in
+The project-owned code is licensed under the [MIT License](LICENSE).
+Third-party components retain their own terms in
 [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt), with source availability
 details in [THIRD_PARTY_SOURCE.md](THIRD_PARTY_SOURCE.md).

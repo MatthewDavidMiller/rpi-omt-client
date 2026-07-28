@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-COPYRIGHT = "Copyright © 2026 Matthew David Miller. All rights reserved."
+COPYRIGHT = "Copyright (c) 2026 Matthew David Miller"
 
 
 def fail(message: str) -> None:
@@ -57,6 +57,7 @@ def main() -> int:
         ROOT / "src/deployer/RpiOmt.Deployer.App/BuildInformation.cs",
     ):
         require_text(path, COPYRIGHT)
+    require_text(ROOT / "LICENSE", "MIT License")
 
     for component in ("libomtnet", "libvmx", "omtplayer"):
         license_path = ROOT / f"third_party/omt/{component}/LICENSE.txt"

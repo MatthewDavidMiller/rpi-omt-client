@@ -5,7 +5,7 @@ namespace RpiOmt.Deployer.App;
 public static class BuildInformation
 {
     public const string Copyright =
-        "Copyright © 2026 Matthew David Miller. All rights reserved.";
+        "Copyright (c) 2026 Matthew David Miller";
 
     public static string Version { get; } = ResolveVersion();
 

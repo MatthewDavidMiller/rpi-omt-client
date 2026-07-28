@@ -43,8 +43,8 @@ requested and successfully validated.
 
 ## About
 
-`/about` displays the build version, exact project copyright, proprietary
-project license, and shipped dependency notices. Legal files are bounded,
+`/about` displays the build version, exact project copyright, MIT project
+license, and shipped dependency notices. Legal files are bounded,
 non-symlinked reads from the image.
 
 ## Reboot OS
