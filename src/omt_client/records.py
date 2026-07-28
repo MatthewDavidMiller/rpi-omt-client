@@ -22,6 +22,12 @@ def parse_key_value_record(
     is ignored -- the host diagnostics report carries its payload that way.
     Without it, every line must be a field, so trailing content is a rejection.
     """
+    if allow_body:
+        # Only the header is being parsed, and the payload after it can be
+        # hundreds of kilobytes. The container polls the host report at 20 Hz for
+        # as long as the host budget allows, so splitting the whole document each
+        # time to reach three fields is most of the cost of waiting for it.
+        value = value.partition("\n\n")[0]
     fields: dict[str, str] = {}
     for line in _lines(value):
         if allow_body and not line:

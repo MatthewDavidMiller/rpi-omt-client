@@ -82,6 +82,13 @@ Saving a Discovery Server that is already effective is an idempotent operation:
 the Web service preserves the existing XML and does not restart playback or
 issue another durable write.
 
+A `settings.xml` whose stored Discovery Server is not a valid one stays
+correctable from Network Settings: the stored value is reported as the fault on
+the page, and saving a good value replaces it. Only a document whose *structure*
+cannot be trusted — a foreign root element, two `DiscoveryServer` entries, a
+doctype declaration, malformed XML, or one too large to read — is refused and
+left exactly as found.
+
 ## Host firewall
 
 When an active firewall is detected, the installer permits mDNS

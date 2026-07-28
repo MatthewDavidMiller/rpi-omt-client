@@ -588,3 +588,38 @@ def test_bundle_rejects_stale_pcap_metadata_bytes(tmp_path: Path, monkeypatch):
         assert text.startswith("unavailable:")
         assert "does not match" in text
         assert "abab" not in text
+
+
+def test_the_bundle_asks_the_controller_once_and_reports_that_one_answer(
+    tmp_path: Path,
+    monkeypatch,
+):
+    """`runtime.txt` and `controller-status.txt` describe the same observation.
+
+    Running `control status` a second time spends another flock and /proc walk
+    out of the bundle budget to obtain an answer that is free to differ from the
+    first, so an archive could claim the receiver was both running and stopped.
+    """
+    diagnostics = _diagnostics(tmp_path, OMT_DIAGNOSTICS_RECEIVE_PROBE="0")
+    request = Path(diagnostics._settings.diagnostics_host_request_file)
+    request.touch(mode=0o600)
+    os.chmod(request, 0o600)
+    commands: list[str] = []
+    answers = iter(["running:41", "stopped"])
+
+    def observe(command: list[str], _timeout: float) -> CommandResult:
+        commands.append(" ".join(command))
+        stdout = next(answers, "unreachable") if command[-1] == "status" else "ok"
+        return CommandResult(command=" ".join(command), returncode=0, stdout=stdout)
+
+    monkeypatch.setattr("omt_client.services.diagnostics.run_command", observe)
+    bundle, _name = diagnostics.bundle()
+
+    assert commands.count("/control status") == 1
+    with zipfile.ZipFile(bundle) as archive:
+        controller = archive.read("controller-status.txt").decode("utf-8")
+        runtime = archive.read("runtime.txt").decode("utf-8")
+    assert controller.strip() == "running:41"
+    # The second answer was never asked for, so it cannot reach either member.
+    assert "stopped" not in runtime
+    assert "running:41" in runtime

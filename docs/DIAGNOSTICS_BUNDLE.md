@@ -17,9 +17,14 @@ The authenticated Diagnostics page creates a bounded ZIP named
 - optionally, `host-network.pcap`
 
 Missing, unsafe, or oversized inputs are represented by an `unavailable`
-record. Commands have fixed argument shapes and timeouts. The bundle may reveal
-source names, network addresses, device details, configuration, and—when
-explicitly selected—raw network packets, so inspect it before sharing.
+record. Commands have fixed argument shapes and timeouts. The controller is
+asked for its status once per bundle, so `runtime.txt` and
+`controller-status.txt` always report the same observation rather than two that
+may disagree.
+
+The bundle may reveal source names, network addresses, device details,
+configuration, and—when explicitly selected—raw network packets, so inspect it
+before sharing.
 
 Host diagnostics are collected by the root-owned
 `deploy/host/host-diagnostics.sh`. The Web process writes a bounded versioned

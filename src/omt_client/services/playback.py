@@ -32,6 +32,9 @@ class RuntimeSourcePlayback:
         self._cache_condition = threading.Condition()
         self._discovery_in_progress = False
         self._cache_generation = 0
+        # Bumped by `refresh`. A discovery carries the epoch it started under so
+        # its answer cannot be published against a later invalidation.
+        self._refresh_epoch = 0
 
     def _target(self) -> SourceTarget | None:
         return read_source_target(self._settings.source_target_file)
@@ -51,6 +54,7 @@ class RuntimeSourcePlayback:
                 if self._cache_generation != observed_generation:
                     return list(self._cache[1])
             self._discovery_in_progress = True
+            epoch = self._refresh_epoch
         try:
             result = run_command(
                 [
@@ -80,8 +84,15 @@ class RuntimeSourcePlayback:
         # the discovery itself the entry would be born expired, making every
         # dashboard render pay for another multi-second discovery.
         with self._cache_condition:
-            self._cache = (time.monotonic() + self._settings.source_cache_ttl_seconds, choices)
-            self._cache_generation += 1
+            # A refresh that arrived while this discovery was running invalidated
+            # exactly the network state it was observing, so publishing the answer
+            # now would reinstate the list the refresh was asked to discard --
+            # and, because waiters key off the generation, hand it to them as
+            # though it were the fresh one they waited for. Leave the cache
+            # expired instead; the next caller discovers again.
+            if epoch == self._refresh_epoch:
+                self._cache = (time.monotonic() + self._settings.source_cache_ttl_seconds, choices)
+                self._cache_generation += 1
             self._discovery_in_progress = False
             self._cache_condition.notify_all()
         return list(choices)
@@ -129,6 +140,7 @@ class RuntimeSourcePlayback:
     def refresh(self) -> None:
         with self._cache_condition:
             self._cache = (0.0, [])
+            self._refresh_epoch += 1
 
     def restart(self) -> ActionResult:
         try:

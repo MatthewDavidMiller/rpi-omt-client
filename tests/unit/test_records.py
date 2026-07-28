@@ -92,9 +92,41 @@ def test_a_carriage_return_stays_inside_the_value_it_belongs_to():
     }
 
 
+def test_the_body_is_never_scanned_when_it_is_allowed():
+    """Reading three header fields must not cost the size of the payload.
+
+    `services/diagnostics.py` polls the host report at 20 Hz for the whole host
+    budget, and a report carries up to 256 KiB per section. Every field-shaped
+    line below sits in the body, so a parser that reached them would both waste
+    that work and let the payload contribute fields.
+    """
+    body = "\n" + "".join(f"planted{index}=value\n" for index in range(20_000))
+
+    parsed = parse_key_value_record(RECORD + body, REQUIRED, allow_body=True)
+
+    assert parsed == {"version": "1", "request_id": "abc", "status": "complete"}
+    # A body that repeats a header field is still body, not a duplicate key.
+    assert parse_key_value_record(RECORD + "\nversion=2\n", REQUIRED, allow_body=True) == {
+        "version": "1",
+        "request_id": "abc",
+        "status": "complete",
+    }
+
+
 def test_a_blank_line_is_a_rejection_unless_a_body_is_allowed():
     assert parse_key_value_record(RECORD + "\n", REQUIRED) is None
     assert parse_key_value_record(RECORD + "\n", REQUIRED, allow_body=True) is not None
+
+
+@pytest.mark.parametrize("record", ["\n" + RECORD, "\n"])
+def test_a_record_that_opens_with_a_blank_line_carries_no_header(record):
+    """The blank line ends the header wherever it falls, including first.
+
+    A report whose header is empty has published no fields, so it can satisfy no
+    contract -- it must not be read as the body-bearing record it resembles.
+    """
+    assert parse_key_value_record(record, REQUIRED, allow_body=True) is None
+    assert parse_key_value_record(record, REQUIRED) is None
 
 
 def test_strict_json_decoder_reports_excessive_nesting_as_a_document_error():

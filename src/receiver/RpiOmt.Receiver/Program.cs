@@ -126,7 +126,13 @@ internal static class Program
                         height = frame.Height;
                         frameRate = frame.FrameRate;
                     }
-                    if (!audio && receiver.Receive(OMTFrameType.Audio, 1, ref frame))
+                    // Audio is polled cheaply while the video receive above owns
+                    // the slice, but once video has arrived nothing else blocks:
+                    // a 1 ms wait would spin this loop a thousand times a second
+                    // for the rest of the timeout against a video-only sender,
+                    // burning a core inside the support-bundle budget.
+                    if (!audio && receiver.Receive(
+                            OMTFrameType.Audio, video ? slice : 1, ref frame))
                     {
                         audio = true;
                         channels = frame.Channels;

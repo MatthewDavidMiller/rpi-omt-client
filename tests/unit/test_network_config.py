@@ -44,9 +44,16 @@ MALFORMED_DOCUMENTS = (
 )
 
 
+def stored(document: bytes, server: str) -> bytes:
+    """Update `document` and assert it actually changed, returning the new bytes."""
+    updated = update_network_configuration_xml(document, server)
+    assert updated is not None
+    return updated
+
+
 def test_network_configuration_round_trip_preserves_unmanaged_nodes():
     document = b"<Settings><Keep value='yes' /></Settings>"
-    updated = update_network_configuration_xml(document, "Discovery.EXAMPLE")
+    updated = stored(document, "Discovery.EXAMPLE")
     parsed = network_configuration_from_xml(updated)
     assert parsed["discovery_server"] == "omt://discovery.example:6399"
     assert b'<Keep value="yes"' in updated
@@ -114,10 +121,53 @@ def test_update_rejects_an_invalid_server_for_a_valid_document():
 
 
 def test_clearing_the_discovery_server_round_trips_to_empty():
-    configured = update_network_configuration_xml(empty_settings_xml(), "192.0.2.1")
-    cleared = update_network_configuration_xml(configured, "")
+    configured = stored(empty_settings_xml(), "192.0.2.1")
+    cleared = stored(configured, "")
     assert network_configuration_from_xml(cleared)["discovery_server"] == ""
     assert network_configuration_from_xml(cleared)["error"] == ""
+
+
+@pytest.mark.parametrize(
+    "document",
+    [
+        empty_settings_xml(),
+        b"<Settings />",
+        b"<Settings><DiscoveryServer /></Settings>",
+        b"<Settings><DiscoveryServer></DiscoveryServer></Settings>",
+    ],
+)
+def test_storing_the_value_a_document_already_holds_writes_nothing(document):
+    """An idempotent submission must not fsync the SD-card-backed config volume.
+
+    A document with no DiscoveryServer node is already "unset", so storing "" in
+    it is also a no-op rather than a reason to add an empty node.
+    """
+    assert update_network_configuration_xml(document, "") is None
+    configured = stored(document, "192.0.2.1")
+    assert update_network_configuration_xml(configured, "192.0.2.1") is None
+    # Normalization decides equality, so the same server spelled differently is
+    # still no change to make.
+    assert update_network_configuration_xml(configured, "omt://192.0.2.1:6399") is None
+
+
+@pytest.mark.parametrize("bad", [b"not a host!", b"omt://host:0", b"-leading.example"])
+def test_an_unusable_stored_value_can_always_be_replaced(bad):
+    """A settings.xml holding a bad server must stay correctable from the web UI.
+
+    The stored value has no normalized form, so it can equal no requested value.
+    Treating its fault as a failure to save a good one would tell the operator
+    that their valid input is invalid, and leave the file uncorrectable.
+    """
+    document = b"<Settings><DiscoveryServer>" + bad + b"</DiscoveryServer><Keep /></Settings>"
+    # The read path still reports the stored value as the problem it is.
+    with pytest.raises(OmtNetworkConfigurationError):
+        network_configuration_from_xml(document)
+
+    updated = stored(document, "192.0.2.1")
+    assert network_configuration_from_xml(updated)["discovery_server"] == "omt://192.0.2.1:6399"
+    assert b"Keep" in updated
+    # Clearing one is a change too, not a match against an equally empty value.
+    assert network_configuration_from_xml(stored(document, ""))["discovery_server"] == ""
 
 
 def test_an_empty_settings_document_reads_as_unconfigured():
@@ -141,4 +191,4 @@ def test_doctype_rejection_names_the_declaration_and_spares_comments():
     # the parse events, not the text, so it cannot be tripped by content.
     document = b"<Settings><!-- an ordinary DOCTYPE comment --><Keep /></Settings>"
     assert network_configuration_from_xml(document)["discovery_server"] == ""
-    assert b"Keep" in update_network_configuration_xml(document, "192.0.2.1")
+    assert b"Keep" in stored(document, "192.0.2.1")

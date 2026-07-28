@@ -33,6 +33,7 @@ public static class AtomicFilePublisher
             options.UnixCreateMode = PrivateMode;
         }
 
+        bool committed = false;
         try
         {
             using (FileStream stream = new(temporary, options))
@@ -41,10 +42,18 @@ public static class AtomicFilePublisher
                 stream.Flush(true);
             }
             File.Move(temporary, path, true);
+            committed = true;
         }
         finally
         {
-            File.Delete(temporary);
+            // Only an uncommitted stage needs removing. A committed one no longer
+            // exists under this name, so deleting it unconditionally spends an
+            // extra unlink on every publish -- and the receiver publishes on each
+            // state change plus a 500 ms heartbeat for as long as it plays.
+            if (!committed)
+            {
+                File.Delete(temporary);
+            }
         }
     }
 }

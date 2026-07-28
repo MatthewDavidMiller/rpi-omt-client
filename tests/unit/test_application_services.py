@@ -813,6 +813,54 @@ def test_network_save_refuses_to_overwrite_an_unreadable_document(tmp_path):
     assert config.read_bytes() == oversized
 
 
+def test_a_settings_file_holding_a_bad_server_stays_fixable_from_the_web_ui(tmp_path):
+    """The stored value's fault must not be reported as the operator's.
+
+    A settings.xml whose DiscoveryServer is not a valid server used to fail every
+    save with an error naming the *submitted* value, so the only way to recover
+    was to edit the config volume by hand.
+    """
+    settings = settings_for(tmp_path)
+    config = Path(settings.runtime_config_file)
+    config.write_text(
+        "<Settings><DiscoveryServer>not a host!</DiscoveryServer></Settings>",
+        encoding="utf-8",
+    )
+    source = mock.Mock()
+    source.configuration.return_value = ("", "")
+    network = RuntimeNetwork(settings, source)
+    assert network.read()["error"]
+
+    outcome = network.save("discovery.example")
+
+    assert outcome.ok, outcome.error
+    assert network.read() == {
+        "discovery_server": "omt://discovery.example:6399",
+        "discovery_server_text": "omt://discovery.example:6399",
+        "error": "",
+    }
+
+
+def test_a_structurally_unusable_settings_file_is_still_never_rewritten(tmp_path):
+    """Only the *value* is correctable. A document whose shape cannot be trusted
+    could hold anything, so it is left exactly as found."""
+    settings = settings_for(tmp_path)
+    config = Path(settings.runtime_config_file)
+    for document in (
+        "<Wrong />",
+        "<Settings><DiscoveryServer>a</DiscoveryServer>"
+        "<DiscoveryServer>b</DiscoveryServer></Settings>",
+        "<Settings>",
+    ):
+        config.write_text(document, encoding="utf-8")
+        network = RuntimeNetwork(settings, mock.Mock())
+
+        outcome = network.save("discovery.example")
+
+        assert not outcome.ok
+        assert config.read_text(encoding="utf-8") == document
+
+
 def test_network_round_trip_invalid_state_and_restart_failure(tmp_path, monkeypatch):
     settings = settings_for(tmp_path)
     source = RuntimeSourcePlayback(settings)
@@ -988,3 +1036,64 @@ def test_about_serves_the_legal_files_the_image_actually_ships(tmp_path):
     about = RuntimeAbout(settings)
     assert about.version() == "v9.9.9"
     assert about.legal_texts() == ("LICENCE BODY\n", "NOTICES BODY\n")
+
+
+def test_a_refresh_during_a_discovery_discards_that_discovery(tmp_path, monkeypatch):
+    """A refresh invalidates the network state an in-flight discovery is reading.
+
+    Publishing that discovery's answer afterwards would reinstate exactly the
+    list the refresh was asked to discard, and -- because waiters accept a
+    result on the strength of a changed generation -- serve it to them as the
+    fresh one they blocked for.
+    """
+    settings = settings_for(tmp_path, OMT_SOURCE_CACHE_TTL_SECONDS="300")
+    service = RuntimeSourcePlayback(settings)
+    started = threading.Event()
+    release = threading.Event()
+    answers = iter(["Before", "After"])
+
+    def run(_command, _timeout):
+        name = next(answers)
+        if name == "Before":
+            started.set()
+            assert release.wait(2)
+        return command_result(stdout=json.dumps([{"name": name, "target": name}]))
+
+    monkeypatch.setattr("omt_client.services.playback.run_command", run)
+
+    stale: list[list[str]] = []
+    first = threading.Thread(
+        target=lambda: stale.append([choice.name for choice in service.sources()])
+    )
+    first.start()
+    assert started.wait(1)
+    service.refresh()
+    release.set()
+    first.join(2)
+    assert not first.is_alive()
+
+    # The thread that started before the refresh still returns what it found.
+    assert stale == [["Before"]]
+    # But it must not have been cached: the next caller discovers again, even
+    # though the TTL is long enough that a published entry would still be live.
+    assert [choice.name for choice in service.sources()] == ["After"]
+
+
+def test_a_refresh_before_a_discovery_starts_still_caches_it(tmp_path, monkeypatch):
+    """The epoch only discards answers a refresh actually overlapped, so ordinary
+    caching -- the reason the TTL exists at all -- is untouched."""
+    settings = settings_for(tmp_path, OMT_SOURCE_CACHE_TTL_SECONDS="300")
+    service = RuntimeSourcePlayback(settings)
+    attempts = 0
+
+    def run(_command, _timeout):
+        nonlocal attempts
+        attempts += 1
+        return command_result(stdout='[{"name":"Camera","target":"Camera"}]')
+
+    monkeypatch.setattr("omt_client.services.playback.run_command", run)
+
+    service.refresh()
+    assert [choice.name for choice in service.sources()] == ["Camera"]
+    assert [choice.name for choice in service.sources()] == ["Camera"]
+    assert attempts == 1

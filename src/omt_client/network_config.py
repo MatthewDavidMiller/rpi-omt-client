@@ -93,8 +93,13 @@ def _parse_settings(value: str | bytes) -> ET.Element:
         raise OmtNetworkConfigurationError(f"OMT settings XML is invalid: {exc}") from exc
 
 
-def network_configuration_from_xml(value: str | bytes) -> dict[str, object]:
-    root = _parse_settings(value)
+def _discovery_node(root: ET.Element) -> ET.Element | None:
+    """Return the document's single DiscoveryServer node, or None when it has none.
+
+    The structural rules live here so the read and update paths cannot drift:
+    both refuse a foreign root and a document that names the server twice, which
+    is ambiguous rather than merely wrong.
+    """
     if root.tag != "Settings":
         raise OmtNetworkConfigurationError("OMT settings root must be <Settings>.")
     nodes = root.findall("DiscoveryServer")
@@ -102,7 +107,31 @@ def network_configuration_from_xml(value: str | bytes) -> dict[str, object]:
         raise OmtNetworkConfigurationError(
             "OMT settings contain duplicate DiscoveryServer entries."
         )
-    raw = nodes[0].text or "" if nodes else ""
+    return nodes[0] if nodes else None
+
+
+def _stored_server(node: ET.Element | None) -> str | None:
+    """Return the node's normalized server, or None when it does not hold one.
+
+    An absent node is "unset", which is a valid state and normalizes to "". A
+    node holding text that is not a Discovery Server has no normalized form at
+    all, so it compares equal to nothing -- see `update_network_configuration_xml`.
+    """
+    if node is None:
+        return ""
+    try:
+        return normalize_discovery_server(node.text or "")
+    except OmtNetworkConfigurationError:
+        return None
+
+
+def network_configuration_from_xml(value: str | bytes) -> dict[str, object]:
+    root = _parse_settings(value)
+    node = _discovery_node(root)
+    raw = "" if node is None else (node.text or "")
+    # The read path reports an unusable stored value to the operator rather than
+    # hiding it, so it normalizes directly instead of going through
+    # `_stored_server`, whose None means "replaceable" rather than "fine".
     server = normalize_discovery_server(raw)
     return {
         "discovery_server": server,
@@ -111,17 +140,26 @@ def network_configuration_from_xml(value: str | bytes) -> dict[str, object]:
     }
 
 
-def update_network_configuration_xml(value: str | bytes, server: str) -> bytes:
+def update_network_configuration_xml(value: str | bytes, server: str) -> bytes | None:
+    """Return the document with `server` stored, or None when it already is.
+
+    A stored value that is not a valid Discovery Server normalizes to nothing and
+    so compares equal to no requested value, which makes it always replaceable.
+    Reporting the old value's fault as a failure to save the new one would leave
+    a settings.xml that the web UI can no longer correct: the operator submits a
+    perfectly good server and is told their input is invalid.
+
+    Returning None rather than an unchanged document keeps the decision here,
+    where the current value is already known, instead of asking every caller to
+    re-read the file to avoid an fsync it does not need.
+    """
     normalized = normalize_discovery_server(server)
     root = _parse_settings(value)
-    if root.tag != "Settings":
-        raise OmtNetworkConfigurationError("OMT settings root must be <Settings>.")
-    nodes = root.findall("DiscoveryServer")
-    if len(nodes) > 1:
-        raise OmtNetworkConfigurationError(
-            "OMT settings contain duplicate DiscoveryServer entries."
-        )
-    node = nodes[0] if nodes else ET.SubElement(root, "DiscoveryServer")
+    node = _discovery_node(root)
+    if _stored_server(node) == normalized:
+        return None
+    if node is None:
+        node = ET.SubElement(root, "DiscoveryServer")
     node.text = normalized
     ET.indent(root, space="  ")
     return cast(bytes, ET.tostring(root, encoding="utf-8", xml_declaration=True)) + b"\n"

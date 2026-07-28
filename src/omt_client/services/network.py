@@ -49,15 +49,18 @@ class RuntimeNetwork:
             result = read_bytes(self._settings.runtime_config_file, SETTINGS_XML_LIMIT)
             current = empty_settings_xml() if result.status is ReadStatus.MISSING else result.data
             if result.status is not ReadStatus.MISSING and not result.ok:
+                # An oversized or unsafe document could be anything, so it is not
+                # replaced sight unseen. A document that merely holds a bad value
+                # is a different case: `update_network_configuration_xml` still
+                # refuses a structurally unusable one, but lets a correctable one
+                # be corrected.
                 raise OmtNetworkConfigurationError(result.detail or result.status.value)
-            if result.ok:
-                existing = network_configuration_from_xml(current)
-                if existing["discovery_server"] == normalized:
-                    return ActionResult(
-                        True,
-                        message="OMT discovery settings are already up to date.",
-                    )
             updated = update_network_configuration_xml(current, normalized)
+            if updated is None:
+                return ActionResult(
+                    True,
+                    message="OMT discovery settings are already up to date.",
+                )
             atomic_replace(self._settings.runtime_config_file, updated, SETTINGS_XML_LIMIT)
         except (OmtNetworkConfigurationError, OSError) as exc:
             return ActionResult(False, error=str(exc))

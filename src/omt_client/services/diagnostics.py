@@ -65,6 +65,28 @@ def _run_before_deadline(
     return run_command(command, max(0.001, remaining))
 
 
+def _runtime_report(version: CommandResult, status: CommandResult) -> DiagnosticResult:
+    """Compose the operator-facing runtime check from its two command results."""
+    output = "\n\n".join(
+        f"$ {result.command}\n{result.stdout}{result.stderr}{result.error}"
+        for result in (version, status)
+    )
+    # `--version` has one successful exit code. Controller status also uses
+    # 3 for the valid "not running" state; applying that allowance to both
+    # commands would report a broken receiver version check as healthy.
+    ok = version.returncode == 0 and status.returncode in (0, 3)
+    return DiagnosticResult(
+        "Runtime check",
+        CommandResult(
+            command="OMT runtime checks",
+            returncode=0 if ok else 1,
+            stdout=output,
+            error="" if ok else "One or more runtime checks failed.",
+            duration_seconds=version.duration_seconds + status.duration_seconds,
+        ),
+    )
+
+
 def _discovery_json(result: CommandResult) -> str:
     """Return a valid JSON member for one receiver discovery result."""
     if result.returncode == 0:
@@ -160,10 +182,18 @@ class RuntimeDiagnostics:
         return DiagnosticResult("OMT discovery check", enriched)
 
     def runtime(self) -> DiagnosticResult:
-        return self._runtime(time.monotonic() + 6)
+        return _runtime_report(*self._runtime_checks(time.monotonic() + 6))
 
-    def _runtime(self, deadline: float) -> DiagnosticResult:
-        results = [
+    def _runtime_checks(self, deadline: float) -> tuple[CommandResult, CommandResult]:
+        """Run the receiver version and controller status checks exactly once.
+
+        A support bundle reports both the runtime check and the controller status
+        as separate members. Asking the controller twice would spend a second
+        flock and /proc walk out of the bundle budget to obtain a *second*
+        observation, which is free to disagree with the first -- leaving the
+        archive contradicting itself about whether the receiver was running.
+        """
+        return (
             _run_before_deadline(
                 [self._settings.receiver_command, "--version"],
                 3,
@@ -173,24 +203,6 @@ class RuntimeDiagnostics:
                 [self._settings.control_command, "status"],
                 3,
                 deadline,
-            ),
-        ]
-        output = "\n\n".join(
-            f"$ {result.command}\n{result.stdout}{result.stderr}{result.error}"
-            for result in results
-        )
-        # `--version` has one successful exit code. Controller status also uses
-        # 3 for the valid "not running" state; applying that allowance to both
-        # commands would report a broken receiver version check as healthy.
-        ok = results[0].returncode == 0 and results[1].returncode in (0, 3)
-        return DiagnosticResult(
-            "Runtime check",
-            CommandResult(
-                command="OMT runtime checks",
-                returncode=0 if ok else 1,
-                stdout=output,
-                error="" if ok else "One or more runtime checks failed.",
-                duration_seconds=sum(result.duration_seconds for result in results),
             ),
         )
 
@@ -394,13 +406,9 @@ class RuntimeDiagnostics:
 
     def _collect_container(self, deadline: float) -> _ContainerReport:
         """Answer everything the container can see, inside the shared deadline."""
-        runtime = self._runtime(deadline).command.stdout
+        version_result, status_result = self._runtime_checks(deadline)
+        runtime = _runtime_report(version_result, status_result).command.stdout
         discovery_result = self._discovery(deadline).command
-        status_result = _run_before_deadline(
-            [self._settings.control_command, "status"],
-            self._settings.control_timeout_seconds,
-            deadline,
-        )
         source, _address = self._source.configuration()
         if self._settings.diagnostics_receive_probe and source:
             remaining = max(0.0, deadline - time.monotonic())

@@ -479,6 +479,23 @@ public sealed class RuntimePrimitiveTests : IDisposable
             () => AtomicFilePublisher.Replace("status.json", "x"u8));
     }
 
+    [Fact]
+    public void AFailedPublishLeavesNoStageBehind()
+    {
+        // A directory at the destination lets the stage be written and then
+        // fails the replacement, which is the only window in which an
+        // uncommitted stage exists. The receiver publishes for the life of a
+        // playback session, so a stage leaked per failure would accumulate in
+        // the size-capped runtime tmpfs until nothing could be published at all.
+        string target = Path.Combine(_root, "occupied");
+        Directory.CreateDirectory(target);
+
+        Assert.ThrowsAny<IOException>(
+            () => AtomicFilePublisher.Replace(target, "content"u8));
+
+        Assert.Empty(Directory.GetFiles(_root, ".occupied.*"));
+    }
+
     public void Dispose() => Directory.Delete(_root, true);
 }
 
