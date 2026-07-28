@@ -7,7 +7,7 @@ name = "rpi-omt-client"
 # The canonical release number. RPI_OMT_CLIENT_VERSION still drives the image
 # label and the About page via scripts/detect-version.sh; this is the version
 # recorded in the wheel that ships inside the appliance image.
-version = "0.9.28"
+version = "0.9.29"
 description = "Raspberry Pi OMT Client web application"
 requires-python = ">=3.11"
 license = "MIT"
