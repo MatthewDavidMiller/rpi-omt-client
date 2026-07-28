@@ -4,10 +4,9 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rpi-omt-client"
-# The canonical release number. RPI_OMT_CLIENT_VERSION still drives the image
-# label and the About page via scripts/detect-version.sh; this is the version
-# recorded in the wheel that ships inside the appliance image.
-version = "0.9.29"
+# The canonical release number. Unless explicitly overridden,
+# scripts/detect-version.sh uses this for image labels and the About page.
+version = "0.9.30"
 description = "Raspberry Pi OMT Client web application"
 requires-python = ">=3.11"
 license = "MIT"

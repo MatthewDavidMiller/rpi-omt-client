@@ -56,7 +56,25 @@ assert_equals "0.2.0" \
     "Release directory without a v-prefix is detected"
 
 mkdir -p "${tmpdir}/rpi-omt-client-main"
+printf '%s\n' \
+    '[build-system]' \
+    'version = "not-the-project-version"' \
+    '' \
+    '[project]' \
+    'version = "4.5.6"' >"${tmpdir}/rpi-omt-client-main/pyproject.toml"
+git -C "${tmpdir}/rpi-omt-client-main" init --quiet
+git -C "${tmpdir}/rpi-omt-client-main" \
+    -c user.name="Version Test" \
+    -c user.email="version-test@example.invalid" \
+    commit --allow-empty --quiet --message="test"
+git -C "${tmpdir}/rpi-omt-client-main" tag v4.5.5
 actual="$("${DETECT_VERSION}" "${tmpdir}/rpi-omt-client-main")"
+assert_equals "v4.5.6" \
+    "${actual}" \
+    "Canonical project version wins over an existing tag"
+
+mkdir -p "${tmpdir}/rpi-omt-client-main-no-version"
+actual="$("${DETECT_VERSION}" "${tmpdir}/rpi-omt-client-main-no-version")"
 assert_equals "unknown" \
     "${actual}" \
     "Non-release archive directory falls back to unknown"

@@ -10,6 +10,22 @@ if [[ -n "${RPI_OMT_CLIENT_VERSION:-}" ]]; then
     exit 0
 fi
 
+project_file="${PROJECT_ROOT}/pyproject.toml"
+if [[ -f "${project_file}" ]]; then
+    if project_version="$(
+        python3 -c '
+import sys
+import tomllib
+
+with open(sys.argv[1], "rb") as project_file:
+    print(tomllib.load(project_file).get("project", {}).get("version", ""))
+' "${project_file}" 2>/dev/null
+    )" && [[ "${project_version}" =~ ^v?[0-9]+(\.[0-9]+){1,2}([._-][0-9A-Za-z][0-9A-Za-z._-]*)?$ ]]; then
+        printf 'v%s\n' "${project_version#v}"
+        exit 0
+    fi
+fi
+
 if git -C "${PROJECT_ROOT}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     if version="$(git -C "${PROJECT_ROOT}" describe --tags --exact-match 2>/dev/null)" \
         && [[ -n "${version}" ]]; then

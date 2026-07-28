@@ -1,7 +1,7 @@
 # Architecture
 
-The appliance is a clean OMT implementation. Shipped artifacts contain no NDI
-SDK, `libndi`, NDI plugin, or GStreamer runtime.
+The appliance is a clean OMT implementation built around `libomtnet` and
+`libvmx`.
 
 ```text
 OMT network
@@ -71,7 +71,7 @@ field can select a command or argument.
 The external `omt-config` volume contains credentials, sessions,
 `source_target.json`, OMT `settings.xml`, TLS material, and the receiver log.
 Source state is one atomic schema-versioned record, not a pair of files. The
-installer never migrates legacy NDI state.
+installer never migrates state from incompatible predecessor installations.
 
 Per-boot state is kept off that volume. The control lock, PID record, and
 published playback status live in `$OMT_RUNTIME_DIR`, a size-capped tmpfs

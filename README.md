@@ -36,8 +36,8 @@ make deploy HOST=pi@192.168.1.50
 ```
 
 The installer prints the authoritative HTTPS URL and initial password
-instructions. A legacy NDI Client install must be uninstalled first; this
-release does not alter or migrate legacy state.
+instructions. An incompatible predecessor installation must be uninstalled
+first; this release does not alter or migrate predecessor state.
 
 ## Operator UI
 

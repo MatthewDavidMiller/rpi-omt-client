@@ -10,7 +10,7 @@ PROJECT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 IMAGE_NAME="${IMAGE_NAME:-omt-client}"
 ARM64_TARBALL="${ARM64_TARBALL:-${PROJECT_ROOT}/omt-client-arm64.tar.gz}"
 BUILD_METADATA_DIR="${BUILD_METADATA_DIR:-${PROJECT_ROOT}/.build}"
-RPI_OMT_CLIENT_VERSION="${RPI_OMT_CLIENT_VERSION:-unknown}"
+RPI_OMT_CLIENT_VERSION="${RPI_OMT_CLIENT_VERSION:-$("${PROJECT_ROOT}/scripts/detect-version.sh" "${PROJECT_ROOT}")}"
 
 artifact_directory="$(dirname -- "${ARM64_TARBALL}")"
 artifact_name="$(basename -- "${ARM64_TARBALL}")"

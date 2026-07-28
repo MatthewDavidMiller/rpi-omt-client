@@ -59,8 +59,8 @@ including:
 
 Run `sudo ./deploy/host/install.sh`. Before changing the host it rejects
 non-ARM64 systems, unsafe install paths, missing capsule files, and any
-detected legacy NDI service/state/container/volume. Legacy NDI state is neither
-deleted nor migrated.
+detected incompatible predecessor service, state directory, container, or
+volume. Predecessor state is neither deleted nor migrated.
 
 The installer:
 
@@ -96,4 +96,4 @@ target schema 1 are preserved.
 
 Run `sudo ./deploy/host/uninstall.sh` to remove services and image. The script
 asks before removing the install directory and `omt-config`. It does not
-remove any legacy NDI installation or data.
+remove unrelated predecessor installations or data.

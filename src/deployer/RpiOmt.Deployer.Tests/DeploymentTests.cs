@@ -46,6 +46,43 @@ public sealed class VersionAndKnownHostTests
     }
 
     [Fact]
+    public async Task VersionDetectionPrefersCanonicalProjectVersionOverExistingTag()
+    {
+        var projectRoot = Path.Combine(
+            Path.GetTempPath(),
+            $"rpi-omt-version-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(projectRoot);
+        try
+        {
+            await File.WriteAllTextAsync(
+                Path.Combine(projectRoot, "pyproject.toml"),
+                """
+                [build-system]
+                version = "not-the-project-version"
+
+                [project]
+                version = "4.5.6"
+                """,
+                TestContext.Current.CancellationToken);
+            var runner = new ScriptedRunner();
+            runner.Results.Enqueue(new CommandResult("git", 0, "true\n"));
+            runner.Results.Enqueue(new CommandResult("git", 0, "v4.5.5\n"));
+
+            var version = await new VersionDetector(runner).DetectAsync(
+                projectRoot,
+                new Dictionary<string, string?>(),
+                TestContext.Current.CancellationToken);
+
+            Assert.Equal("v4.5.6", version);
+            Assert.Empty(runner.Calls);
+        }
+        finally
+        {
+            Directory.Delete(projectRoot, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task KnownHostsLookupUsesOpenSshOutputAndRejectsUnknown()
     {
         var knownHosts = Path.GetTempFileName();

@@ -1,8 +1,11 @@
+using System.Text.RegularExpressions;
+
 namespace RpiOmt.Deployer.Core;
 
-public sealed class VersionDetector(ICommandRunner commandRunner)
+public sealed partial class VersionDetector(ICommandRunner commandRunner)
 {
     private static readonly TimeSpan GitTimeout = TimeSpan.FromSeconds(10);
+    private const long MaximumProjectMetadataBytes = 64 * 1024;
 
     public async Task<string> DetectAsync(
         string projectRoot,
@@ -16,6 +19,12 @@ public sealed class VersionDetector(ICommandRunner commandRunner)
             !string.IsNullOrWhiteSpace(explicitVersion))
         {
             return explicitVersion.Trim();
+        }
+
+        var projectVersion = ReadProjectVersion(projectRoot);
+        if (projectVersion is not null)
+        {
+            return projectVersion;
         }
 
         try
@@ -50,4 +59,61 @@ public sealed class VersionDetector(ICommandRunner commandRunner)
         var match = Shell.SourceDirectoryVersionPattern().Match(directoryName);
         return match.Success ? match.Groups[1].Value : "unknown";
     }
+
+    private static string? ReadProjectVersion(string projectRoot)
+    {
+        var projectFile = Path.Combine(Path.GetFullPath(projectRoot), "pyproject.toml");
+
+        try
+        {
+            var projectFileInfo = new FileInfo(projectFile);
+            if (!projectFileInfo.Exists || projectFileInfo.Length > MaximumProjectMetadataBytes)
+            {
+                return null;
+            }
+
+            var inProjectSection = false;
+            foreach (var line in File.ReadLines(projectFile))
+            {
+                var trimmedLine = line.Trim();
+                if (trimmedLine.StartsWith('['))
+                {
+                    inProjectSection = trimmedLine.Equals("[project]", StringComparison.Ordinal);
+                    continue;
+                }
+
+                if (!inProjectSection)
+                {
+                    continue;
+                }
+
+                var match = ProjectVersionPattern().Match(trimmedLine);
+                if (!match.Success)
+                {
+                    continue;
+                }
+
+                var version = match.Groups[1].Success
+                    ? match.Groups[1].Value
+                    : match.Groups[2].Value;
+                if (!Shell.VersionPattern().IsMatch(version))
+                {
+                    return null;
+                }
+
+                return version.StartsWith('v') ? version : $"v{version}";
+            }
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+
+        return null;
+    }
+
+    [GeneratedRegex(
+        "^version\\s*=\\s*(?:\"([^\"]+)\"|'([^']+)')\\s*(?:#.*)?$",
+        RegexOptions.CultureInvariant)]
+    private static partial Regex ProjectVersionPattern();
 }

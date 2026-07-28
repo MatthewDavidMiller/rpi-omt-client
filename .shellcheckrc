@@ -1,4 +1,4 @@
-# ShellCheck configuration for rpi-ndi-client
+# ShellCheck configuration for Raspberry Pi OMT Client
 # https://github.com/koalaman/shellcheck/wiki/Directive
 
 # Default shell is bash

@@ -34,7 +34,10 @@
 diagnostics page, and the `version.txt` member of a support bundle all read it
 through that one service, so an archive cannot name a different build than the
 UI that produced it. `DiagnosticsService` therefore has no `version()` of its
-own; `RuntimeDiagnostics` receives the About service instead.
+own; `RuntimeDiagnostics` receives the About service instead. Build entry
+points prefer an explicit `RPI_OMT_CLIENT_VERSION`, then the canonical version
+in `pyproject.toml`, before falling back to release metadata from Git or a
+versioned source directory.
 
 `deploy/Dockerfile` builds a wheel from the `packages` list in `pyproject.toml`
 and installs it into `/opt/venv`, so the appliance imports `omt_client` from
