@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "rpi-omt-client"
 # The canonical release number. Unless explicitly overridden,
 # scripts/detect-version.sh uses this for image labels and the About page.
-version = "0.9.34"
+version = "0.9.35"
 description = "Raspberry Pi OMT Client web application"
 requires-python = ">=3.11"
 license = "MIT"

@@ -22,8 +22,8 @@ routes, diagnostics, and runtime adapters at a 98% branch-coverage floor.
 
 `make test-receiver` performs locked restore, analyzer-enabled builds, shared
 validation vectors, playback state/order tests, heartbeat publication, atomic
-file publication, and synthetic DRM connector selection at a 95% receiver-core
-branch floor.
+file publication, bounded HDMI hotplug probe cadence, and synthetic DRM
+connector selection at a 95% receiver-core branch floor.
 
 `make test-deployer` performs locked restore, formatting/analyzers, unit and
 headless Avalonia tests, and 95% coverage. Its integration tier executes the

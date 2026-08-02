@@ -15,6 +15,8 @@ public sealed class PlaybackStateModel
     private string _audioState = "stopped";
     private string _videoDetail = "Playback stopped.";
     private string _audioDetail = "";
+    private PlaybackProjection _projection =
+        new("stopped", "stopped", "stopped", "Playback stopped.");
 
     public PlaybackProjection Snapshot()
     {
@@ -96,21 +98,47 @@ public sealed class PlaybackStateModel
 
     private PlaybackProjection Project()
     {
+        string state;
+        string videoState;
+        string audioState;
+        string detail;
         if (_videoState == "running")
         {
             if (_audioState == "failed")
             {
-                return new(
-                    "degraded",
-                    "running",
-                    "failed",
-                    string.IsNullOrEmpty(_audioDetail)
-                        ? "Video is playing but audio is unavailable."
-                        : _audioDetail);
+                state = "degraded";
+                videoState = "running";
+                audioState = "failed";
+                detail = string.IsNullOrEmpty(_audioDetail)
+                    ? "Video is playing but audio is unavailable."
+                    : _audioDetail;
             }
-            return new("running", "running", _audioState, _videoDetail);
+            else
+            {
+                state = "running";
+                videoState = "running";
+                audioState = _audioState;
+                detail = _videoDetail;
+            }
         }
-        return new(_videoState, _videoState, _audioState, _videoDetail);
+        else
+        {
+            state = _videoState;
+            videoState = _videoState;
+            audioState = _audioState;
+            detail = _videoDetail;
+        }
+
+        if (_projection.State == state &&
+            _projection.VideoState == videoState &&
+            _projection.AudioState == audioState &&
+            _projection.Detail == detail)
+        {
+            return _projection;
+        }
+
+        _projection = new(state, videoState, audioState, detail);
+        return _projection;
     }
 }
 

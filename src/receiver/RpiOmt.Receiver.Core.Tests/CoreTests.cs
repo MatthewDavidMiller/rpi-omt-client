@@ -211,6 +211,24 @@ public sealed class CoreTests
     }
 
     [Fact]
+    public void UnchangedFrameAndAudioEventsReuseTheirStatusProjection()
+    {
+        PlaybackStateModel model = new();
+        PlaybackProjection video = model.VideoRunning("Playing OMT video.");
+
+        for (int frame = 0; frame < 120; frame++)
+        {
+            Assert.Same(video, model.VideoRunning("Playing OMT video."));
+            Assert.Same(video, model.Snapshot());
+        }
+
+        PlaybackProjection audio = model.AudioRunning("Playing OMT video and audio.");
+        Assert.NotSame(video, audio);
+        Assert.Same(audio, model.AudioRunning("Playing OMT video and audio."));
+        Assert.Same(audio, model.Snapshot());
+    }
+
+    [Fact]
     public void StatusSerializationUsesTheSchemaBoundary()
     {
         DateTimeOffset now = DateTimeOffset.Parse(
@@ -508,6 +526,60 @@ public sealed class HdmiConnectorTests : IDisposable
     private string DeviceRoot => Path.Combine(_root, "dev");
 
     private HdmiConnectorLocator Locator => new(DrmRoot, DeviceRoot);
+
+    [Fact]
+    public void ConnectionMonitorBoundsSysfsProbesInAFrameRateLoop()
+    {
+        long now = 0;
+        int probes = 0;
+        bool connected = true;
+        TimeSpan interval = TimeSpan.FromMilliseconds(500);
+        HdmiConnectionMonitor monitor = new(
+            () =>
+            {
+                probes++;
+                return connected;
+            },
+            interval,
+            () => now);
+
+        // Many video frames inside one interval share the first probe rather
+        // than opening status and connector_id twice for every frame.
+        for (int frame = 0; frame < 120; frame++)
+        {
+            Assert.True(monitor.IsConnected());
+        }
+        Assert.Equal(1, probes);
+
+        now += System.Diagnostics.Stopwatch.Frequency * interval.Ticks /
+            TimeSpan.TicksPerSecond - 1;
+        connected = false;
+        Assert.True(monitor.IsConnected());
+        Assert.Equal(1, probes);
+
+        now++;
+        Assert.False(monitor.IsConnected());
+        Assert.Equal(2, probes);
+    }
+
+    [Fact]
+    public void ConnectionMonitorChecksImmediatelyAndRejectsInvalidIntervals()
+    {
+        int probes = 0;
+        HdmiConnectionMonitor monitor = new(
+            () =>
+            {
+                probes++;
+                return false;
+            });
+
+        Assert.False(monitor.IsConnected());
+        Assert.Equal(1, probes);
+        Assert.True(HdmiConnectionMonitor.DefaultProbeInterval <= TimeSpan.FromMilliseconds(500));
+        Assert.Throws<ArgumentNullException>(() => new HdmiConnectionMonitor(null!));
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => new HdmiConnectionMonitor(() => true, TimeSpan.Zero));
+    }
 
     [Fact]
     public void AutoPrefersTheFirstConnectedOutputAndItsAlsaDevice()

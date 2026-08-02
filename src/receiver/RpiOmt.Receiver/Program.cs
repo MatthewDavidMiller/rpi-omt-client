@@ -266,11 +266,12 @@ internal static class Program
         double frameRate = 0;
         bool interlaced = false;
         long lastFrame = Stopwatch.GetTimestamp();
+        HdmiConnectionMonitor connection = new(selection.IsConnected);
 
         try
         {
             status.VideoStarting("Waiting for OMT media.", selection);
-            while (_running && selection.IsConnected())
+            while (_running && connection.IsConnected())
             {
                 if (!receiver.Receive(OMTFrameType.Video, 500, ref frame))
                 {

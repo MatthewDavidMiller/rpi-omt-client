@@ -58,6 +58,12 @@ forbid 'OMT_ALLOW_EMULATED_PI' "production Pi 5 validation must not have an envi
 
 require '90-omt-client-hardening\.conf' "sysctl and SSH hardening must be managed"
 require 'kernel\.unprivileged_bpf_disabled=1' "unprivileged BPF must be disabled"
+require 'vm\.page-cluster=0' "zram swap-in must avoid unnecessary read-ahead"
+require 'vm\.swappiness=100' "compressed swap must be preferred over reclaim pressure"
+require 'ZRAM_MIB=\$\(\(MEMTOTAL_KIB / 4096\)\)' "zram must scale to one quarter of installed RAM"
+require 'ZRAM_MIB >= 128' "zram must retain its low-memory minimum"
+require 'ZRAM_MIB <= 512' "zram must retain its bounded maximum"
+require 'rc-update add zram-init default' "zram must remain enabled across boots"
 require 'no-new-privileges' "Docker daemon must default to no-new-privileges"
 require 'userland-proxy.*false' "Docker userland proxy must be disabled"
 require 'PermitRootLogin prohibit-password' "root password SSH must be disabled"

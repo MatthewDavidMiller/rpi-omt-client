@@ -42,8 +42,12 @@ Playback supports either Pi HDMI connector. A missing, unreadable, or
 half-populated DRM tree reads as "no display connected", so the play loop
 reports `waiting-for-hdmi` and retries instead of exiting. Frames over
 1920×1080 or 60 fps are reported as `unsupported-format`. Interlaced input is
-presented progressively without deinterlacing. Audio failure degrades playback
-while video continues.
+presented progressively without deinterlacing. During playback, connector
+hotplug state is sampled at a bounded 500 ms cadence instead of reopening two
+sysfs attributes for every decoded frame. Unchanged video/audio events reuse
+their status projection rather than allocating per frame; publication still
+occurs immediately on change and at the 500 ms heartbeat. Audio failure
+degrades playback while video continues.
 
 ## Container and host boundary
 

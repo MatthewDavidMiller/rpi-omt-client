@@ -24,6 +24,59 @@ public sealed record HdmiConnector(
 }
 
 /// <summary>
+/// Bounds sysfs hotplug probes while preserving prompt disconnect detection.
+/// </summary>
+/// <remarks>
+/// The video loop runs once per decoded frame. Reading both connector sysfs
+/// attributes on every iteration would open and close roughly 120 files per
+/// second at 60 fps even though hotplug state only needs sub-second precision.
+/// Cache a positive result for one short interval; a negative result is still
+/// returned as soon as the next scheduled probe runs and ends the session.
+/// </remarks>
+public sealed class HdmiConnectionMonitor
+{
+    public static readonly TimeSpan DefaultProbeInterval = TimeSpan.FromMilliseconds(500);
+
+    private readonly Func<bool> _probe;
+    private readonly TimeSpan _interval;
+    private readonly Func<long> _clock;
+    private bool _hasResult;
+    private bool _connected;
+    private long _checkedAt;
+
+    public HdmiConnectionMonitor(
+        Func<bool> probe,
+        TimeSpan? interval = null,
+        Func<long>? clock = null)
+    {
+        ArgumentNullException.ThrowIfNull(probe);
+        _interval = interval ?? DefaultProbeInterval;
+        if (_interval <= TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(nameof(interval));
+        }
+
+        _probe = probe;
+        _clock = clock ?? System.Diagnostics.Stopwatch.GetTimestamp;
+    }
+
+    public bool IsConnected()
+    {
+        long now = _clock();
+        if (_hasResult &&
+            System.Diagnostics.Stopwatch.GetElapsedTime(_checkedAt, now) < _interval)
+        {
+            return _connected;
+        }
+
+        _connected = _probe();
+        _checkedAt = now;
+        _hasResult = true;
+        return _connected;
+    }
+}
+
+/// <summary>
 /// Resolves an HDMI connector preference against the DRM sysfs tree. The roots
 /// are injectable so the selection rules can be tested without Pi hardware.
 /// </summary>
