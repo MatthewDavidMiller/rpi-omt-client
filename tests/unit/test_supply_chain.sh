@@ -147,12 +147,27 @@ else
     fail "Python audit has exactly two retained lock scopes"
 fi
 
-assert_literal "${PROJECT_ROOT}/deploy/Dockerfile" 'dotnet publish src/receiver/RpiOmt.Receiver/RpiOmt.Receiver.csproj' "Container builds the pinned OMT receiver"
+assert_literal "${PROJECT_ROOT}/scripts/build-native-receiver.sh" 'dotnet publish src/receiver/RpiOmt.Receiver/RpiOmt.Receiver.csproj' "Container builds the pinned OMT receiver"
+assert_literal "${PROJECT_ROOT}/deploy/Dockerfile" 'sdk:10.0-alpine3.23-aot@${DOTNET_SDK_ALPINE_AOT_DIGEST}' "Container uses the pinned NativeAOT SDK image"
+assert_literal "${PROJECT_ROOT}/deploy/Dockerfile" 'FROM --platform=linux/amd64' "NativeAOT compiler stays on its stable amd64 host"
+assert_literal "${PROJECT_ROOT}/deploy/Dockerfile" 'apk add --no-cache binutils-aarch64' "Cross-compiler installs target-compatible ARM64 binutils"
+assert_literal "${PROJECT_ROOT}/scripts/build-native-receiver.sh" '-p:SysRoot="${target_sysroot}"' "ARM64 NativeAOT compilation uses a target sysroot"
+assert_literal "${PROJECT_ROOT}/scripts/build-native-receiver.sh" '--target=aarch64-alpine-linux-musl' "libvmx cross-compiles for Alpine ARM64"
+assert_literal "${PROJECT_ROOT}/deploy/Dockerfile" 'FROM scratch AS receiver-artifacts' "Receiver artifact export omits the SDK and compiler toolchain"
+assert_literal "${PROJECT_ROOT}/tests/integration/test_docker_build.sh" 'MAX_RUNTIME_IMAGE_BYTES=$((128 * 1024 * 1024))' "Container integration enforces the runtime image size budget"
+assert_literal "${PROJECT_ROOT}/tests/integration/test_docker_build.sh" 'MAX_ARM64_ARTIFACT_IMAGE_BYTES=$((64 * 1024 * 1024))' "Container integration enforces the ARM64 artifact size budget"
 assert_literal "${PROJECT_ROOT}/src/receiver/RpiOmt.Receiver/packages.lock.json" '"libomtnet"' "Receiver NuGet graph is locked"
 assert_literal "${PROJECT_ROOT}/deploy/Dockerfile" '--require-hashes' "Container Python install is hash locked"
 assert_literal "${PROJECT_ROOT}/deploy/Dockerfile" 'runtime-sbom.cdx.json' "Container emits a runtime SBOM"
 assert_literal "${PROJECT_ROOT}/scripts/security-scan.sh" '--skip-files vars.yml' "Security scan does not inspect sensitive vars.yml"
 assert_literal "${PROJECT_ROOT}/src/deployer/RpiOmt.Deployer.Core/ImageBuildService.cs" 'tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0' "Deployer pins the privileged binfmt image"
+assert_executable "${PROJECT_ROOT}/scripts/install-arm64-emulation.sh" "ARM64 emulation bootstrap is executable"
+assert_literal "${PROJECT_ROOT}/scripts/install-arm64-emulation.sh" 'docker.io/tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0' "Linux ARM64 bootstrap pins its emulator image"
+assert_literal "${PROJECT_ROOT}/scripts/install-arm64-emulation.sh" '1ad17b7bd5e15ce60075d0994d5c5e3914d16899a1e3119040b5c9e76e067f24' "Linux ARM64 bootstrap verifies the emulator binary"
+assert_literal "${PROJECT_ROOT}/scripts/install-arm64-emulation.sh" 'systemctl restart systemd-binfmt.service' "Linux ARM64 bootstrap persists registration with systemd-binfmt"
+assert_literal "${PROJECT_ROOT}/scripts/arm64-binfmt.conf" '/usr/local/bin/qemu-aarch64-static:POCF' "ARM64 binfmt rule uses the host emulator and fix-binary flag"
+assert_literal "${PROJECT_ROOT}/scripts/install-dev-deps.sh" '"${SCRIPT_DIR}/install-arm64-emulation.sh"' "Developer install enables ARM64 emulation"
+assert_literal "${PROJECT_ROOT}/scripts/test-local.sh" 'export REQUIRE_ARM64_BUILD=1' "Full local gate requires the ARM64 builder"
 
 audit_test_dir="$(mktemp -d)"
 trap 'rm -rf "${audit_test_dir}"' EXIT

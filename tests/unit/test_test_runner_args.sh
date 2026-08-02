@@ -54,13 +54,18 @@ echo "PASS: every tests/unit shell suite is wired into the runner"
 stub_paths=(
     scripts/lint.sh
     tools/test-receiver.sh
-    tests/integration/test_docker_build.sh
     tests/integration/test_container_smoke.sh
     tests/integration/test_omt_network.sh
 )
 for suite in "${PROJECT_ROOT}"/tests/unit/*.sh; do
     stub_paths+=("tests/unit/$(basename -- "${suite}")")
 done
+
+cat > "${fixture_root}/tests/integration/test_docker_build.sh" <<'EOF'
+#!/bin/bash
+printf '%s\n' "${REQUIRE_ARM64_BUILD:-unset}" > "${ARM64_REQUIRE_LOG}"
+EOF
+chmod +x "${fixture_root}/tests/integration/test_docker_build.sh"
 for stub_path in "${stub_paths[@]}"; do
     ln -s /bin/true "${fixture_root}/${stub_path}"
 done
@@ -120,17 +125,22 @@ run_container_mode() {
     [[ "${mode}" == "full" ]] && mode_args=(--full)
     (
         cd "${outside_dir}"
+        unset REQUIRE_ARM64_BUILD
         PATH="${fixture_root}/test-bin:${PATH}" \
             CONTAINER_ENGINE=docker \
+            ARM64_REQUIRE_LOG="${case_dir}/${mode}-arm64" \
             EXPECTED_PROJECT_ROOT="${fixture_root}" \
             PROBE_RESULT="${probe_result}" \
             CHECK_DEPLOYER_LOG="${log_file}" \
             "${fixture_root}/scripts/test-local.sh" "${mode_args[@]}" \
             > "${case_dir}/${mode}-output" 2>&1
     )
+    local expected_arm64=unset
+    [[ "${mode}" == "full" ]] && expected_arm64=1
     if [[ "$(wc -l < "${log_file}")" -eq 2 ]] &&
        grep -Fxq -- '--publish' "${log_file}" &&
-       grep -Fxq -- '--integration-only' "${log_file}"; then
+       grep -Fxq -- '--integration-only' "${log_file}" &&
+       grep -Fxq -- "${expected_arm64}" "${case_dir}/${mode}-arm64"; then
         echo "PASS: ${mode} mode publishes and runs Pi-userland integration"
     else
         echo "FAIL: ${mode} mode deployer contract changed" >&2

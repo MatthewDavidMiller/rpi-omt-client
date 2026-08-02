@@ -130,6 +130,9 @@ echo "=== Pi OS Userland Integration ==="
 "${PROJECT_ROOT}/scripts/check-deployer.sh" --integration-only
 echo -e "${GREEN}PASSED${NC}: Pi OS userland integration"
 echo ""
+if [[ "${FULL_MODE}" == "true" ]]; then
+    export REQUIRE_ARM64_BUILD=1
+fi
 run_test "Container Image Build" "${PROJECT_ROOT}/tests/integration/test_docker_build.sh"
 
 if [[ "${FULL_MODE}" == "true" ]]; then

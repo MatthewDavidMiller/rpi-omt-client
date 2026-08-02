@@ -1,9 +1,10 @@
 # Testing
 
-Bootstrap pinned Python and .NET tooling once:
+Bootstrap the system dependencies, persistent ARM64 emulation, pinned Python
+tools, and the repository-local .NET SDK once:
 
 ```bash
-make test-setup
+make install
 ```
 
 Use the narrowest relevant gate:
@@ -52,11 +53,34 @@ of hanging the gate.
 wired into it.
 
 The normal `make test` adds an amd64 image build. Full mode adds container smoke
-and OMT receiver discovery/probe checks. Pi-only validation still must cover
+and OMT receiver discovery/probe checks and requires the ARM64 receiver builder
+stage to pass. Pi-only validation still must cover
 real DRM/ALSA, HDMI hotplug, 1080p60 media, audio degradation, service boot,
-and an acknowledged Web reboot. The image-build integration test also checks
-the ARM64 receiver artifacts when ARM64 emulation is registered; set
-`REQUIRE_ARM64_BUILD=1` to make missing emulation a failure.
+and an acknowledged Web reboot.
+
+The multi-stage container uses Microsoft's Alpine NativeAOT SDK only while
+building the receiver. The .NET 10 ILC process stays on amd64 and
+cross-compiles against an ARM64 Alpine sysroot. Under emulation, running the
+compiler itself on ARM64 produced both a parallel-scanner access violation and
+a single-threaded signature-parser failure; native Raspberry Pi compilation
+was also reported to fail. The supported build path is therefore the x86-64
+development or release VM, while the Pi consumes the resulting image as the
+deployment/runtime target. After publish, NuGet packages and `bin`/`obj` trees
+are removed, and a `scratch` artifact stage exports only `omt-receiver` and
+`libvmx.so`. The integration gate caps that artifact image at 64 MiB and the
+deployable Alpine runtime at 128 MiB; the SDK/compiler stage is never shipped
+to the Pi.
+
+On a systemd-based Linux x86-64 development VM, `make install` installs Podman
+and runs `make setup-arm64-emulation`. The setup extracts `qemu-aarch64` from a
+digest-pinned `tonistiigi/binfmt` image, verifies the extracted binary hash,
+installs it as `/usr/local/bin/qemu-aarch64-static`, and installs a
+`systemd-binfmt` rule under `/etc/binfmt.d`. This is a host-level setup and
+therefore requires sudo, a running systemd instance with `binfmt_misc`, and a
+working Podman or Docker engine. The rule is restored on every boot and works
+with rootless containers on SELinux hosts. Run `make setup-arm64-emulation`
+again to repair or verify the registration. Docker Desktop users rely on its
+Linux VM and should keep that engine running instead.
 
 ## Shared cross-language vectors
 

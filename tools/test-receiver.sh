@@ -19,13 +19,16 @@ export DOTNET_CLI_HOME="${PROJECT_ROOT}/.build/dotnet-home"
 export NUGET_PACKAGES="${PROJECT_ROOT}/.build/nuget-packages"
 export DOTNET_NOLOGO=1
 
-"${DOTNET}" restore "${TESTS}" --locked-mode \
+# Keep restore graph evaluation serial. The receiver graph includes the
+# third-party libomtnet project; parallel MSBuild restore can terminate its
+# child process without reporting an actionable diagnostic on constrained VMs.
+"${DOTNET}" restore "${TESTS}" --locked-mode -m:1 -p:RestoreDisableParallel=true \
     -p:NuGetAudit=true -p:NuGetAuditMode=all -p:TreatWarningsAsErrors=true
-"${DOTNET}" restore "${RECEIVER}" --locked-mode \
+"${DOTNET}" restore "${RECEIVER}" --locked-mode -m:1 -p:RestoreDisableParallel=true \
     -p:NuGetAudit=true -p:NuGetAuditMode=all -p:TreatWarningsAsErrors=true
-"${DOTNET}" build "${CORE}" --no-restore -c Release \
+"${DOTNET}" build "${CORE}" --no-restore -c Release -m:1 \
     -p:TreatWarningsAsErrors=true
-"${DOTNET}" build "${RECEIVER}" --no-restore -c Release \
+"${DOTNET}" build "${RECEIVER}" --no-restore -c Release -m:1 \
     -p:TreatWarningsAsErrors=true
 "${DOTNET}" test "${TESTS}" --no-restore -c Release \
     --settings "${PROJECT_ROOT}/src/receiver/RpiOmt.Receiver.Core.Tests/coverage.runsettings" \

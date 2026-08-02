@@ -1,45 +1,49 @@
-ARG DOTNET_SDK_ALPINE_DIGEST=sha256:d8ee39817ca03a3757288e83c37ed73cc969a286c603b827c7cbe33add1c2d1c
+ARG DOTNET_SDK_ALPINE_AOT_DIGEST=sha256:804af59ab9617c61c0a7f57d548c76e436d4c32e36c77c006aa8064c608f70fb
 ARG ALPINE_DIGEST=sha256:fd791d74b68913cbb027c6546007b3f0d3bc45125f797758156952bc2d6daf40
+ARG TARGETARCH
 
-# NativeAOT and libvmx are compiled natively for the target platform. ARM64
-# builds therefore use the repository's checked buildx/QEMU prerequisite.
-FROM --platform=$TARGETPLATFORM mcr.microsoft.com/dotnet/sdk:10.0-alpine3.23@${DOTNET_SDK_ALPINE_DIGEST} AS receiver-builder
+# The official NativeAOT SDK already includes Clang, binutils, musl headers,
+# and zlib headers. Keep the compiler on amd64: the .NET 10 ARM64-hosted ILC
+# failed under QEMU, and native Raspberry Pi compilation was also reported to
+# fail. It emits ARM64 code against the small target sysroot below instead.
+# hadolint ignore=DL3029
+FROM --platform=linux/amd64 mcr.microsoft.com/dotnet/sdk:10.0-alpine3.23-aot@${DOTNET_SDK_ALPINE_AOT_DIGEST} AS receiver-builder-base
 
 SHELL ["/bin/ash", "-eo", "pipefail", "-c"]
 
-ARG TARGETARCH
 ARG RPI_OMT_CLIENT_VERSION=unknown
 
-RUN apk add --no-cache build-base clang zlib-dev
+RUN apk add --no-cache binutils-aarch64
 
 WORKDIR /src
 COPY Directory.Build.props global.json ./
 COPY src/receiver/ src/receiver/
 COPY third_party/omt/ third_party/omt/
+COPY scripts/build-native-receiver.sh /usr/local/bin/build-native-receiver
 
-# hadolint ignore=SC2016
-RUN mkdir -p /out/native \
-    && if [ "${TARGETARCH}" = "arm64" ]; then \
-        clang++ -O3 -std=c++17 -fdeclspec -fPIC -shared \
-            third_party/omt/libvmx/src/vmxcodec_arm.cpp \
-            third_party/omt/libvmx/src/vmxcodec.cpp \
-            -Wl,-rpath,'$ORIGIN' -o /out/native/libvmx.so; \
-        runtime_id=linux-musl-arm64; \
-    elif [ "${TARGETARCH}" = "amd64" ]; then \
-        clang++ -O3 -std=c++17 -fdeclspec -fPIC -mlzcnt -mavx2 -mbmi -shared \
-            third_party/omt/libvmx/src/vmxcodec_x86.cpp \
-            third_party/omt/libvmx/src/vmxcodec_avx2.cpp \
-            third_party/omt/libvmx/src/vmxcodec.cpp \
-            -Wl,-rpath,'$ORIGIN' -o /out/native/libvmx.so; \
-        runtime_id=linux-musl-x64; \
-    else \
-        echo "Unsupported target architecture: ${TARGETARCH}" >&2; exit 1; \
-    fi \
-    && dotnet publish src/receiver/RpiOmt.Receiver/RpiOmt.Receiver.csproj \
-        --configuration Release --runtime "${runtime_id}" --self-contained true \
-        --output /out/receiver \
-        -p:InformationalVersion="${RPI_OMT_CLIENT_VERSION}" \
-        -p:DebugType=None -p:DebugSymbols=false
+FROM receiver-builder-base AS receiver-builder-amd64
+RUN build-native-receiver amd64
+
+FROM --platform=$TARGETPLATFORM alpine:3.23.5@${ALPINE_DIGEST} AS receiver-sysroot
+RUN apk add --no-cache g++ zlib-dev
+
+FROM receiver-builder-base AS receiver-builder-arm64
+COPY --from=receiver-sysroot /etc/os-release /opt/receiver-sysroot/etc/os-release
+COPY --from=receiver-sysroot /lib/ /opt/receiver-sysroot/lib/
+COPY --from=receiver-sysroot /usr/include/ /opt/receiver-sysroot/usr/include/
+COPY --from=receiver-sysroot /usr/lib/ /opt/receiver-sysroot/usr/lib/
+RUN build-native-receiver arm64 /opt/receiver-sysroot
+
+# The value selects one of the two repository-defined stages above, not an
+# untagged external image.
+# hadolint ignore=DL3006
+FROM receiver-builder-${TARGETARCH} AS receiver-builder
+
+# Keep the testable/exportable ARM64 target limited to shipped artifacts. The
+# SDK, source, NuGet cache, and NativeAOT object files never enter this image.
+FROM scratch AS receiver-artifacts
+COPY --from=receiver-builder /out/receiver/omt-receiver /omt-receiver
+COPY --from=receiver-builder /out/native/libvmx.so /libvmx.so
 
 FROM alpine:3.23.5@${ALPINE_DIGEST} AS python-builder
 
@@ -89,8 +93,8 @@ RUN apk add --no-cache \
     && chmod 700 /run/omt
 
 COPY --from=python-builder /opt/venv /opt/venv
-COPY --from=receiver-builder /out/receiver/omt-receiver /usr/local/bin/omt-receiver
-COPY --from=receiver-builder /out/native/libvmx.so /usr/local/lib/libvmx.so
+COPY --from=receiver-artifacts /omt-receiver /usr/local/bin/omt-receiver
+COPY --from=receiver-artifacts /libvmx.so /usr/local/lib/libvmx.so
 COPY deploy/container/ /usr/local/bin/
 COPY LICENSE THIRD_PARTY_NOTICES.txt /app/legal/
 COPY scripts/generate-runtime-sbom.py /tmp/generate-runtime-sbom.py

@@ -1,7 +1,7 @@
 # Raspberry Pi OMT Client Build System
 # Usage: make [target]
 
-.PHONY: help install build build-arm64 build-amd64 build-windows-deployer deploy up down logs lint test test-quick test-py test-receiver test-deployer test-setup security-scan clean
+.PHONY: help install setup-arm64-emulation build build-arm64 build-amd64 build-windows-deployer deploy up down logs lint test test-quick test-py test-receiver test-deployer test-setup security-scan clean
 
 IMAGE_NAME   := omt-client
 ARM64_TARBALL := omt-client-arm64.tar.gz
@@ -25,6 +25,7 @@ help:
 	@echo "                       Example: make deploy HOST=pi@192.168.1.100"
 	@echo ""
 	@echo "Dev targets:"
+	@echo "  setup-arm64-emulation  Install persistent ARM64 emulation on Linux x86-64"
 	@echo "  up            Start local dev container (amd64)"
 	@echo "  down          Stop local dev container"
 	@echo "  logs          Follow local dev container logs"
@@ -48,6 +49,9 @@ install:
 	./scripts/install-dev-deps.sh
 	$(MAKE) test-setup
 	./scripts/setup-hooks.sh
+
+setup-arm64-emulation:
+	./scripts/install-arm64-emulation.sh
 
 # Build ARM64 image tarball (for Pi deployment)
 build-arm64:

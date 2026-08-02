@@ -43,24 +43,24 @@ echo "Detected OS: ${OS}${OS_LIKE:+ (${OS_LIKE})}"
 
 case "${OS}" in
     ubuntu|debian)
-        install_apt_packages curl python3-venv shellcheck tar
+        install_apt_packages curl podman python3-venv shellcheck tar
         ;;
     fedora|rocky|almalinux|rhel|centos)
-        install_dnf_packages curl python3 ShellCheck tar
+        install_dnf_packages curl podman python3 ShellCheck tar
         ;;
     arch)
-        install_pacman_packages curl python shellcheck tar
+        install_pacman_packages curl podman python shellcheck tar
         ;;
     darwin)
         install_brew_packages coreutils curl python shellcheck
         ;;
     *)
         if [[ " ${OS_LIKE} " == *" debian "* ]]; then
-            install_apt_packages curl python3-venv shellcheck tar
+            install_apt_packages curl podman python3-venv shellcheck tar
         elif [[ " ${OS_LIKE} " == *" fedora "* ]] || \
              [[ " ${OS_LIKE} " == *" rhel "* ]] || \
              [[ " ${OS_LIKE} " == *" centos "* ]]; then
-            install_dnf_packages curl python3 ShellCheck tar
+            install_dnf_packages curl podman python3 ShellCheck tar
         else
             echo -e "${YELLOW}WARN${NC}: Unknown OS. Install curl, SHA-512 tools, tar, Python venv, and ShellCheck manually."
         fi
@@ -84,9 +84,17 @@ if ! command -v hadolint >/dev/null 2>&1; then
     esac
 fi
 
+if [[ "$(uname -s)" == "Linux" ]]; then
+    "${SCRIPT_DIR}/install-arm64-emulation.sh"
+fi
+
 echo ""
 echo "=== Development Dependency Summary ==="
-for tool in curl python3 sha512sum shellcheck tar hadolint; do
+summary_tools=(curl python3 sha512sum shellcheck tar hadolint)
+if [[ "$(uname -s)" == "Linux" ]]; then
+    summary_tools+=(podman)
+fi
+for tool in "${summary_tools[@]}"; do
     if command -v "${tool}" >/dev/null 2>&1; then
         echo -e "  ${tool}: ${GREEN}installed${NC}"
     else

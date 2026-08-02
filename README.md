@@ -12,7 +12,7 @@ faster input is reported as unsupported instead of being silently converted.
 ## Build and test
 
 ```bash
-make test-setup
+make install
 make test-quick
 make build-arm64
 make build-windows-deployer
@@ -20,6 +20,8 @@ make build-windows-deployer
 
 The ARM64 build creates `omt-client-arm64.tar.gz`. The Windows build creates
 `dist/rpi-omt-client-deployer-windows-x64.exe` and its CycloneDX SBOM.
+On Linux x86-64, `make install` also installs persistent ARM64 emulation for
+the container builder.
 
 ## Install
 

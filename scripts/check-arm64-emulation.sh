@@ -6,9 +6,7 @@ set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=scripts/docker-test-env.sh
 source "${PROJECT_ROOT}/scripts/docker-test-env.sh"
-DOCKERFILE="${PROJECT_ROOT}/deploy/Dockerfile"
-DEBIAN_DIGEST="$(awk -F= '/^ARG DEBIAN_BOOKWORM_SLIM_DIGEST=/{print $2; exit}' "${DOCKERFILE}")"
-CHECK_IMAGE="debian:bookworm-slim@${DEBIAN_DIGEST}"
+CHECK_IMAGE="docker.io/library/debian:bookworm-slim@sha256:4724b8cc51e33e398f0e2e15e18d5ec2851ff0c2280647e1310bc1642182655d"
 
 # shellcheck disable=SC2310
 if ! ensure_docker_daemon; then
@@ -31,7 +29,7 @@ The ARM64 runtime image runs package installation steps during the Docker build,
 so buildx needs ARM64 emulation registered. Install it once, then rerun the
 build:
 
-  docker run --privileged --rm tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0 --install arm64
+  make setup-arm64-emulation
 
 On Docker Desktop, also make sure the Linux engine is running before retrying.
 EOF

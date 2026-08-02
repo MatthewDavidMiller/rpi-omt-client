@@ -53,6 +53,13 @@ check still spans the application code after the move. The first-party wheel is
 excluded from the third-party notice sweep and from the SBOM's PyPI components;
 `tests/integration/test_docker_build.sh` asserts all of this.
 
+The native receiver is built in the digest-pinned Alpine NativeAOT SDK stage.
+The compiler stays on amd64 and emits ARM64 against a minimal Alpine target
+sysroot, avoiding failures in the ARM64-hosted .NET 10 ILC process. The build
+step then removes NuGet and compiler intermediates. A `scratch` stage
+contains only `omt-receiver` and `libvmx.so`; the runtime copies from that
+stage, so neither the SDK nor build toolchain is part of the deployed image.
+
 Public routes are `/login`, `/logout`, `/`, `/sources/select`,
 `/sources/refresh`, `/playback/restart`, `/playback/clear`,
 `/settings/network`, `/settings/direct-source`, `/diagnostics`,
