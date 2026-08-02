@@ -23,7 +23,10 @@ updates NetworkManager; About displays version, copyright, license, and
 third-party notices. The theme selector in the title row offers System (the
 default, which follows Windows), Light, and Dark. While an action runs, the
 activity row shows the state chip and an indeterminate progress bar; validation
-problems appear in the message bar above it.
+problems appear in the message bar above it. Log text can be selected directly,
+copied in full with **Copy Log**, or saved as a UTF-8 text file with **Export
+Log**. The connection, activity controls, and other panes reflow or scroll when
+the window is resized for a compact display.
 
 ## CLI deployment
 

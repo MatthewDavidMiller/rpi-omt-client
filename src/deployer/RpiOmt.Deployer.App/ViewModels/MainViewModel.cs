@@ -67,6 +67,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
     public ObservableCollection<LogLine> ActivityLog { get; } = [];
 
+    public string ActivityLogText => string.Join(Environment.NewLine, ActivityLog.Select(line => line.Message));
+
     public ConnectionViewModel Connection { get; } = new();
 
     public DeploymentViewModel Deployment { get; }
@@ -218,6 +220,9 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         _cancellation?.Dispose();
         _cancellation = null;
     }
+
+    public void ReportLogTransferError(string action, string detail) =>
+        Append($"Could not {action} the activity log: {detail}", "error");
 
     private AsyncCommand ActionCommand(Func<Task> action) => new(action, () => !IsBusy);
 

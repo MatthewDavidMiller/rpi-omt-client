@@ -55,7 +55,7 @@
   </Style>
 
   <Style Selector="TextBox">
-    <Setter Property="MinWidth" Value="150" />
+    <Setter Property="MinWidth" Value="100" />
     <Setter Property="CornerRadius" Value="{StaticResource AppCornerRadiusSmall}" />
   </Style>
 
@@ -77,17 +77,17 @@
     <Setter Property="Opacity" Value="0.9" />
   </Style>
 
-  <Style Selector="TextBlock.log">
+  <Style Selector="SelectableTextBlock.log">
     <Setter Property="Foreground" Value="{DynamicResource LogInfoBrush}" />
     <Setter Property="FontFamily" Value="{StaticResource AppMonoFontFamily}" />
     <Setter Property="TextWrapping" Value="Wrap" />
   </Style>
 
-  <Style Selector="TextBlock.log.warning">
+  <Style Selector="SelectableTextBlock.log.warning">
     <Setter Property="Foreground" Value="{DynamicResource LogWarningBrush}" />
   </Style>
 
-  <Style Selector="TextBlock.log.error">
+  <Style Selector="SelectableTextBlock.log.error">
     <Setter Property="Foreground" Value="{DynamicResource LogErrorBrush}" />
   </Style>
 

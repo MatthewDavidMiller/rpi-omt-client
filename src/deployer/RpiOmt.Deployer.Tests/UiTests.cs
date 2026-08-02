@@ -2,8 +2,11 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
+using Avalonia.Input.Platform;
+using Avalonia.Interactivity;
 using Avalonia.LogicalTree;
 using Avalonia.Styling;
+using Avalonia.VisualTree;
 using RpiOmt.Deployer.App;
 using RpiOmt.Deployer.App.ViewModels;
 using RpiOmt.Deployer.App.Views;
@@ -45,7 +48,8 @@ public sealed class AvaloniaUiTests
         foreach (var name in new[]
         {
             "InstallPrerequisitesButton", "DeployButton", "TestSshButton", "StatusButton",
-            "LogsButton", "RestartButton", "ApplyWifiButton",
+            "LogsButton", "RestartButton", "ApplyWifiButton", "CopyLogButton", "ExportLogButton",
+            "ClearLogButton",
         })
         {
             Assert.NotNull(window.FindControl<Button>(name));
@@ -63,6 +67,35 @@ public sealed class AvaloniaUiTests
         viewModel.DeployCommand.Execute(null);
         Assert.NotEmpty(viewModel.ValidationMessage);
         Assert.True(window.FindControl<Border>("ValidationInfoBar")!.IsVisible);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void CompactWindowReflowsControlsInsteadOfEnforcingDesktopDimensions()
+    {
+        using var viewModel = new MainViewModel(new FakeOperations(), Environment.CurrentDirectory);
+        var window = new MainWindow
+        {
+            DataContext = viewModel,
+            Width = 400,
+            Height = 440,
+        };
+        window.Show();
+
+        Assert.Equal(360, window.MinWidth);
+        Assert.Equal(400, window.MinHeight);
+        Assert.Equal(1, Grid.GetRow(window.FindControl<StackPanel>("ThemeSettings")!));
+
+        var connectionColumn = window.GetLogicalDescendants().OfType<StackPanel>()
+            .Single(panel => panel.Classes.Contains("connection-column-b"));
+        Assert.Equal(2, Grid.GetRow(connectionColumn));
+        Assert.Equal(0, Grid.GetColumn(connectionColumn));
+        Assert.Equal(2, Grid.GetColumnSpan(connectionColumn));
+
+        var activityButtons = window.GetLogicalDescendants().OfType<WrapPanel>()
+            .Single(panel => panel.Classes.Contains("activity-buttons"));
+        Assert.Equal(1, Grid.GetRow(activityButtons));
+        Assert.Equal(3, Grid.GetColumnSpan(activityButtons));
         window.Close();
     }
 
@@ -141,6 +174,33 @@ public sealed class AvaloniaUiTests
         Assert.Empty(valid.ActivityLog);
     }
 
+    [AvaloniaFact]
+    public async Task DisplayedLogIsSelectableAndCopyButtonCopiesTheFullTranscript()
+    {
+        var operations = new FakeOperations();
+        using var viewModel = ValidViewModel(operations);
+        var window = new MainWindow { DataContext = viewModel };
+        window.Show();
+
+        viewModel.LogsCommand.Execute(null);
+        await WaitUntilAsync(() => !viewModel.IsBusy);
+        var activityList = window.FindControl<ListBox>("ActivityList")!;
+        activityList.ScrollIntoView(0);
+        window.UpdateLayout();
+        Assert.NotEmpty(window.GetVisualDescendants().OfType<SelectableTextBlock>());
+
+        var expected = viewModel.ActivityLogText;
+        window.FindControl<Button>("CopyLogButton")!.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        var clipboard = window.Clipboard ?? throw new InvalidOperationException("Headless clipboard is unavailable.");
+        await WaitUntilAsync(async () => string.Equals(
+            await clipboard.TryGetTextAsync(),
+            expected,
+            StringComparison.Ordinal));
+
+        Assert.Equal(expected, await clipboard.TryGetTextAsync());
+        window.Close();
+    }
+
     private static MainViewModel ValidViewModel(FakeOperations operations)
     {
         var viewModel = new MainViewModel(operations, Environment.CurrentDirectory)
@@ -162,6 +222,17 @@ public sealed class AvaloniaUiTests
         }
 
         Assert.True(condition());
+    }
+
+    private static async Task WaitUntilAsync(Func<Task<bool>> condition)
+    {
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(3);
+        while (!await condition() && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(10);
+        }
+
+        Assert.True(await condition());
     }
 }
 

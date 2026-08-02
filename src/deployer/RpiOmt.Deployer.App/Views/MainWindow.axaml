@@ -4,37 +4,67 @@
         x:Class="RpiOmt.Deployer.App.Views.MainWindow"
         x:DataType="vm:MainViewModel"
         Title="Raspberry Pi OMT Client Deployer"
-        Width="1000" Height="780" MinWidth="520" MinHeight="520"
+        Width="960" Height="700" MinWidth="360" MinHeight="400"
         Background="{DynamicResource AppSurfaceAltBrush}"
         Closing="OnClosing">
-  <Grid Margin="14" RowSpacing="10">
+  <Grid Margin="10" RowSpacing="6">
     <Grid.RowDefinitions>
       <RowDefinition Height="Auto" />
-      <RowDefinition Height="2*" MinHeight="100" />
-      <RowDefinition Height="6" />
-      <RowDefinition Height="3*" MinHeight="80" />
-      <RowDefinition Height="6" />
-      <RowDefinition Height="5*" MinHeight="120" />
+      <RowDefinition Height="2*" MinHeight="72" />
+      <RowDefinition Height="4" />
+      <RowDefinition Height="3*" MinHeight="64" />
+      <RowDefinition Height="4" />
+      <RowDefinition Height="5*" MinHeight="90" />
     </Grid.RowDefinitions>
 
-    <Grid Grid.Row="0" ColumnDefinitions="*,Auto" ColumnSpacing="12">
-      <StackPanel>
-        <TextBlock Text="Raspberry Pi OMT Client Deployer" Classes="title" />
-        <TextBlock Classes="caption" Text="{Binding AppVersion, StringFormat='Version {0}'}" />
-      </StackPanel>
-      <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-        <TextBlock Text="Theme" Classes="field-label" />
-        <ComboBox x:Name="ThemeSelector" MinWidth="110"
-                  ItemsSource="{Binding ThemeOptions}"
-                  SelectedItem="{Binding Theme}"
-                  AutomationProperties.Name="Theme" />
-      </StackPanel>
-    </Grid>
+    <Panel Grid.Row="0" Container.Name="header" Container.Sizing="Width">
+      <Panel.Styles>
+        <Style Selector="StackPanel.header-title">
+          <Setter Property="Grid.Column" Value="0" />
+        </Style>
+        <Style Selector="StackPanel.theme-settings">
+          <Setter Property="Grid.Column" Value="1" />
+        </Style>
+        <ContainerQuery Name="header" Query="max-width:540">
+          <Style Selector="StackPanel.header-title">
+            <Setter Property="Grid.ColumnSpan" Value="2" />
+          </Style>
+          <Style Selector="StackPanel.theme-settings">
+            <Setter Property="Grid.Row" Value="1" />
+            <Setter Property="Grid.Column" Value="0" />
+            <Setter Property="Margin" Value="0,6,0,0" />
+            <Setter Property="HorizontalAlignment" Value="Left" />
+          </Style>
+        </ContainerQuery>
+      </Panel.Styles>
+      <Grid x:Name="HeaderGrid" RowDefinitions="Auto,Auto" ColumnDefinitions="*,Auto" ColumnSpacing="12">
+        <StackPanel Classes="header-title">
+          <TextBlock Text="Raspberry Pi OMT Client Deployer" Classes="title" TextWrapping="Wrap" />
+          <TextBlock Classes="caption" Text="{Binding AppVersion, StringFormat='Version {0}'}" />
+        </StackPanel>
+        <StackPanel x:Name="ThemeSettings" Classes="theme-settings"
+                    Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+          <TextBlock Text="Theme" Classes="field-label" />
+          <ComboBox x:Name="ThemeSelector" MinWidth="110"
+                    ItemsSource="{Binding ThemeOptions}"
+                    SelectedItem="{Binding Theme}"
+                    AutomationProperties.Name="Theme" />
+        </StackPanel>
+      </Grid>
+    </Panel>
 
     <!-- The two connection columns stack when the window is too narrow to hold
          them side by side. Both groups span the full width once stacked. -->
     <Panel Grid.Row="1" Container.Name="connection" Container.Sizing="Width">
       <Panel.Styles>
+        <Style Selector="StackPanel.connection-column-a">
+          <Setter Property="Grid.Row" Value="1" />
+          <Setter Property="Grid.Column" Value="0" />
+        </Style>
+        <Style Selector="StackPanel.connection-column-b">
+          <Setter Property="Grid.Row" Value="1" />
+          <Setter Property="Grid.Column" Value="1" />
+        </Style>
         <ContainerQuery Name="connection" Query="max-width:760">
           <Style Selector="StackPanel.connection-column-a">
             <Setter Property="Grid.ColumnSpan" Value="2" />
@@ -52,7 +82,7 @@
                 ColumnDefinitions="*,*" ColumnSpacing="16" RowSpacing="10">
             <TextBlock Grid.ColumnSpan="2" Text="Connection" Classes="section-title" />
 
-            <StackPanel Grid.Row="1" Grid.Column="0" Classes="connection-column-a" Spacing="8">
+            <StackPanel Classes="connection-column-a" Spacing="8">
               <StackPanel Spacing="2">
                 <TextBlock Text="Pi host" Classes="field-label" />
                 <TextBox x:Name="HostTextBox" Text="{Binding Host}"
@@ -70,7 +100,7 @@
               </Grid>
             </StackPanel>
 
-            <StackPanel Grid.Row="1" Grid.Column="1" Classes="connection-column-b" Spacing="8">
+            <StackPanel Classes="connection-column-b" Spacing="8">
               <StackPanel Spacing="2">
                 <TextBlock Text="Authentication" Classes="field-label" />
                 <StackPanel Orientation="Horizontal" Spacing="16">
@@ -188,16 +218,35 @@
           </StackPanel>
         </Border>
 
-        <Grid Grid.Row="1" ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="8">
-          <Border Classes="chip">
-            <TextBlock Text="{Binding Activity}" />
-          </Border>
-          <ProgressBar Grid.Column="1" IsIndeterminate="True" IsVisible="{Binding IsBusy}"
-                       VerticalAlignment="Center" Margin="4,0"
-                       AutomationProperties.Name="Action in progress" />
-          <Button x:Name="CancelButton" Grid.Column="2" Content="Cancel" Command="{Binding CancelCommand}" />
-          <Button Grid.Column="3" Content="Clear Log" Command="{Binding ClearLogCommand}" />
-        </Grid>
+        <Panel Grid.Row="1" Container.Name="activity-toolbar" Container.Sizing="Width">
+          <Panel.Styles>
+            <Style Selector="WrapPanel.activity-buttons">
+              <Setter Property="Grid.Column" Value="2" />
+            </Style>
+            <ContainerQuery Name="activity-toolbar" Query="max-width:700">
+              <Style Selector="WrapPanel.activity-buttons">
+                <Setter Property="Grid.Row" Value="1" />
+                <Setter Property="Grid.Column" Value="0" />
+                <Setter Property="Grid.ColumnSpan" Value="3" />
+                <Setter Property="Margin" Value="0,8,0,0" />
+              </Style>
+            </ContainerQuery>
+          </Panel.Styles>
+          <Grid RowDefinitions="Auto,Auto" ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
+            <Border Classes="chip">
+              <TextBlock Text="{Binding Activity}" />
+            </Border>
+            <ProgressBar Grid.Column="1" IsIndeterminate="True" IsVisible="{Binding IsBusy}"
+                         VerticalAlignment="Center" Margin="4,0"
+                         AutomationProperties.Name="Action in progress" />
+            <WrapPanel Classes="activity-buttons" ItemSpacing="8" LineSpacing="8">
+              <Button x:Name="CancelButton" Content="Cancel" Command="{Binding CancelCommand}" />
+              <Button x:Name="CopyLogButton" Content="Copy Log" Click="CopyLog" />
+              <Button x:Name="ExportLogButton" Content="Export Log" Click="ExportLog" />
+              <Button x:Name="ClearLogButton" Content="Clear Log" Command="{Binding ClearLogCommand}" />
+            </WrapPanel>
+          </Grid>
+        </Panel>
 
         <Border Grid.Row="2" Classes="console">
           <ListBox x:Name="ActivityList" ItemsSource="{Binding ActivityLog}"
@@ -205,10 +254,10 @@
                    AutomationProperties.Name="Activity log">
             <ListBox.ItemTemplate>
               <DataTemplate x:DataType="vm:LogLine">
-                <TextBlock Classes="log"
-                           Classes.warning="{Binding IsWarning}"
-                           Classes.error="{Binding IsError}"
-                           Text="{Binding Message}" />
+                <SelectableTextBlock Classes="log"
+                                     Classes.warning="{Binding IsWarning}"
+                                     Classes.error="{Binding IsError}"
+                                     Text="{Binding Message}" />
               </DataTemplate>
             </ListBox.ItemTemplate>
           </ListBox>
