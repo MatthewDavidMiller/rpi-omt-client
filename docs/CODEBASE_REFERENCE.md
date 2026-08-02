@@ -29,6 +29,7 @@
 | Dev-only preview fakes | `src/omt_client_preview/` |
 | Shell process lifecycle | `deploy/container/runtime-lib.sh`, `deploy/container/start-omt.sh`, `deploy/container/control-omt.sh`, `deploy/container/entrypoint.sh` |
 | Container | `deploy/Dockerfile`, `deploy/compose.yml` |
+| Full Raspberry Pi OS VM lifecycle | `scripts/pi-os-vm.sh`, `scripts/pi-os-vm-toolbox.sh`, `scripts/install-pi-os-vm-tooling.sh`, `tests/vm/` |
 
 `RuntimeAbout` is the single owner of the build version. The About page, the
 diagnostics page, and the `version.txt` member of a support bundle all read it

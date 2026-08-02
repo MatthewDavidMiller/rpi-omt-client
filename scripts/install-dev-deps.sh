@@ -43,10 +43,16 @@ echo "Detected OS: ${OS}${OS_LIKE:+ (${OS_LIKE})}"
 
 case "${OS}" in
     ubuntu|debian)
-        install_apt_packages curl podman python3-venv shellcheck tar
+        install_apt_packages curl libguestfs-tools openssh-client podman \
+            python3-venv qemu-system-arm shellcheck tar xz-utils
         ;;
-    fedora|rocky|almalinux|rhel|centos)
-        install_dnf_packages curl podman python3 ShellCheck tar
+    fedora)
+        sudo dnf install -y --setopt=install_weak_deps=False \
+            curl guestfs-tools kernel-core libguestfs openssh-clients podman \
+            python3 qemu-system-aarch64-core ShellCheck tar xz
+        ;;
+    rocky|almalinux|rhel|centos)
+        install_dnf_packages curl openssh-clients podman python3 ShellCheck tar xz
         ;;
     arch)
         install_pacman_packages curl podman python shellcheck tar
@@ -56,11 +62,12 @@ case "${OS}" in
         ;;
     *)
         if [[ " ${OS_LIKE} " == *" debian "* ]]; then
-            install_apt_packages curl podman python3-venv shellcheck tar
+            install_apt_packages curl libguestfs-tools openssh-client podman \
+                python3-venv qemu-system-arm shellcheck tar xz-utils
         elif [[ " ${OS_LIKE} " == *" fedora "* ]] || \
              [[ " ${OS_LIKE} " == *" rhel "* ]] || \
              [[ " ${OS_LIKE} " == *" centos "* ]]; then
-            install_dnf_packages curl podman python3 ShellCheck tar
+            install_dnf_packages curl openssh-clients podman python3 ShellCheck tar xz
         else
             echo -e "${YELLOW}WARN${NC}: Unknown OS. Install curl, SHA-512 tools, tar, Python venv, and ShellCheck manually."
         fi
@@ -86,6 +93,7 @@ fi
 
 if [[ "$(uname -s)" == "Linux" ]]; then
     "${SCRIPT_DIR}/install-arm64-emulation.sh"
+    "${SCRIPT_DIR}/install-pi-os-vm-tooling.sh"
 fi
 
 echo ""
@@ -104,3 +112,17 @@ done
 
 echo -e "  yamllint: ${GREEN}managed by tests/.venv${NC}"
 echo -e "  .NET SDK: ${GREEN}managed in .build/dotnet${NC}"
+if [[ "$(uname -s)" != "Linux" || ! "$(uname -m)" =~ ^(x86_64|amd64)$ ]]; then
+    echo -e "  Pi OS VM: ${YELLOW}not provisioned on this host architecture${NC}"
+elif command -v qemu-system-aarch64 >/dev/null 2>&1 && \
+     command -v guestfish >/dev/null 2>&1 && command -v virt-resize >/dev/null 2>&1; then
+    qemu_version="$(qemu-system-aarch64 --version | sed -n '1s/.*version \([0-9][0-9.]*\).*/\1/p')"
+    qemu_major="${qemu_version%%.*}"
+    if [[ "${qemu_major}" =~ ^[0-9]+$ ]] && (( qemu_major >= 9 )); then
+        echo -e "  Pi OS VM: ${GREEN}native tooling installed${NC}"
+    else
+        echo -e "  Pi OS VM: ${GREEN}isolated Podman tooling installed${NC}"
+    fi
+else
+    echo -e "  Pi OS VM: ${GREEN}isolated Podman tooling installed${NC}"
+fi

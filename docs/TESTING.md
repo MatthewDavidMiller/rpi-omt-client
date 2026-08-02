@@ -1,7 +1,8 @@
 # Testing
 
 Bootstrap the system dependencies, persistent ARM64 emulation, pinned Python
-tools, and the repository-local .NET SDK once:
+tools, the repository-local .NET SDK, and full-system Raspberry Pi OS VM
+tooling once:
 
 ```bash
 make install
@@ -54,9 +55,114 @@ wired into it.
 
 The normal `make test` adds an amd64 image build. Full mode adds container smoke
 and OMT receiver discovery/probe checks and requires the ARM64 receiver builder
-stage to pass. Pi-only validation still must cover
-real DRM/ALSA, HDMI hotplug, 1080p60 media, audio degradation, service boot,
-and an acknowledged Web reboot.
+stage to pass.
+
+## Full Raspberry Pi OS VM
+
+The optional full-system tier boots the checksum-pinned official Raspberry Pi
+OS Full 64-bit image used by the hardware deployment, including its desktop and
+recommended applications. It supplies an emulated ARM CPU, Raspberry Pi board,
+SD card, USB Ethernet, and PID 1/systemd. Unlike the existing Pi-userland
+container test, this reaches the real host installer, `/boot/firmware`, apt and
+Docker service, systemd unit installation/verification, path-triggered host
+diagnostics, the reboot validator, ARM64 image loading, and persistent Docker
+state.
+Image releases and checksums come from the
+[official Raspberry Pi OS downloads](https://www.raspberrypi.com/software/operating-systems/).
+
+On an x86-64 Linux host, run `make install`. It installs QEMU 9 or newer and
+libguestfs tools natively when the distribution provides them. The required
+commands are `qemu-system-aarch64`, `guestfish`, and `virt-resize`.
+
+Debian or Ubuntu:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y qemu-system-arm libguestfs-tools openssh-client curl xz-utils
+```
+
+Fedora 43 or newer:
+
+```bash
+sudo dnf install -y --setopt=install_weak_deps=False \
+    qemu-system-aarch64-core libguestfs guestfs-tools \
+    openssh-clients curl xz kernel-core
+```
+
+RHEL 10 and compatible EL10 distributions do not provide the cross-
+architecture `qemu-system-aarch64` binary in their standard repositories.
+There, `make install` automatically builds a digest-pinned Fedora 44 tooling
+image containing QEMU and libguestfs. The normal Make targets transparently run
+inside a project-scoped Podman container with host networking and only this
+checkout mounted. The container stays alive between `start`, `test`, `shell`,
+and `stop`, while the VM disk remains under `.build/pi-os-vm` on the host. No
+Fedora RPM is installed into EL10.
+
+The host packages installed by `make install` on RHEL, Rocky Linux, AlmaLinux,
+and CentOS can also be installed explicitly when preparing a development VM:
+
+```bash
+sudo dnf install -y \
+    curl openssh-clients podman python3 ShellCheck tar xz
+make install
+```
+
+`make install` then installs Hadolint when needed, configures persistent ARM64
+user-mode emulation, and builds and verifies the full-system VM toolbox.
+
+After `make install`, the commands are identical on every supported x86-64
+Linux development host:
+
+```bash
+make build-arm64
+make pi-os-vm-prepare  # one-time ~2 GiB download and persistent 16 GiB disk
+make pi-os-vm-start
+make test-vm
+make pi-os-vm-debug    # optional bounded report under .build/pi-os-vm/
+make pi-os-vm-shell    # optional interactive inspection
+make pi-os-vm-stop
+```
+
+`pi-os-vm-prepare` downloads only the full-image URL in
+`tests/vm/pi-os-image.env`, verifies its pinned SHA-256 before decompression,
+expands a private copy of the root filesystem, and injects a one-time SSH key.
+Allow roughly 24 GiB free during preparation; after the recoverable expanded
+source is removed, the archive and persistent VM disk consume roughly 12 GiB.
+The disk carries image name, checksum, and size metadata. A disk from the older
+Lite-image harness or a later image revision is refused instead of being reused
+silently.
+SSH password authentication is disabled, forwarded SSH/Web ports bind only to
+host loopback, and `test-vm` uploads only files named by
+`deploy/manifest-v2.txt`. The persistent disk makes repeated installer and
+upgrade investigations much faster. Change `PI_OS_VM_STATE_DIR`,
+`PI_OS_VM_SSH_PORT_OVERRIDE`, and `PI_OS_VM_WEB_PORT_OVERRIDE` to isolate
+concurrent instances.
+
+The isolated tool definition is `tests/vm/Containerfile`; its Fedora base is
+pinned in `tests/vm/tooling.env`. If a native QEMU/libguestfs installation is
+missing or QEMU is older than version 9, `scripts/pi-os-vm.sh` delegates to this
+tooling automatically. `make install` verifies that the resulting image has
+all three required commands and supports the `raspi3b` machine before it
+reports success.
+
+The guest attempts to load `vkms` and `snd-dummy`. When the Raspberry Pi OS
+kernel provides them, the suite can cross the systemd-to-Docker startup
+boundary with virtual DRM and ALSA character devices. When it does not, the
+test instead asserts the installer's documented startup deferral. It also
+asserts that the installer converts the full desktop image from graphical boot
+to its production `multi-user.target` and stops the display manager. Either way,
+the VM is not a Raspberry Pi 5 hardware substitute: QEMU has no Pi 5 model, and
+its Raspberry Pi 4 model lacks the GENET Ethernet controller needed by this
+automated network test, as listed in the
+[QEMU Raspberry Pi board documentation](https://www.qemu.org/docs/master/system/arm/raspi.html).
+The harness therefore uses QEMU's stable `raspi3b`
+model with USB Ethernet; the official ARM64 image and host userspace are the
+same installation boundary, but the SoC is emulated as a Pi 3.
+
+Pi-only validation still must cover the RP1/device topology, real vc4 DRM/ALSA,
+HDMI hotplug and EDID, 1080p60 media timing, audio degradation, and a Web-
+acknowledged successful reboot. The VM safely tests a correlated rejected
+reboot request so the test runner does not disappear halfway through its gate.
 
 The multi-stage container uses Microsoft's Alpine NativeAOT SDK only while
 building the receiver. The .NET 10 ILC process stays on amd64 and
@@ -71,8 +177,9 @@ are removed, and a `scratch` artifact stage exports only `omt-receiver` and
 deployable Alpine runtime at 128 MiB; the SDK/compiler stage is never shipped
 to the Pi.
 
-On a systemd-based Linux x86-64 development VM, `make install` installs Podman
-and runs `make setup-arm64-emulation`. The setup extracts `qemu-aarch64` from a
+On a systemd-based Linux x86-64 development VM, `make install` installs Podman,
+configures full-system VM tooling, and runs `make setup-arm64-emulation`. The
+setup extracts `qemu-aarch64` from a
 digest-pinned `tonistiigi/binfmt` image, verifies the extracted binary hash,
 installs it as `/usr/local/bin/qemu-aarch64-static`, and installs a
 `systemd-binfmt` rule under `/etc/binfmt.d`. This is a host-level setup and

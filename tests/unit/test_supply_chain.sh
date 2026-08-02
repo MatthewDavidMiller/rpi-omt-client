@@ -167,6 +167,15 @@ assert_literal "${PROJECT_ROOT}/scripts/install-arm64-emulation.sh" '1ad17b7bd5e
 assert_literal "${PROJECT_ROOT}/scripts/install-arm64-emulation.sh" 'systemctl restart systemd-binfmt.service' "Linux ARM64 bootstrap persists registration with systemd-binfmt"
 assert_literal "${PROJECT_ROOT}/scripts/arm64-binfmt.conf" '/usr/local/bin/qemu-aarch64-static:POCF' "ARM64 binfmt rule uses the host emulator and fix-binary flag"
 assert_literal "${PROJECT_ROOT}/scripts/install-dev-deps.sh" '"${SCRIPT_DIR}/install-arm64-emulation.sh"' "Developer install enables ARM64 emulation"
+assert_executable "${PROJECT_ROOT}/scripts/install-pi-os-vm-tooling.sh" "Pi OS VM tooling installer is executable"
+assert_executable "${PROJECT_ROOT}/scripts/pi-os-vm-toolbox.sh" "Pi OS VM tooling launcher is executable"
+assert_literal "${PROJECT_ROOT}/scripts/install-dev-deps.sh" '"${SCRIPT_DIR}/install-pi-os-vm-tooling.sh"' "Developer install provisions Pi OS VM tooling"
+assert_contains "${PROJECT_ROOT}/tests/vm/tooling.env" \
+    '^PI_OS_VM_TOOLING_BASE=registry\.fedoraproject\.org/fedora@sha256:[0-9a-f]{64}$' \
+    "Pi OS VM Fedora tooling base is digest pinned"
+assert_literal "${PROJECT_ROOT}/tests/vm/Containerfile" 'qemu-system-aarch64' "Pi OS VM tooling includes cross-QEMU"
+assert_literal "${PROJECT_ROOT}/tests/vm/Containerfile" 'libguestfs' "Pi OS VM tooling includes guest filesystem access"
+assert_literal "${PROJECT_ROOT}/tests/vm/Containerfile" 'USER 1000:1000' "Pi OS VM tooling is non-root"
 assert_literal "${PROJECT_ROOT}/scripts/test-local.sh" 'export REQUIRE_ARM64_BUILD=1' "Full local gate requires the ARM64 builder"
 
 audit_test_dir="$(mktemp -d)"

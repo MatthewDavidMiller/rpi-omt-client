@@ -1,0 +1,13 @@
+[Unit]
+Description=Provision the isolated OMT Raspberry Pi OS test VM
+Wants=network.target
+Before=ssh.service
+ConditionPathExists=!/var/lib/omt-vm/firstboot-complete
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/omt-vm-firstboot
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

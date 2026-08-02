@@ -105,4 +105,8 @@ and Python contents; the Windows publisher generates another from its locked
 NuGet graph.
 
 Pi DRM, ALSA, HDMI hotplug, and live OMT media remain hardware validation
-boundaries after local unit and amd64 image checks pass.
+boundaries after local unit and amd64 image checks pass. The optional
+full-system QEMU tier boots the official ARM64 Raspberry Pi OS image and covers
+the real systemd, installer, boot-file, Docker, diagnostics-path, and reboot-
+validator boundaries. QEMU has no Raspberry Pi 5 model, so RP1, vc4/HDMI, and
+media-timing claims still require physical Pi 5 validation.
