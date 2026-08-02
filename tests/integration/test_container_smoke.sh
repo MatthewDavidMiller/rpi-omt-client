@@ -195,7 +195,7 @@ grep -Fq "The Raspberry Pi will stop playback and go offline." <<<"${confirm_pag
 pass "System page requires an explicit reboot confirmation"
 
 # Emulate only the host helper acknowledgement. host-reboot.sh itself is covered
-# by unit contract tests and invokes systemctl only on the installed Pi.
+# by unit contract tests and invokes the fixed Alpine reboot command only on Pi.
 # shellcheck disable=SC2016
 "${CONTAINER_ENGINE}" run -d \
     --name "${ACK_CONTAINER_NAME}" \

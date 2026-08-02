@@ -1,7 +1,7 @@
 # Raspberry Pi OMT Client Build System
 # Usage: make [target]
 
-.PHONY: help install setup-arm64-emulation build build-arm64 build-amd64 build-windows-deployer deploy up down logs lint test test-quick test-py test-receiver test-deployer test-vm test-setup security-scan pi-os-vm-prepare pi-os-vm-start pi-os-vm-shell pi-os-vm-stop pi-os-vm-status pi-os-vm-debug clean
+.PHONY: help install setup-arm64-emulation build build-arm64 build-amd64 build-windows-deployer deploy up down logs lint test test-quick test-py test-receiver test-deployer test-setup security-scan clean
 
 IMAGE_NAME   := omt-client
 ARM64_TARBALL := omt-client-arm64.tar.gz
@@ -29,11 +29,6 @@ help:
 	@echo "  up            Start local dev container (amd64)"
 	@echo "  down          Stop local dev container"
 	@echo "  logs          Follow local dev container logs"
-	@echo "  pi-os-vm-prepare  Download and provision a full Raspberry Pi OS ARM64 VM"
-	@echo "  pi-os-vm-start    Start the persistent Pi OS VM and wait for SSH"
-	@echo "  pi-os-vm-shell    Open an SSH shell in the Pi OS VM"
-	@echo "  pi-os-vm-stop     Cleanly stop the Pi OS VM"
-	@echo "  pi-os-vm-debug    Collect VM boot, systemd, device, and Docker diagnostics"
 	@echo ""
 	@echo "Quality targets:"
 	@echo "  lint          Run ruff + hadolint + shellcheck + yamllint"
@@ -42,7 +37,6 @@ help:
 	@echo "  test-py       Run Python unit tests only (requires test-setup)"
 	@echo "  test-receiver Run receiver-core analyzers, tests, and coverage gate"
 	@echo "  test-deployer Run locked C# build, unit/headless tests, and coverage gate"
-	@echo "  test-vm       Install the ARM64 capsule in a full Raspberry Pi OS VM"
 	@echo "  test-setup    Bootstrap Python and pinned repo-local .NET tooling"
 	@echo "  security-scan Run Trivy filesystem + image scans"
 	@echo "  clean         Remove build artifacts and stopped containers"
@@ -105,24 +99,6 @@ down:
 logs:
 	docker compose -f $(DEV_COMPOSE) logs -f
 
-pi-os-vm-prepare:
-	./scripts/pi-os-vm.sh prepare
-
-pi-os-vm-start:
-	./scripts/pi-os-vm.sh start
-
-pi-os-vm-shell:
-	./scripts/pi-os-vm.sh shell
-
-pi-os-vm-stop:
-	./scripts/pi-os-vm.sh stop
-
-pi-os-vm-status:
-	./scripts/pi-os-vm.sh status
-
-pi-os-vm-debug:
-	./scripts/pi-os-vm.sh debug
-
 # Lint
 lint:
 	./scripts/lint.sh
@@ -149,9 +125,6 @@ test-receiver:
 
 test-deployer:
 	./scripts/check-deployer.sh
-
-test-vm:
-	./scripts/pi-os-vm.sh test
 
 security-scan:
 	./scripts/security-scan.sh

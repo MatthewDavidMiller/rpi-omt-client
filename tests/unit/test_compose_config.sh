@@ -77,8 +77,14 @@ assert_contains '^[[:space:]]+OMT_REBOOT_RESULT_FILE:[[:space:]]+/host-actions/r
     "Web reboot acknowledgement uses the fixed result file"
 assert_not_contains '^[[:space:]]*-[[:space:]]+/proc(/|:)' \
     "proc subpaths are not bind-mounted because current runc rejects them"
-assert_contains '^[[:space:]]*-[[:space:]]+/tmp[[:space:]]*$' \
+assert_contains '^[[:space:]]*target:[[:space:]]+/tmp[[:space:]]*$' \
     "tmpfs is mounted at /tmp"
+assert_contains '^[[:space:]]*mem_limit:[[:space:]]+"\$\{OMT_CONTAINER_MEMORY_LIMIT:-768m\}"[[:space:]]*$' \
+    "container memory is bounded for low-RAM Pi 5 models"
+assert_contains '^[[:space:]]*pids_limit:[[:space:]]+128[[:space:]]*$' \
+    "container process count is bounded"
+assert_contains '^[[:space:]]*driver:[[:space:]]+local[[:space:]]*$' \
+    "container logs use Docker's bounded local driver"
 # Playback status is rewritten continuously, so a runtime directory left on the
 # omt-config volume is a permanent write load on SD-card-backed flash.
 assert_contains '^[[:space:]]*target:[[:space:]]+/run/omt[[:space:]]*$' \
@@ -92,12 +98,12 @@ assert_contains '^[[:space:]]*mode:[[:space:]]+1023[[:space:]]*$' \
     "the runtime tmpfs mode is explicit rather than engine-dependent"
 assert_not_contains '^[[:space:]]*-[[:space:]]+omt-config:/etc/omt/run' \
     "the runtime directory is not bound back onto the persistent volume"
-assert_contains '^[[:space:]]*-[[:space:]]+"\$\{OMT_VIDEO_GID:-44\}"[[:space:]]*(#.*)?$' \
-    "video group uses an installer-provided GID with a safe fallback"
-assert_contains '^[[:space:]]*-[[:space:]]+"\$\{OMT_RENDER_GID:-106\}"[[:space:]]*(#.*)?$' \
-    "render group uses an installer-provided GID with a safe fallback"
-assert_contains '^[[:space:]]*-[[:space:]]+"\$\{OMT_AUDIO_GID:-29\}"[[:space:]]*(#.*)?$' \
-    "audio group uses an installer-provided GID with a safe fallback"
+assert_contains '^[[:space:]]*-[[:space:]]+"\$\{OMT_VIDEO_GID:-27\}"[[:space:]]*(#.*)?$' \
+    "video group uses an installer-provided GID with the Alpine fallback"
+assert_contains '^[[:space:]]*-[[:space:]]+"\$\{OMT_RENDER_GID:-27\}"[[:space:]]*(#.*)?$' \
+    "render group uses an installer-provided GID with the Alpine fallback"
+assert_contains '^[[:space:]]*-[[:space:]]+"\$\{OMT_AUDIO_GID:-18\}"[[:space:]]*(#.*)?$' \
+    "audio group uses an installer-provided GID with the Alpine fallback"
 assert_contains '^volumes:[[:space:]]*$' \
     "top-level volumes section exists"
 assert_contains '^[[:space:]]+omt-config:[[:space:]]*$' \

@@ -3,66 +3,87 @@ set -euo pipefail
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 INSTALL="${ROOT}/deploy/host/install.sh"
+SERVICE_HELPERS="${ROOT}/deploy/lib/service-install.sh"
+EVENT_WATCHER="${ROOT}/deploy/host/host-event-watcher.sh"
 
 bash -n "${INSTALL}"
 
 require() {
-    local pattern="$1" message="$2"
-    if ! grep -Eq -- "${pattern}" "${INSTALL}"; then
-        echo "FAIL: ${message}" >&2
+    grep -Eq -- "$1" "${INSTALL}" || {
+        echo "FAIL: $2" >&2
         exit 1
-    fi
+    }
 }
 forbid() {
-    local pattern="$1" message="$2"
-    if grep -Eq -- "${pattern}" "${INSTALL}"; then
-        echo "FAIL: ${message}" >&2
+    if grep -Eq -- "$1" "${INSTALL}"; then
+        echo "FAIL: $2" >&2
         exit 1
     fi
 }
 
-require 'ARCH.*!=.*aarch64' "installer must reject non-ARM64 hosts"
-require 'HOST_REBOOT_SCRIPT=.*host-reboot\.sh' "reboot helper must be required"
-require 'HOST_REBOOT_REQUEST_LIB=.*reboot-request\.sh' "reboot request helper must be required"
-require 'HOST_REBOOT_REQUEST_LIB_INSTALLED=.*reboot-request\.sh' "reboot request helper must be installed beside the bridge"
-
-require 'PROJECT_LICENSE=.*LICENSE' "project license must be required"
-require 'THIRD_PARTY_NOTICES=.*THIRD_PARTY_NOTICES\.txt' "notices must be required"
-require 'STABLE_VOLUME="omt-config"' "stable OMT volume name must be explicit"
-forbid 'LEGACY_VOLUME=' "OMT installer must not define a legacy migration volume"
-forbid 'Migrating legacy' "OMT installer must not migrate legacy state"
-require '/etc/systemd/system/ndi-client\.service' "legacy NDI service must be detected"
-require 'docker container inspect ndi-client' "legacy NDI container must be detected"
-require 'does not migrate or modify it' "clean-break failure must explain policy"
+require 'uname -m.*aarch64' "installer must require aarch64"
+require 'ID:-.*alpine' "installer must require Alpine"
+require 'alpine-release.*3\.23' "installer must pin the validated Alpine branch"
+require 'PI_MODEL.*Raspberry.*Pi.*5' "installer must require Raspberry Pi 5"
+require 'tmpfs\|overlay\|squashfs\|ramfs' "diskless roots must be rejected"
+require 'persistent sys mode' "low-memory sys-mode policy must be explained"
+require 'command -v sshd' "installer must require a hardenable OpenSSH service"
 
 legacy_line="$(grep -n 'legacy_paths=(' "${INSTALL}" | cut -d: -f1)"
-mutation_line="$(grep -n 'systemctl set-default multi-user.target' "${INSTALL}" | cut -d: -f1)"
+mutation_line="$(grep -n '^apk update' "${INSTALL}" | cut -d: -f1)"
 (( legacy_line < mutation_line )) || {
-    echo "FAIL: legacy preflight must run before host mutation" >&2
+    echo "FAIL: incompatible predecessor preflight must precede mutation" >&2
     exit 1
 }
 
-require 'source_target\.json omt/settings\.xml' "new OMT state files must be permissioned"
-require 'HOST_ACTION_STATE_DIR=.*host-actions' "host action directory must be isolated"
-require 'chmod 0600.*HOST_REBOOT_REQUEST_FILE' "request file must be mode 0600"
-require 'chmod 0640.*HOST_REBOOT_RESULT_FILE' "result file must be mode 0640"
-require 'Environment=OMT_UID=' "reboot validator must receive fixed image UID"
-require 'Environment=OMT_GID=' "reboot validator must receive fixed image GID"
-require 'CapabilityBoundingSet=CAP_SYS_BOOT' "reboot unit must bound capabilities"
-require 'ProtectSystem=strict' "reboot unit must protect the host filesystem"
-require 'RestrictAddressFamilies=AF_UNIX' "reboot unit must restrict networking"
-require 'PathChanged=\$\{HOST_REBOOT_REQUEST_FILE\}' "reboot path unit must watch the fixed request"
-require 'systemctl enable --now omt-client-reboot\.path' "reboot watcher must be enabled"
+require 'apk add --no-cache' "dependencies must come from apk"
+require 'linux-rpi' "Pi-patched Alpine kernel must be installed"
+require 'linux-firmware-brcm' "Pi firmware must be installed"
+require 'raspberrypi-bootloader' "Pi boot firmware must be installed"
+require 'alsa-utils' "ALSA tools and profiles must be installed"
+require 'libdrm-tests' "DRM diagnostics must be installed"
+require 'docker-cli-compose' "Alpine Compose plugin must be installed"
+require 'zram-init' "compressed swap must be installed"
+require 'host_wpa_supplicant_config' "installer must apply the tested Wi-Fi configuration"
+grep -Fq 'ctrl_interface=/run/wpa_supplicant' "${SERVICE_HELPERS}" || {
+    echo "FAIL: Wi-Fi control socket must be enabled" >&2
+    exit 1
+}
+grep -Fq 'update_config=1' "${SERVICE_HELPERS}" || {
+    echo "FAIL: deployer Wi-Fi changes must be durable" >&2
+    exit 1
+}
+require 'rc-update add wpa_supplicant boot' "wpa_supplicant must start through OpenRC"
+forbid 'OMT_ALLOW_EMULATED_PI' "production Pi 5 validation must not have an environment bypass"
 
-require 'source .*/hdmi-config\.sh' "installer must source the shared HDMI rules"
-require 'host_validate_hdmi_video_mode' "HDMI mode validation must use the tested rule"
-require 'host_hdmi_config_txt' "config.txt rewrite must use the tested rule"
-require 'host_hdmi_cmdline_line' "cmdline.txt rewrite must use the tested rule"
-forbid 'BEGIN OMT Client HDMI configuration' \
-    "the managed config.txt block belongs in deploy/lib/hdmi-config.sh"
+require '90-omt-client-hardening\.conf' "sysctl and SSH hardening must be managed"
+require 'kernel\.unprivileged_bpf_disabled=1' "unprivileged BPF must be disabled"
+require 'no-new-privileges' "Docker daemon must default to no-new-privileges"
+require 'userland-proxy.*false' "Docker userland proxy must be disabled"
+require 'PermitRootLogin prohibit-password' "root password SSH must be disabled"
+require 'table inet omt_client' "nftables appliance policy must be installed"
+require 'policy drop' "firewall input must default deny"
+require 'tcp dport.*SSH_PORT.*WEB_PORT' "firewall must retain SSH and Web access"
+forbid 'usermod.*docker' "installer must not grant root-equivalent Docker group access"
 
-forbid '5960-8999' "installer must not open a broad legacy media port range"
-require 'add-service=mdns' "firewalld must allow mDNS"
-require 'ufw allow 5353/udp' "ufw must allow mDNS"
+require 'host_publish_openrc_service' "OpenRC services must publish atomically"
+require 'for service in omt-client-avahi-proxy omt-client-host-diagnostics omt-client-reboot omt-client' "all OMT OpenRC services must be enabled"
+require 'rc-update add "\$\{service\}" default' "OMT services must be enabled through OpenRC"
+require 'host-event-watcher\.sh' "fixed request watchers must be installed"
+require 'inotify-tools' "request watchers must avoid polling"
+grep -Fq 'inotifywait --monitor' "${EVENT_WATCHER}" || {
+    echo "FAIL: request watchers must keep a race-free persistent watch" >&2
+    exit 1
+}
+forbid 'systemctl' "Alpine host integration must not call systemd"
+forbid 'apt-get' "Alpine host integration must not call apt"
 
-echo "OMT installer contract tests passed"
+require 'usercfg\.txt' "Alpine boot customization must use usercfg.txt"
+require 'host_hdmi_config_txt' "KMS configuration must use tested rules"
+require 'host_hdmi_cmdline_line' "forced connector mode must use tested rules"
+require 'OMT_CONTAINER_MEMORY_LIMIT=768m' "low-RAM container cap must be explicit"
+require 'STABLE_VOLUME="omt-config"' "persistent volume name must remain stable"
+require 'chmod 0600.*HOST_REBOOT_REQUEST_FILE' "reboot request must be mode 0600"
+require 'chmod 0640.*HOST_REBOOT_RESULT_FILE' "reboot result must be mode 0640"
+
+echo "Alpine OMT installer contract tests passed"

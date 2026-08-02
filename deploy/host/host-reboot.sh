@@ -120,4 +120,4 @@ publish_result "${request_id}" accepted scheduled
 logger --tag omt-client-reboot "accepted reboot request ${request_id}"
 
 sleep 5
-exec /usr/bin/systemctl reboot --no-block
+exec /sbin/reboot

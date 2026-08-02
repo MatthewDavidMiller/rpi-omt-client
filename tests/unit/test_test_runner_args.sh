@@ -141,7 +141,7 @@ run_container_mode() {
        grep -Fxq -- '--publish' "${log_file}" &&
        grep -Fxq -- '--integration-only' "${log_file}" &&
        grep -Fxq -- "${expected_arm64}" "${case_dir}/${mode}-arm64"; then
-        echo "PASS: ${mode} mode publishes and runs Pi-userland integration"
+        echo "PASS: ${mode} mode publishes and runs Alpine-userland integration"
     else
         echo "FAIL: ${mode} mode deployer contract changed" >&2
         cat "${case_dir}/${mode}-output" >&2

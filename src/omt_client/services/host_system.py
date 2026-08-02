@@ -80,6 +80,7 @@ class HostSystem:
                 False,
                 error=(
                     "The reboot request was submitted but the host did not acknowledge it. "
-                    "Check the omt-client-reboot service journal before retrying."
+                    "Check rc-service omt-client-reboot status and /var/log/messages "
+                    "before retrying."
                 ),
             )

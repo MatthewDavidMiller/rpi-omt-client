@@ -1,0 +1,12 @@
+#!/sbin/openrc-run
+
+description="Watch for validated OMT Client reboot requests"
+supervisor=supervise-daemon
+command=/usr/local/libexec/omt-client/host-event-watcher.sh
+command_args=reboot
+respawn_delay=1
+respawn_max=0
+
+depend() {
+    after omt-client
+}

@@ -90,7 +90,6 @@ run_test "Version Detection" "${PROJECT_ROOT}/tests/unit/test_detect_version.sh"
 run_test "Container Engine Selection" "${PROJECT_ROOT}/tests/unit/test_container_engine.sh"
 run_test "Git Hook Setup" "${PROJECT_ROOT}/tests/unit/test_setup_hooks.sh"
 run_test "Python Tooling" "${PROJECT_ROOT}/tests/unit/test_python_tooling.sh"
-run_test "Pi OS VM Harness" "${PROJECT_ROOT}/tests/unit/test_pi_os_vm.sh"
 run_test "Test Runner Arguments" "${PROJECT_ROOT}/tests/unit/test_test_runner_args.sh"
 run_test "Supply Chain Guardrails" "${PROJECT_ROOT}/tests/unit/test_supply_chain.sh"
 run_test "Lint and syntax" "${PROJECT_ROOT}/scripts/lint.sh"
@@ -127,9 +126,9 @@ if ! ensure_test_container_engine; then
 fi
 
 run_test "Dockerfile lint" "${PROJECT_ROOT}/tests/unit/test_dockerfile_lint.sh"
-echo "=== Pi OS Userland Integration ==="
+echo "=== Alpine Userland Integration ==="
 "${PROJECT_ROOT}/scripts/check-deployer.sh" --integration-only
-echo -e "${GREEN}PASSED${NC}: Pi OS userland integration"
+echo -e "${GREEN}PASSED${NC}: Alpine userland integration"
 echo ""
 if [[ "${FULL_MODE}" == "true" ]]; then
     export REQUIRE_ARM64_BUILD=1

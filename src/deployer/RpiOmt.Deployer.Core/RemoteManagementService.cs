@@ -5,6 +5,10 @@ internal sealed class RemoteManagementService(
     ProgressRedactionService progress)
 {
     public static readonly TimeSpan RemoteTimeout = TimeSpan.FromSeconds(60);
+    public const string PlatformProbeCommand =
+        "uname -m && . /etc/os-release && printf '%s\\n' \"$ID\" && " +
+        "cat /etc/alpine-release && tr -d '\\000' < /proc/device-tree/model && " +
+        "printf '\\n' && hostname";
     private static readonly TimeSpan InstallerTimeout = TimeSpan.FromMinutes(30);
 
     public async Task TestConnectionAsync(
@@ -16,13 +20,13 @@ internal sealed class RemoteManagementService(
         await using IRemoteClient remote = remoteClientFactory.Create();
         await remote.ConnectAsync(connection, cancellationToken).ConfigureAwait(false);
         CommandResult result = progress.Redact(await remote.RunAsync(
-            "uname -m && hostname",
+            PlatformProbeCommand,
             string.Empty,
             null,
             RemoteTimeout,
             cancellationToken).ConfigureAwait(false));
         DeploymentGuards.RequireSuccess(result);
-        DeploymentGuards.RequireAarch64(result);
+        DeploymentGuards.RequireAlpinePi5(result);
         progress.Emit("SSH connection succeeded.");
     }
 
@@ -69,6 +73,7 @@ internal sealed class RemoteManagementService(
             installer,
             $"{directory}/deploy/host/uninstall.sh",
             $"{directory}/deploy/host/host-diagnostics.sh",
+            $"{directory}/deploy/host/host-event-watcher.sh",
             $"{directory}/deploy/host/host-reboot.sh",
             $"{directory}/deploy/transaction.sh",
         ];

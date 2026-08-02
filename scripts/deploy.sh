@@ -79,10 +79,14 @@ for name in "${ARTIFACT_NAMES[@]}"; do
     LOCAL_DIGESTS["${name}"]="$(sha256sum -- "${path}" | awk '{print $1}')"
 done
 
-echo "Checking target architecture on ${HOST}..."
-remote_architecture="$(ssh "${HOST}" uname -m)"
-if [[ "${remote_architecture}" != "aarch64" ]]; then
-    echo "ERROR: remote host must report aarch64; detected ${remote_architecture:-unknown}." >&2
+echo "Checking Alpine Raspberry Pi 5 target on ${HOST}..."
+remote_platform="$(ssh "${HOST}" 'uname -m; . /etc/os-release; printf "%s\n" "$ID"; cat /etc/alpine-release; tr -d "\000" < /proc/device-tree/model; printf "\n"')"
+mapfile -t platform_lines <<< "${remote_platform}"
+if [[ "${platform_lines[0]:-}" != "aarch64" || \
+      "${platform_lines[1]:-}" != "alpine" || \
+      "${platform_lines[2]:-}" != 3.23.* || \
+      "${platform_lines[3]:-}" != Raspberry\ Pi\ 5* ]]; then
+    echo "ERROR: remote host must be a Raspberry Pi 5 running Alpine Linux 3.23 aarch64." >&2
     exit 1
 fi
 
@@ -147,5 +151,5 @@ ssh "${HOST}" bash "${REMOTE_STAGE}/deploy/transaction.sh" \
 
 cleanup_required=false
 ssh -t "${HOST}" \
-    "chmod +x '${REMOTE_DIR}/deploy/host/install.sh' '${REMOTE_DIR}/deploy/host/uninstall.sh' '${REMOTE_DIR}/deploy/host/host-diagnostics.sh' '${REMOTE_DIR}/deploy/host/host-reboot.sh' '${REMOTE_DIR}/deploy/transaction.sh' && sudo '${REMOTE_DIR}/deploy/host/install.sh'"
+    "chmod +x '${REMOTE_DIR}/deploy/host/install.sh' '${REMOTE_DIR}/deploy/host/uninstall.sh' '${REMOTE_DIR}/deploy/host/host-diagnostics.sh' '${REMOTE_DIR}/deploy/host/host-event-watcher.sh' '${REMOTE_DIR}/deploy/host/host-reboot.sh' '${REMOTE_DIR}/deploy/transaction.sh' && sudo '${REMOTE_DIR}/deploy/host/install.sh'"
 echo "Deployed. Use the authoritative Web UI URL printed by install.sh above."

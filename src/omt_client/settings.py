@@ -39,7 +39,7 @@ ENVIRONMENT_SPECS = (
     EnvironmentSpec("OMT_SOURCE_CACHE_TTL_SECONDS", "5", "number", 0),
     EnvironmentSpec("OMT_PLAYBACK_STATUS_STALE_SECONDS", "5", "integer", 1),
     EnvironmentSpec("OMT_DIAGNOSTICS_HOST_TIMEOUT_SECONDS", "30", "number", 0, False),
-    # Host oneshot budget (install.sh systemd Environment=). Mirrored here so
+    # Host action budget (install.sh OpenRC environment). Mirrored here so
     # support bundles report the expected host ceiling; changing the container
     # env alone does not reconfigure the host unit.
     EnvironmentSpec("OMT_DIAGNOSTICS_HOST_BUDGET_SECONDS", "25", "integer", 1),

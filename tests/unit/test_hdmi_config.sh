@@ -56,7 +56,7 @@ done
 
 # ─── config.txt managed block ────────────────────────────────────────────────
 
-managed_block=$'# BEGIN OMT Client HDMI configuration\n[all]\ndtoverlay=vc4-kms-v3d\n# END OMT Client HDMI configuration'
+managed_block=$'# BEGIN OMT Client HDMI configuration\ndtoverlay=vc4-kms-v3d\nmax_framebuffers=2\ndisable_fw_kms_setup=1\n# END OMT Client HDMI configuration'
 
 first_install="$(printf 'dtparam=audio=on\n' | host_hdmi_config_txt)"
 expect_equal "first install appends the managed block" \

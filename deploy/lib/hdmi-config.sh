@@ -1,5 +1,5 @@
 #!/bin/bash
-# Pure HDMI boot-configuration rules shared by the installer and its tests.
+# Pure Alpine Pi usercfg/cmdline rules shared by the installer and its tests.
 #
 # These functions never touch /boot themselves: they take the current document
 # and print the intended one. The installer stages and renames the result. That
@@ -66,8 +66,9 @@ host_hdmi_config_txt() {
             }
             print ""
             print "# BEGIN OMT Client HDMI configuration"
-            print "[all]"
             print "dtoverlay=vc4-kms-v3d"
+            print "max_framebuffers=2"
+            print "disable_fw_kms_setup=1"
             print "# END OMT Client HDMI configuration"
         }
     '

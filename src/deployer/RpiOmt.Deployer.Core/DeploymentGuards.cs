@@ -50,17 +50,24 @@ internal static class DeploymentGuards
         }
     }
 
-    public static void RequireAarch64(CommandResult result)
+    public static void RequireAlpinePi5(CommandResult result)
     {
-        string architecture = result.StandardOutput
+        string[] platform = result.StandardOutput
             .Split('\n', StringSplitOptions.RemoveEmptyEntries)
             .Select(line => line.Trim())
-            .FirstOrDefault() ?? string.Empty;
-        if (!string.Equals(architecture, "aarch64", StringComparison.Ordinal))
+            .ToArray();
+        string architecture = platform.ElementAtOrDefault(0) ?? string.Empty;
+        string os = platform.ElementAtOrDefault(1) ?? string.Empty;
+        string version = platform.ElementAtOrDefault(2) ?? string.Empty;
+        string model = platform.ElementAtOrDefault(3) ?? string.Empty;
+        if (!string.Equals(architecture, "aarch64", StringComparison.Ordinal) ||
+            !string.Equals(os, "alpine", StringComparison.Ordinal) ||
+            !version.StartsWith("3.23.", StringComparison.Ordinal) ||
+            !model.StartsWith("Raspberry Pi 5", StringComparison.Ordinal))
         {
             throw new DeploymentException(
-                "The remote host must be a 64-bit ARM Raspberry Pi (aarch64); detected " +
-                $"{(architecture.Length == 0 ? "unrecognized output" : architecture)}.");
+                "The remote host must be a Raspberry Pi 5 running Alpine Linux 3.23 " +
+                $"aarch64; detected {(platform.Length == 0 ? "unrecognized output" : string.Join(", ", platform.Take(4)))}.");
         }
     }
 

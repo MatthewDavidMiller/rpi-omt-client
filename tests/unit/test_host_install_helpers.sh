@@ -6,7 +6,7 @@ set -euo pipefail
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 CASE_DIR="$(mktemp -d)"
 trap 'rm -rf "${CASE_DIR}"' EXIT
-mkdir -p "${CASE_DIR}/bin" "${CASE_DIR}/systemd" "${CASE_DIR}/publish"
+mkdir -p "${CASE_DIR}/bin" "${CASE_DIR}/openrc" "${CASE_DIR}/publish"
 
 # shellcheck source=deploy/lib/host-validation.sh
 source "${ROOT}/deploy/lib/host-validation.sh"
@@ -59,48 +59,63 @@ fi
 [[ ! -e "${CASE_DIR}/publish/failing.service" ]]
 [[ -z "$(find "${CASE_DIR}/publish" -name '.failing.service.tmp.*' -print -quit)" ]]
 
-# systemd reads units it cannot open as absent, so the installer's units have to
-# land world-readable and root-owned. host_publish_systemd_unit is the only
-# thing that decides that for all six of them.
+# OpenRC service scripts must land executable and root-owned.
 FAKE_CHOWN_LOG="${CASE_DIR}/unit-chown.log" \
 PATH="${CASE_DIR}/bin:${PATH}" \
-    host_publish_systemd_unit "${CASE_DIR}/publish/managed.service" \
-    <<< $'[Unit]\nDescription=managed unit'
+    host_publish_openrc_service "${CASE_DIR}/publish/managed-service" \
+    <<< $'#!/sbin/openrc-run\ndescription="managed service"'
 grep -q '^root:root ' "${CASE_DIR}/unit-chown.log"
-[[ "$(stat -c '%a' "${CASE_DIR}/publish/managed.service")" == 644 ]]
-grep -qx 'Description=managed unit' "${CASE_DIR}/publish/managed.service"
+[[ "$(stat -c '%a' "${CASE_DIR}/publish/managed-service")" == 755 ]]
+grep -qx 'description="managed service"' "${CASE_DIR}/publish/managed-service"
 
-touch "${CASE_DIR}/systemd/one.service" "${CASE_DIR}/systemd/two.path"
-host_remove_systemd_units_at \
-    "${CASE_DIR}/systemd" one.service two.path
-[[ ! -e "${CASE_DIR}/systemd/one.service" ]]
-[[ ! -e "${CASE_DIR}/systemd/two.path" ]]
-for unsafe_unit in '../unsafe' '/etc/passwd' 'unit name' '' 'unit;rm'; do
-    if host_remove_systemd_units_at "${CASE_DIR}/systemd" "${unsafe_unit}"; then
-        echo "unsafe systemd unit name accepted: ${unsafe_unit}" >&2
+touch "${CASE_DIR}/openrc/one" "${CASE_DIR}/openrc/two"
+host_remove_openrc_services_at "${CASE_DIR}/openrc" one two
+[[ ! -e "${CASE_DIR}/openrc/one" ]]
+[[ ! -e "${CASE_DIR}/openrc/two" ]]
+for unsafe_service in '../unsafe' '/etc/passwd' 'service name' '' 'service;rm'; do
+    if host_remove_openrc_services_at "${CASE_DIR}/openrc" "${unsafe_service}"; then
+        echo "unsafe OpenRC service name accepted: ${unsafe_service}" >&2
         exit 1
     fi
 done
-ln -s "${CASE_DIR}/systemd" "${CASE_DIR}/systemd-link"
-for unsafe_root in "${CASE_DIR}/systemd-link" "${CASE_DIR}/../$(basename -- "${CASE_DIR}")" \
+ln -s "${CASE_DIR}/openrc" "${CASE_DIR}/openrc-link"
+for unsafe_root in "${CASE_DIR}/openrc-link" "${CASE_DIR}/../$(basename -- "${CASE_DIR}")" \
         relative / "${CASE_DIR}/absent"; do
-    if host_remove_systemd_units_at "${unsafe_root}" one.service; then
-        echo "unsafe systemd root accepted: ${unsafe_root}" >&2
+    if host_remove_openrc_services_at "${unsafe_root}" one; then
+        echo "unsafe OpenRC root accepted: ${unsafe_root}" >&2
         exit 1
     fi
 done
 
-# The uninstaller calls the no-root wrapper, so the default root it supplies is
-# the only thing standing between a unit name and the real /etc/systemd/system.
+# The uninstaller wrapper must default to Alpine's fixed init-script directory.
 # Record the delegation in a separate shell: stubbing the callee here would let
 # a wrong default remove units from the machine running this suite.
 recorded_removal="$(
     bash -c '
         source "$1"
-        host_remove_systemd_units_at() { printf "%s" "$*"; }
-        host_remove_systemd_units one.service two.path
+        host_remove_openrc_services_at() { printf "%s" "$*"; }
+        host_remove_openrc_services one two
     ' helper "${ROOT}/deploy/lib/service-install.sh"
 )"
-[[ "${recorded_removal}" == "/etc/systemd/system one.service two.path" ]]
+[[ "${recorded_removal}" == "/etc/init.d one two" ]]
+
+wpa_config="$(
+    host_wpa_supplicant_config <<'EOF'
+country=US
+update_config=0
+ctrl_interface=/old/socket
+network={
+    ssid=74657374
+    psk=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+}
+EOF
+)"
+[[ "$(grep -c '^ctrl_interface=/run/wpa_supplicant$' <<< "${wpa_config}")" -eq 1 ]]
+[[ "$(grep -c '^ctrl_interface_group=wheel$' <<< "${wpa_config}")" -eq 1 ]]
+[[ "$(grep -c '^update_config=1$' <<< "${wpa_config}")" -eq 1 ]]
+grep -qx 'country=US' <<< "${wpa_config}"
+grep -qx '    ssid=74657374' <<< "${wpa_config}"
+grep -qx '    psk=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef' \
+    <<< "${wpa_config}"
 
 echo "Host install/uninstall helper behavior tests passed"

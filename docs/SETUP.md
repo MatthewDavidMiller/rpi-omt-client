@@ -1,11 +1,22 @@
 # Setup Guide
 
-## Requirements
+## Supported host
 
-- Raspberry Pi 5 running 64-bit Raspberry Pi OS
-- connected DRM/KMS HDMI output and ALSA playback device
-- network reachability to OMT senders
-- ARM64 image produced by `make build-arm64`
+- Raspberry Pi 5 only;
+- Alpine Linux 3.23 aarch64;
+- persistent `sys` mode on SD, eMMC, or USB storage;
+- connected DRM/KMS HDMI and ALSA HDMI playback devices;
+- network reachability to OMT senders.
+
+Diskless/data-mode Alpine is rejected because its RAM-backed root competes
+with video decoding. Raspberry Pi OS, other distributions, 32-bit userspace,
+and older Pi boards are rejected before installer mutation.
+
+Flash the official Alpine Raspberry Pi aarch64 image, complete `setup-alpine`,
+and install to disk in `sys` mode. Create a non-root administrator with `sudo`,
+keep OpenSSH reachable, enable the v3.23 `community` repository, and fully
+update the machine before deployment. Ethernet is strongly recommended for the
+first install. The installer applies its own current package update as well.
 
 ## Windows GUI
 
@@ -16,88 +27,94 @@ make test-setup
 make build-windows-deployer
 ```
 
-Run `dist/rpi-omt-client-deployer-windows-x64.exe` on Windows 10/11 with
-Docker Desktop, OpenSSH host trust, Pi SSH credentials, and this source tree.
-Connect stores the SSH target used by every action; Deploy builds/uploads;
-Manage reads status/logs or restarts; Wi-Fi updates NetworkManager; Activity
-shows the operation transcript; and About displays version, copyright, license,
-and third-party notices. The theme selector in the title row offers System (the
-default, which follows Windows), Light, and Dark. While an action runs, the
-compact status bar remains visible and the Activity tab opens automatically.
-Validation problems appear above the tabs. Log text can be selected directly,
-copied in full with **Copy Log**, or saved as a UTF-8 text file with **Export
-Log**. Every task page reflows or scrolls when the window is resized for a
-compact display; the layout does not rely on draggable pane dividers.
+Run `dist/rpi-omt-client-deployer-windows-x64.exe` on Windows 10/11 with Docker
+Desktop, OpenSSH host trust, administrator SSH/sudo credentials, and this source
+tree. Connect validates Alpine 3.23 aarch64 and the Pi 5 device-tree model.
+Deploy builds, verifies, uploads, and installs the capsule. Manage reads
+container status/logs or restarts it. Wi-Fi updates the running
+`wpa_supplicant` through its control socket and stores a derived WPA PSK rather
+than sending the plaintext passphrase to a command line.
 
 ## CLI deployment
 
 ```bash
 make build-arm64
-make deploy HOST=pi@192.168.1.50
+make deploy HOST=admin@192.168.1.50
 ```
 
-Manifest version 2 contains a variable number of normalized relative paths,
-including:
+`deploy/manifest-v2.txt` is the authoritative capsule. It includes the image,
+Compose definition, host scripts, OpenRC definitions, shared validation rules,
+transaction helper, and legal files. The deployment clients hash every local
+snapshot, verify every remote SHA-256, and promote the complete set through the
+durable v2 transaction journal.
 
-- `omt-client-arm64.tar.gz`
-- `deploy/compose.yml`
-- `deploy/host/install.sh`
-- `deploy/host/uninstall.sh`
-- `deploy/host/host-diagnostics.sh`
-- `deploy/host/host-reboot.sh`
-- `deploy/lib/reboot-request.sh`
-- `deploy/lib/hdmi-config.sh`
-- `deploy/lib/host-validation.sh`
-- `deploy/lib/publication.sh`
-- `deploy/lib/service-install.sh`
-- `deploy/transaction.sh`
-- `deploy/manifest-v2.txt`
-- `LICENSE`
-- `THIRD_PARTY_NOTICES.txt`
-- `THIRD_PARTY_SOURCE.md`
+Its nested-path boundary is:
 
-`deploy/manifest-v2.txt` is the authoritative manifest and
-`deploy/transaction.sh` provides durable nested-path crash recovery.
+```text
+deploy/compose.yml
+deploy/host/install.sh
+deploy/host/uninstall.sh
+deploy/host/host-diagnostics.sh
+deploy/host/host-event-watcher.sh
+deploy/host/host-reboot.sh
+deploy/lib/reboot-request.sh
+deploy/lib/hdmi-config.sh
+deploy/lib/host-validation.sh
+deploy/lib/publication.sh
+deploy/lib/service-install.sh
+deploy/openrc/omt-client
+deploy/openrc/omt-client-avahi-proxy
+deploy/openrc/omt-client-host-diagnostics
+deploy/openrc/omt-client-reboot
+deploy/transaction.sh
+deploy/manifest-v2.txt
+LICENSE
+THIRD_PARTY_NOTICES.txt
+THIRD_PARTY_SOURCE.md
+```
 
 ## Installer behavior
 
-Run `sudo ./deploy/host/install.sh`. Before changing the host it rejects
-non-ARM64 systems, unsafe install paths, missing capsule files, and any
-detected incompatible predecessor service, state directory, container, or
-volume. Predecessor state is neither deleted nor migrated.
+Run `sudo ./deploy/host/install.sh`. Before mutation it verifies Alpine 3.23,
+aarch64, the Pi 5 model, a persistent root filesystem, safe paths, the complete
+capsule, and absence of an incompatible predecessor.
 
-The installer:
+The installer then:
 
-1. configures headless boot and Docker;
-2. loads the pinned OMT image and creates the external `omt-config` volume;
-3. resolves container UID/GID and DRM/ALSA groups;
-4. creates separate Avahi, diagnostics, and host-action directories and
-   installs the filtered Avahi proxy plus request-triggered diagnostics;
-5. pre-creates protected reboot request/result files and installs their
-   root-owned systemd validator;
-6. configures DRM/KMS and optional connector mode;
-7. installs and enables `omt-client.service`.
+1. updates Alpine and installs `linux-rpi`, Raspberry Pi boot firmware,
+   Broadcom firmware, ALSA/DRM tools, Docker/Compose, Avahi/D-Bus, nftables,
+   inotify, `wpa_supplicant`, and zram support;
+2. applies kernel/network sysctls, SSH safeguards, bounded Docker logs, daemon
+   no-new-privileges, zram swap, a 768 MiB container cap, a 128-PID cap, and
+   bounded tmpfs mounts;
+3. installs a default-deny nftables input policy allowing established traffic,
+   loopback, ICMP/IPv6 neighbor discovery, DHCP, mDNS, SSH, and the Web port;
+4. loads the ARM64 image, prepares the persistent volume and least-privilege
+   Avahi/diagnostics/reboot channels;
+5. enables full KMS and HDMI audio in Alpine's active `usercfg.txt`, with an
+   optional forced connector mode in the active cmdline file;
+6. installs and enables the OpenRC container, Avahi proxy, diagnostics watcher,
+   reboot watcher, and persistent `wpa_supplicant` control services. Existing
+   Wi-Fi network blocks are preserved and the config remains root-only.
 
-It prints the authoritative HTTPS URL. Retrieve the generated first password
-from the container log as shown in the installer summary.
+The installer never adds an operator to Docker's root-equivalent `docker`
+group. Existing Docker daemon JSON is merged with the appliance security/log
+policy. A reboot is required after installation to use the updated kernel,
+firmware, and KMS settings.
 
 ## First use
 
-Sign in, select a discovered source on Dashboard, or save a direct target such
-as `omt://192.168.1.60:6400` on Network Settings. An optional Discovery Server
-defaults to port 6399. Diagnostics can verify discovery, direct reachability,
-receiver/controller state, and bundle contents. Raw packet capture is disabled
-unless selected for an individual diagnostics download.
+Sign in at the HTTPS URL printed by the installer. Retrieve the generated first
+password using the exact Docker log command in its summary. Select a discovered
+source or save a direct target such as `omt://192.168.1.60:6400`.
 
 ## Upgrade and uninstall
 
-Deploy a complete newer manifest-v2 capsule to the same OMT install directory.
-The clients first recover an installed v1 transaction with its own v1 manifest,
-then use the staged v2 helper. The v2 journal stores its own manifest, so
-rollback never depends on the next release's artifact list. Persistent OMT
-state remains in `omt-config`; credentials, sessions, TLS material, and source
-target schema 1 are preserved.
+Deploy a complete newer manifest-v2 capsule to the same directory. Persistent
+credentials, sessions, TLS material, and source state remain in `omt-config`.
 
-Run `sudo ./deploy/host/uninstall.sh` to remove services and image. The script
-asks before removing the install directory and `omt-config`. It does not
-remove unrelated predecessor installations or data.
+Run `sudo ./deploy/host/uninstall.sh` to remove owned OpenRC services, host
+state, firewall rules, image, and optionally the volume/install directory. The
+shared Docker log policy and zram configuration remain as safe host defaults.
+Wi-Fi services and network profiles also remain to avoid disconnecting the
+operator from the host.

@@ -1,0 +1,37 @@
+#!/sbin/openrc-run
+
+description="Filtered Avahi system bus proxy for OMT Client"
+supervisor=supervise-daemon
+command=/usr/bin/xdg-dbus-proxy
+command_args="unix:path=/run/dbus/system_bus_socket ${OMT_AVAHI_PROXY_SOCKET} --filter --talk=org.freedesktop.Avahi"
+command_user="nobody:${OMT_GID}"
+umask=0117
+respawn_delay=1
+respawn_max=0
+
+depend() {
+    need dbus avahi-daemon
+    after networking
+}
+
+start_pre() {
+    rm -f -- "${OMT_AVAHI_PROXY_SOCKET}"
+}
+
+start_post() {
+    local attempt
+    for attempt in $(seq 1 50); do
+        if [[ -S "${OMT_AVAHI_PROXY_SOCKET}" ]]; then
+            chown "nobody:${OMT_GID}" "${OMT_AVAHI_PROXY_SOCKET}"
+            chmod 0660 "${OMT_AVAHI_PROXY_SOCKET}"
+            return 0
+        fi
+        sleep 0.1
+    done
+    eerror "Filtered Avahi proxy did not create its socket"
+    return 1
+}
+
+stop_post() {
+    rm -f -- "${OMT_AVAHI_PROXY_SOCKET}"
+}

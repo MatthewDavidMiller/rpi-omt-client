@@ -1,0 +1,41 @@
+#!/sbin/openrc-run
+
+description="OMT Client Docker appliance"
+
+depend() {
+    need docker
+    use dbus avahi-daemon
+    after networking omt-client-avahi-proxy
+}
+
+start_pre() {
+    [[ -d "${OMT_INSTALL_DIR}" && ! -L "${OMT_INSTALL_DIR}" ]] || {
+        eerror "OMT Client install directory is missing or unsafe"
+        return 1
+    }
+    "${OMT_RECOVERY_HELPER}" recover "${OMT_INSTALL_DIR}" "${OMT_RECOVERY_MANIFEST}"
+    find /dev/dri -maxdepth 1 -type c -name 'card*' -print -quit 2>/dev/null | grep -q . || {
+        eerror "OMT Client requires a primary DRM card under /dev/dri"
+        return 1
+    }
+    find /dev/snd -maxdepth 1 -type c -name 'pcmC*D*p' -print -quit 2>/dev/null | grep -q . || {
+        eerror "OMT Client requires an ALSA playback PCM under /dev/snd"
+        return 1
+    }
+}
+
+start() {
+    ebegin "Starting OMT Client container"
+    cd "${OMT_INSTALL_DIR}"
+    docker compose --env-file "${OMT_COMPOSE_ENV_FILE}" \
+        -f "${OMT_COMPOSE_FILE}" up -d
+    eend $?
+}
+
+stop() {
+    ebegin "Stopping OMT Client container"
+    cd "${OMT_INSTALL_DIR}"
+    docker compose --env-file "${OMT_COMPOSE_ENV_FILE}" \
+        -f "${OMT_COMPOSE_FILE}" down
+    eend $?
+}

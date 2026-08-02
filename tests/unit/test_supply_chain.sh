@@ -137,7 +137,7 @@ assert_literal "${PRE_COMMIT_HOOK}" './scripts/test-local.sh --full' "Pre-commit
 assert_literal "${PRE_COMMIT_HOOK}" './scripts/audit-python-deps.sh' "Pre-commit runs Python dependency audits"
 assert_literal "${PRE_COMMIT_HOOK}" './scripts/security-scan.sh' "Pre-commit runs Trivy scans"
 assert_literal "${PROJECT_ROOT}/scripts/test-local.sh" '"${PROJECT_ROOT}/scripts/check-deployer.sh" --publish' "Default and full suites publish Windows deployer"
-assert_literal "${PROJECT_ROOT}/scripts/test-local.sh" '"${PROJECT_ROOT}/scripts/check-deployer.sh" --integration-only' "Container tier runs C# Pi-userland tests"
+assert_literal "${PROJECT_ROOT}/scripts/test-local.sh" '"${PROJECT_ROOT}/scripts/check-deployer.sh" --integration-only' "Container tier runs C# Alpine-userland tests"
 
 assert_literal "${PYTHON_AUDIT}" 'run_audit audit_hash_locked "requirements/runtime.txt"' "Python audit covers application dependencies"
 assert_literal "${PYTHON_AUDIT}" 'run_audit audit_pinned_no_deps "tests/requirements-dev.txt"' "Python audit covers development dependencies"
@@ -167,15 +167,8 @@ assert_literal "${PROJECT_ROOT}/scripts/install-arm64-emulation.sh" '1ad17b7bd5e
 assert_literal "${PROJECT_ROOT}/scripts/install-arm64-emulation.sh" 'systemctl restart systemd-binfmt.service' "Linux ARM64 bootstrap persists registration with systemd-binfmt"
 assert_literal "${PROJECT_ROOT}/scripts/arm64-binfmt.conf" '/usr/local/bin/qemu-aarch64-static:POCF' "ARM64 binfmt rule uses the host emulator and fix-binary flag"
 assert_literal "${PROJECT_ROOT}/scripts/install-dev-deps.sh" '"${SCRIPT_DIR}/install-arm64-emulation.sh"' "Developer install enables ARM64 emulation"
-assert_executable "${PROJECT_ROOT}/scripts/install-pi-os-vm-tooling.sh" "Pi OS VM tooling installer is executable"
-assert_executable "${PROJECT_ROOT}/scripts/pi-os-vm-toolbox.sh" "Pi OS VM tooling launcher is executable"
-assert_literal "${PROJECT_ROOT}/scripts/install-dev-deps.sh" '"${SCRIPT_DIR}/install-pi-os-vm-tooling.sh"' "Developer install provisions Pi OS VM tooling"
-assert_contains "${PROJECT_ROOT}/tests/vm/tooling.env" \
-    '^PI_OS_VM_TOOLING_BASE=registry\.fedoraproject\.org/fedora@sha256:[0-9a-f]{64}$' \
-    "Pi OS VM Fedora tooling base is digest pinned"
-assert_literal "${PROJECT_ROOT}/tests/vm/Containerfile" 'qemu-system-aarch64' "Pi OS VM tooling includes cross-QEMU"
-assert_literal "${PROJECT_ROOT}/tests/vm/Containerfile" 'libguestfs' "Pi OS VM tooling includes guest filesystem access"
-assert_literal "${PROJECT_ROOT}/tests/vm/Containerfile" 'USER 1000:1000' "Pi OS VM tooling is non-root"
+assert_absent "${PROJECT_ROOT}/scripts/pi-os-vm.sh" "Unsupported Raspberry Pi OS VM harness is absent"
+assert_absent "${PROJECT_ROOT}/tests/vm/pi-os-image.env" "Unsupported Raspberry Pi OS VM fixtures are absent"
 assert_literal "${PROJECT_ROOT}/scripts/test-local.sh" 'export REQUIRE_ARM64_BUILD=1' "Full local gate requires the ARM64 builder"
 
 audit_test_dir="$(mktemp -d)"

@@ -7,13 +7,13 @@ namespace RpiOmt.Deployer.IntegrationTests;
 
 public sealed class PiUserlandTests : IDisposable
 {
-    private readonly string _testRoot = Path.Combine(Path.GetTempPath(), $"rpi-omt-pi-userland-{Guid.NewGuid():N}");
+    private readonly string _testRoot = Path.Combine(Path.GetTempPath(), $"rpi-omt-alpine-userland-{Guid.NewGuid():N}");
 
     public PiUserlandTests()
     {
         if (OperatingSystem.IsWindows())
         {
-            throw new PlatformNotSupportedException("Pi userland container tests run on Linux.");
+            throw new PlatformNotSupportedException("Alpine userland container tests run on Linux.");
         }
 
         Directory.CreateDirectory(Path.Combine(_testRoot, "bin"));
@@ -30,26 +30,19 @@ public sealed class PiUserlandTests : IDisposable
             fi
             exec "$@"
             """);
-        WriteExecutable("nmcli", """
+        WriteExecutable("wpa_cli", """
             #!/bin/sh
             set -eu
-            echo "nmcli:$*" >> /tmp/pi-test/nmcli.log
-            if [ "$1" = "dev" ] && [ "$2" = "wifi" ] && [ "$3" = "rescan" ]; then exit 0; fi
-            if [ "$1" = "-t" ] && [ "$2" = "--escape" ] && [ "$3" = "no" ] && [ "$4" = "-f" ]; then
-              if [ "$5" = "SSID" ]; then printf '%s\n' " Studio WiFi " "Studio WiFi"; exit 0; fi
-              if [ "$5" = "NAME" ]; then exit 0; fi
-            fi
-            if [ "$1" = "connection" ] && [ "$2" = "add" ]; then echo "ssid:${10}" >> /tmp/pi-test/nmcli.log; exit 0; fi
-            if [ "$1" = "connection" ] && [ "$2" = "modify" ]; then
-              previous=""
-              for argument in "$@"; do
-                if [ "$previous" = "wifi-sec.psk" ]; then echo "wifi_password:$argument" >> /tmp/pi-test/nmcli.log; exit 0; fi
-                previous="$argument"
-              done
-            fi
-            if [ "$1" = "connection" ] && [ "$2" = "up" ]; then echo "up:$3" >> /tmp/pi-test/nmcli.log; exit 0; fi
-            echo "unexpected nmcli arguments: $*" >&2
-            exit 64
+            echo "wpa_cli:$*" >> /tmp/pi-test/wpa_cli.log
+            [ "$1" = "-i" ] && [ "$2" = "wlan0" ] || exit 64
+            case "$3" in
+              ping) echo PONG ;;
+              scan|set_network|enable_network|save_config|select_network|reassociate) echo OK ;;
+              list_networks) printf 'network id / ssid / bssid / flags\n' ;;
+              add_network) echo 7 ;;
+              get_network) echo FAIL ;;
+              *) exit 64 ;;
+            esac
             """);
     }
 
@@ -59,7 +52,8 @@ public sealed class PiUserlandTests : IDisposable
     public async Task WifiMutationRunsSafelyInPiUserland(bool connect)
     {
         var engine = await ResolveContainerEngineAsync(TestContext.Current.CancellationToken);
-        var image = Environment.GetEnvironmentVariable("PI_OS_TEST_IMAGE") ?? "debian:bookworm-slim";
+        var image = Environment.GetEnvironmentVariable("ALPINE_TEST_IMAGE") ??
+            "alpine:3.23.5@sha256:fd791d74b68913cbb027c6546007b3f0d3bc45125f797758156952bc2d6daf40";
         if (!await ImageExistsAsync(engine, image, TestContext.Current.CancellationToken))
         {
             Assert.Skip($"Container image is not available locally: {image}");
@@ -76,19 +70,20 @@ public sealed class PiUserlandTests : IDisposable
             TestContext.Current.CancellationToken);
 
         var sudoLog = await File.ReadAllTextAsync(Path.Combine(_testRoot, "sudo.log"), TestContext.Current.CancellationToken);
-        var nmcliLog = await File.ReadAllTextAsync(Path.Combine(_testRoot, "nmcli.log"), TestContext.Current.CancellationToken);
+        var wpaLog = await File.ReadAllTextAsync(Path.Combine(_testRoot, "wpa_cli.log"), TestContext.Current.CancellationToken);
         Assert.Contains("sudo_password:sudo-password", sudoLog, StringComparison.Ordinal);
-        Assert.Contains("wifi_password:wifi-password", nmcliLog, StringComparison.Ordinal);
-        Assert.DoesNotContain("wifi_password:sudo-password", nmcliLog, StringComparison.Ordinal);
+        Assert.Contains("set_network 7 psk ", wpaLog, StringComparison.Ordinal);
+        Assert.DoesNotContain("wifi-password", wpaLog, StringComparison.Ordinal);
+        Assert.DoesNotContain("sudo-password", wpaLog, StringComparison.Ordinal);
         if (connect)
         {
-            Assert.Contains("nmcli:dev wifi rescan ifname wlan0", nmcliLog, StringComparison.Ordinal);
-            Assert.Contains("up: Studio WiFi ", nmcliLog, StringComparison.Ordinal);
+            Assert.Contains("wpa_cli:-i wlan0 scan", wpaLog, StringComparison.Ordinal);
+            Assert.Contains("wpa_cli:-i wlan0 select_network 7", wpaLog, StringComparison.Ordinal);
         }
         else
         {
-            Assert.DoesNotContain("wifi rescan", nmcliLog, StringComparison.Ordinal);
-            Assert.DoesNotContain("connection up", nmcliLog, StringComparison.Ordinal);
+            Assert.DoesNotContain("wlan0 scan", wpaLog, StringComparison.Ordinal);
+            Assert.DoesNotContain("select_network", wpaLog, StringComparison.Ordinal);
         }
     }
 
@@ -98,7 +93,7 @@ public sealed class PiUserlandTests : IDisposable
     {
         if (!OperatingSystem.IsLinux())
         {
-            throw new PlatformNotSupportedException("Pi userland container tests run on Linux.");
+            throw new PlatformNotSupportedException("Alpine userland container tests run on Linux.");
         }
 
         var path = Path.Combine(_testRoot, "bin", name);
@@ -124,7 +119,7 @@ public sealed class PiUserlandTests : IDisposable
             }
         }
 
-        Assert.Fail("Neither Docker nor Podman is available for Pi userland integration tests.");
+        Assert.Fail("Neither Docker nor Podman is available for Alpine userland integration tests.");
         return string.Empty;
     }
 

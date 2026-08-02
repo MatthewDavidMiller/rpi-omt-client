@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Raspberry Pi OMT Client — receives Open Media Transport video/audio streams on a Raspberry Pi 5 and outputs them to HDMI. Uses a NativeAOT .NET receiver with direct DRM/KMS video and ALSA audio. Managed via Docker; includes a Flask web UI for source selection.
 
-**Target:** Raspberry Pi 5 64-bit (ARM64). Users flash standard Raspberry Pi OS Lite, deploy the pre-built Docker image, and run `install.sh`.
+**Target:** Raspberry Pi 5 running Alpine Linux 3.23 aarch64 in persistent sys mode. Raspberry Pi OS and Alpine diskless mode are unsupported.
 
 ## Documentation
 
@@ -32,7 +32,7 @@ make build-arm64         # → omt-client-arm64.tar.gz
 make deploy HOST=pi@<ip>   # scp + docker load + docker compose up
 
 # On the Pi
-sudo ./install.sh          # Docker install, HDMI config, systemd service
+sudo ./deploy/host/install.sh  # Hardening, firmware, Docker, HDMI, OpenRC
 
 # Local testing (amd64)
 make build-amd64           # Build local test image

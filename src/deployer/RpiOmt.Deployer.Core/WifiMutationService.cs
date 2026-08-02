@@ -26,7 +26,7 @@ internal sealed class WifiMutationService(
         progress.SetStage(
             "wifi-mutation",
             "Applying Wi-Fi settings; cancellation is disabled until " +
-            "the remote NetworkManager change finishes.",
+            "the remote wpa_supplicant change finishes.",
             false);
         progress.Emit(settings.Connect
             ? "Scanning for Wi-Fi networks before connecting..."
@@ -42,16 +42,26 @@ internal sealed class WifiMutationService(
         string marker =
             $"__OMT_WIFI_PASSWORD_FOLLOWS_{RandomNumberGenerator.GetHexString(24)}__";
         string script = BuildScript(settings.Connect);
+        string ssidHex = Convert.ToHexStringLower(System.Text.Encoding.UTF8.GetBytes(settings.Ssid));
+        // InputValidation has already proved that a 64-character value is hex.
+        string psk = settings.Password.Length == 64
+            ? settings.Password.ToLowerInvariant()
+            : Convert.ToHexStringLower(Rfc2898DeriveBytes.Pbkdf2(
+                System.Text.Encoding.UTF8.GetBytes(settings.Password),
+                System.Text.Encoding.UTF8.GetBytes(settings.Ssid),
+                4096,
+                HashAlgorithmName.SHA1,
+                32));
         string sudoPassword = DeploymentGuards.SudoPassword(connection);
         string input = string.IsNullOrEmpty(sudoPassword)
-            ? $"{marker}\n{settings.Password}\n"
-            : $"{sudoPassword}\n{marker}\n{settings.Password}\n";
+            ? $"{marker}\n{psk}\n"
+            : $"{sudoPassword}\n{marker}\n{psk}\n";
         string sudo = string.IsNullOrEmpty(sudoPassword)
             ? "sudo -n -v"
             : "sudo -S -p '' -v";
         string command =
             $"{sudo} && sudo -n sh -eu -c {Shell.Quote(script)} sh " +
-            $"{Shell.Quote(settings.Ssid)} {(settings.Connect ? "yes" : "no")} " +
+            $"{Shell.Quote(ssidHex)} {(settings.Connect ? "yes" : "no")} " +
             Shell.Quote(marker);
         CommandResult result = progress.Redact(await remote.RunAsync(
             command,
@@ -67,15 +77,10 @@ internal sealed class WifiMutationService(
 
     private static string BuildScript(bool connect)
     {
-        string scan = connect
-            ? "nmcli dev wifi rescan ifname wlan0 || nmcli dev wifi rescan || true\n" +
-              "if ! nmcli -t --escape no -f SSID dev wifi list | " +
-              "grep -Fx -- \"$ssid\" >/dev/null; then\n" +
-              "  echo \"Wi-Fi SSID not found after scan: $ssid\" >&2\n" +
-              "  exit 10\nfi\n"
-            : string.Empty;
+        string scan = connect ? "wpa_cli -i wlan0 scan >/dev/null || true\n" : string.Empty;
         string activate = connect
-            ? "nmcli connection up \"$ssid\"\n"
+            ? "wpa_cli -i wlan0 select_network \"$network_id\" >/dev/null\n" +
+              "wpa_cli -i wlan0 reassociate >/dev/null\n"
             : string.Empty;
         return "marker=$3\nfound_marker=no\n" +
             "while IFS= read -r line; do\n" +
@@ -85,17 +90,21 @@ internal sealed class WifiMutationService(
             "echo \"Wi-Fi password marker not found\" >&2; exit 11; fi\n" +
             "if ! IFS= read -r wifi_password; then " +
             "echo \"Wi-Fi password not provided\" >&2; exit 11; fi\n" +
-            "ssid=$1\nactivate=$2\n" + scan +
-            "if nmcli -t --escape no -f NAME connection show | " +
-            "grep -Fx -- \"$ssid\" >/dev/null; then\n" +
-            "  nmcli connection modify \"$ssid\" " +
-            "802-11-wireless.ssid \"$ssid\" wifi-sec.key-mgmt wpa-psk " +
-            "wifi-sec.psk \"$wifi_password\" connection.autoconnect yes\n" +
-            "else\n" +
-            "  nmcli connection add type wifi ifname wlan0 " +
-            "con-name \"$ssid\" ssid \"$ssid\"\n" +
-            "  nmcli connection modify \"$ssid\" wifi-sec.key-mgmt wpa-psk " +
-            "wifi-sec.psk \"$wifi_password\" connection.autoconnect yes\n" +
-            "fi\n" + activate;
+            "ssid_hex=$1\nactivate=$2\n" +
+            "command -v wpa_cli >/dev/null 2>&1 || { echo 'wpa_cli is unavailable' >&2; exit 12; }\n" +
+            "wpa_cli -i wlan0 ping | grep -Fxq PONG || { echo 'wpa_supplicant is unavailable on wlan0' >&2; exit 12; }\n" +
+            scan +
+            "network_id=\n" +
+            "for candidate in $(wpa_cli -i wlan0 list_networks | awk 'NR > 2 {print $1}'); do\n" +
+            "  current=$(wpa_cli -i wlan0 get_network \"$candidate\" ssid 2>/dev/null || true)\n" +
+            "  if [ \"$current\" = \"$ssid_hex\" ]; then network_id=$candidate; break; fi\n" +
+            "done\n" +
+            "if [ -z \"$network_id\" ]; then network_id=$(wpa_cli -i wlan0 add_network); fi\n" +
+            "case \"$network_id\" in ''|*[!0-9]*) echo 'Unable to allocate Wi-Fi profile' >&2; exit 13;; esac\n" +
+            "wpa_cli -i wlan0 set_network \"$network_id\" ssid \"$ssid_hex\" | grep -Fxq OK\n" +
+            "wpa_cli -i wlan0 set_network \"$network_id\" key_mgmt WPA-PSK | grep -Fxq OK\n" +
+            "wpa_cli -i wlan0 set_network \"$network_id\" psk \"$wifi_password\" | grep -Fxq OK\n" +
+            "wpa_cli -i wlan0 enable_network \"$network_id\" | grep -Fxq OK\n" +
+            "wpa_cli -i wlan0 save_config | grep -Fxq OK\n" + activate;
     }
 }

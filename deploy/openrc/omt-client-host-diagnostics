@@ -1,0 +1,14 @@
+#!/sbin/openrc-run
+
+description="Watch for OMT Client host diagnostics requests"
+supervisor=supervise-daemon
+command=/usr/local/libexec/omt-client/host-event-watcher.sh
+command_args=diagnostics
+respawn_delay=1
+respawn_max=0
+
+depend() {
+    need docker
+    use dbus avahi-daemon omt-client-avahi-proxy
+    after networking
+}

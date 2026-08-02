@@ -52,13 +52,13 @@ public sealed class DeploymentOperations : IDeploymentOperations
         await using IRemoteClient remote = _remoteClientFactory.Create();
         await remote.ConnectAsync(connection, cancellationToken).ConfigureAwait(false);
         CommandResult architecture = _progress.Redact(await remote.RunAsync(
-            "uname -m && hostname",
+            RemoteManagementService.PlatformProbeCommand,
             string.Empty,
             null,
             RemoteManagementService.RemoteTimeout,
             cancellationToken).ConfigureAwait(false));
         DeploymentGuards.RequireSuccess(architecture);
-        DeploymentGuards.RequireAarch64(architecture);
+        DeploymentGuards.RequireAlpinePi5(architecture);
         await _remoteManagement.PrepareDirectoryAsync(
             remote,
             connection,

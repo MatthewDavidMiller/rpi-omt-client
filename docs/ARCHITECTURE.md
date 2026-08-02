@@ -22,8 +22,8 @@ HTTPS operator
 
 unprivileged container
   └─ fixed request file
-       └─ root-owned systemd validator
-            └─ systemctl reboot --no-block
+       └─ root-owned OpenRC/inotify validator
+            └─ /sbin/reboot
 ```
 
 ## Receiver
@@ -50,7 +50,7 @@ while video continues.
 The Alpine 3.23.5 runtime is read-only, drops all Linux capabilities, runs as
 the `omt` user, and receives only DRM/ALSA devices, the OMT config volume, a
 filtered Avahi D-Bus socket, diagnostics state, and the host-action directory.
-The container cannot invoke systemd or write the directory containing host
+The container cannot invoke OpenRC or write the directory containing host
 action files.
 
 Fresh diagnostics use a separate fixed-inode request channel. The Web process
@@ -104,9 +104,12 @@ their build version. The container generates a CycloneDX SBOM from final Alpine
 and Python contents; the Windows publisher generates another from its locked
 NuGet graph.
 
-Pi DRM, ALSA, HDMI hotplug, and live OMT media remain hardware validation
-boundaries after local unit and amd64 image checks pass. The optional
-full-system QEMU tier boots the official ARM64 Raspberry Pi OS image and covers
-the real systemd, installer, boot-file, Docker, diagnostics-path, and reboot-
-validator boundaries. QEMU has no Raspberry Pi 5 model, so RP1, vc4/HDMI, and
-media-timing claims still require physical Pi 5 validation.
+The host is Alpine Linux 3.23 aarch64 in persistent sys mode. The installer
+rejects other distributions, other Pi generations, and RAM-backed diskless
+roots. OpenRC supervises the filtered Avahi proxy and two inotify watchers;
+the Docker workload remains detached with its own restart policy.
+
+Pi DRM, ALSA, HDMI hotplug, OpenRC boot ordering, nftables, and live OMT media
+remain hardware validation boundaries after local unit and amd64 image checks
+pass. QEMU has no Raspberry Pi 5 model, so the retired Raspberry Pi OS/raspi3
+VM tier could not validate the supported platform and has been removed.

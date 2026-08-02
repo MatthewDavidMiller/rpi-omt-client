@@ -101,7 +101,7 @@ coverage_file="$(find "${coverage_root}" -name coverage.cobertura.xml -type f -p
 python3 "${SCRIPT_DIR}/check-dotnet-coverage.py" "${coverage_file}" --minimum 95
 
 if [[ "${INTEGRATION}" == "true" ]]; then
-    echo "=== Pi userland integration tests ==="
+    echo "=== Alpine userland integration tests ==="
     "${DOTNET}" test "${INTEGRATION_PROJECT}" --configuration Release \
         --no-restore --no-build --logger "console;verbosity=normal"
 fi

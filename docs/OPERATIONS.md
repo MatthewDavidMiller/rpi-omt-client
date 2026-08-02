@@ -58,16 +58,25 @@ rejects stale, future, malformed, replayed, mis-owned, or replaced files.
 If no acknowledgement arrives, do not repeatedly click reboot. Check:
 
 ```bash
-sudo systemctl status omt-client-reboot.path omt-client-reboot.service
-sudo journalctl -u omt-client-reboot.service
+sudo rc-service omt-client-reboot status
+sudo tail -n 200 /var/log/messages
 ```
 
 ## Service commands
 
 ```bash
-sudo systemctl status omt-client.service
-sudo systemctl restart omt-client.service
+sudo rc-service omt-client status
+sudo rc-service omt-client restart
 docker compose -f /opt/omt-client/deploy/compose.yml logs -f
+```
+
+Host security and low-memory state:
+
+```bash
+sudo rc-status --all
+sudo nft list table inet omt_client
+zramctl
+docker inspect --format '{{.HostConfig.Memory}} {{.HostConfig.PidsLimit}}' omt-client
 ```
 
 Inside the container, `control-omt.sh status|start|stop|restart` manages the
@@ -81,6 +90,11 @@ receiver.
 - Waiting for HDMI: verify `/sys/class/drm/*/status` and the selected connector.
 - Unsupported format: configure the sender for at most 1920×1080 at 60 fps.
 - Video without audio: inspect ALSA devices and ELD; video remains degraded.
+- Service does not start after install: confirm Alpine loaded `linux-rpi`, then
+  inspect `/dev/dri`, `/dev/snd`, `dmesg`, and `rc-service omt-client status`.
+- Wi-Fi save fails: reboot once after installation, then verify `wlan0`,
+  `rc-service wpa_supplicant status`, and the `/run/wpa_supplicant/wlan0`
+  control socket. The installer enables durable configuration updates.
 - Stale status: inspect controller status and `receiver.log` in the config
   volume. Per-boot state (lock, PID record, published status) lives on a tmpfs
   at `/run/omt/state` and is gone after a restart; the log is kept on the volume

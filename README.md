@@ -5,6 +5,10 @@ a Raspberry Pi 5 and presents it directly on HDMI. It combines a native
 .NET 10 OMT receiver, direct DRM/KMS video output, ALSA audio, a hardened Flask
 Web GUI, and a Windows deployment GUI.
 
+The only supported appliance host is a Raspberry Pi 5 running Alpine Linux
+3.23 aarch64 in persistent `sys` mode. Diskless Alpine and Raspberry Pi OS are
+not supported.
+
 The receiver supports discovered source names and explicit
 `omt://host:port` targets. Video is limited to 1920×1080 at 60 fps; larger or
 faster input is reported as unsupported instead of being silently converted.
@@ -34,12 +38,14 @@ sudo ./deploy/host/install.sh
 Or deploy over SSH:
 
 ```bash
-make deploy HOST=pi@192.168.1.50
+make deploy HOST=admin@192.168.1.50
 ```
 
-The installer prints the authoritative HTTPS URL and initial password
-instructions. An incompatible predecessor installation must be uninstalled
-first; this release does not alter or migrate predecessor state.
+The installer verifies the OS and board, installs Alpine's Pi kernel, firmware,
+DRM/ALSA tooling, Docker and OpenRC services, and applies appliance hardening
+and low-memory defaults. It prints the authoritative HTTPS URL and initial
+password instructions. An incompatible predecessor installation must be
+uninstalled first; this release does not migrate predecessor state.
 
 ## Operator UI
 

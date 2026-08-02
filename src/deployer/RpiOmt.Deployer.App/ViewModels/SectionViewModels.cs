@@ -6,7 +6,7 @@ namespace RpiOmt.Deployer.App.ViewModels;
 public sealed class ConnectionViewModel
 {
     public string Host { get; set; } = string.Empty;
-    public string Username { get; set; } = "pi";
+    public string Username { get; set; } = "admin";
     public string Port { get; set; } = "22";
     public string Password { get; set; } = string.Empty;
     public string KeyPath { get; set; } = string.Empty;

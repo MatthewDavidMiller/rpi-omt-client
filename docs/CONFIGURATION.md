@@ -29,7 +29,7 @@
 | `OMT_DIAGNOSTICS_HOST_PCAP_FILE` | `/host-diagnostics/host-network.pcap` |
 | `OMT_DIAGNOSTICS_HOST_PCAP_METADATA_FILE` | `/host-diagnostics/host-network-pcap.txt` |
 | `OMT_DIAGNOSTICS_HOST_TIMEOUT_SECONDS` | `30`; must not exceed the bundle budget |
-| `OMT_DIAGNOSTICS_HOST_BUDGET_SECONDS` | `25` (host oneshot; set by `install.sh` on the systemd unit — container env only mirrors this into support bundles) |
+| `OMT_DIAGNOSTICS_HOST_BUDGET_SECONDS` | `25` (host action; exported by the OpenRC watcher — container env only mirrors this into support bundles) |
 | `OMT_DIAGNOSTICS_BUNDLE_BUDGET_SECONDS` | `60`; must stay at most `85` so collection finishes before the fixed Gunicorn `--timeout` of `90` seconds in `deploy/container/entrypoint.sh` |
 | `OMT_DIAGNOSTICS_RECEIVE_PROBE` | `1` (enabled); accepts `1/0`, `true/false`, `yes/no`, or `on/off` |
 | `OMT_DIAGNOSTICS_DOWNLOAD_LIMIT` | `10 per hour` |
@@ -98,6 +98,7 @@ and optional Discovery Server traffic selected for that installation.
 
 ## HDMI
 
-`deploy/host/install.sh --hdmi-video auto` leaves mode choice to DRM. A forced value has
+`deploy/host/install.sh --hdmi-video auto` leaves mode choice to DRM. The
+installer owns a block in Alpine's active `usercfg.txt`. A forced value has
 the form `HDMI-A-1:1920x1080@60`. Connector/mode state is retained in
 `/etc/omt-client/installer.conf`.

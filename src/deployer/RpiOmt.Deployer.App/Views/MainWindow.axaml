@@ -199,7 +199,7 @@
       <TabItem Header="Wi-Fi">
         <ScrollViewer HorizontalScrollBarVisibility="Disabled">
           <StackPanel Margin="4,8" Spacing="10" IsEnabled="{Binding InputsEnabled}">
-            <TextBlock Classes="caption" Text="Update NetworkManager on the connected Raspberry Pi."
+            <TextBlock Classes="caption" Text="Update wpa_supplicant on the connected Alpine Raspberry Pi."
                        TextWrapping="Wrap" />
             <Border Classes="panel">
               <StackPanel Spacing="8">

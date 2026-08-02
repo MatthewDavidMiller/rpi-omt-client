@@ -181,10 +181,12 @@ public sealed class DeploymentOperationTests : IDisposable
         operations.Progress += (_, value) => progress.Add(value);
         await operations.DeployAsync(Snapshot(), CancellationToken.None);
         Assert.StartsWith("uname -m", remote.Commands[0].Command, StringComparison.Ordinal);
-        Assert.Equal(14, remote.Uploads.Count);
-        Assert.Equal(14, remote.Commands.Count(call => call.Command.StartsWith("sha256sum", StringComparison.Ordinal)));
+        Assert.Equal(21, remote.Uploads.Count);
+        Assert.Equal(21, remote.Commands.Count(call => call.Command.StartsWith("sha256sum", StringComparison.Ordinal)));
         Assert.Contains(remote.Commands, call => call.Command.Contains(" deploy ", StringComparison.Ordinal) || call.Command.Contains(" promote ", StringComparison.Ordinal));
-        var installer = remote.Commands.Single(call => call.Command.Contains("printf", StringComparison.Ordinal));
+        var installer = remote.Commands.Single(call =>
+            !call.Command.StartsWith("uname -m", StringComparison.Ordinal) &&
+            call.Command.Contains("printf", StringComparison.Ordinal));
         Assert.False(installer.TokenCanBeCancelled);
         Assert.Contains(progress, value => value.Stage == "installer" && !value.Cancellable);
         Assert.DoesNotContain("sudo-secret", string.Join('\n', progress.Select(value => value.Message)), StringComparison.Ordinal);
@@ -201,12 +203,33 @@ public sealed class DeploymentOperationTests : IDisposable
     }
 
     [Fact]
+    public async Task UnsupportedOsVersionAndPiModelFailBeforeRemoteWrites()
+    {
+        FakeRemote[] unsupported =
+        [
+            new() { OperatingSystem = "debian" },
+            new() { AlpineVersion = "3.22.9" },
+            new() { PiModel = "Raspberry Pi 4 Model B" },
+        ];
+        foreach (FakeRemote remote in unsupported)
+        {
+            var exception = await Assert.ThrowsAsync<DeploymentException>(() =>
+                Create(remote).DeployAsync(Snapshot(), CancellationToken.None));
+            Assert.Contains("Alpine Linux 3.23", exception.Message, StringComparison.Ordinal);
+            Assert.Empty(remote.Uploads);
+            Assert.Single(remote.Commands);
+        }
+    }
+
+    [Fact]
     public async Task ChecksumFailureCleansStagedUploadsAndKeepsInstallerUnrun()
     {
         var remote = new FakeRemote { WrongChecksum = true };
         await Assert.ThrowsAsync<DeploymentException>(() => Create(remote).DeployAsync(Snapshot(), CancellationToken.None));
         Assert.Contains(remote.Commands, call => call.Command.StartsWith("if [ -d", StringComparison.Ordinal));
-        Assert.DoesNotContain(remote.Commands, call => call.Command.Contains("printf", StringComparison.Ordinal));
+        Assert.DoesNotContain(remote.Commands, call =>
+            !call.Command.StartsWith("uname -m", StringComparison.Ordinal) &&
+            call.Command.Contains("printf", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -222,7 +245,9 @@ public sealed class DeploymentOperationTests : IDisposable
         Assert.DoesNotContain("wifi-secret", call.Command, StringComparison.Ordinal);
         Assert.DoesNotContain("sudo-secret", call.Command, StringComparison.Ordinal);
         Assert.StartsWith("sudo-secret\n", call.Input, StringComparison.Ordinal);
-        Assert.EndsWith("wifi-secret\n", call.Input, StringComparison.Ordinal);
+        Assert.DoesNotContain("wifi-secret", call.Input, StringComparison.Ordinal);
+        string derivedPsk = call.Input.Split('\n', StringSplitOptions.RemoveEmptyEntries)[^1];
+        Assert.Matches("^[0-9a-f]{64}$", derivedPsk);
         Assert.False(call.TokenCanBeCancelled);
         Assert.Contains(progress, value => value.Stage == "wifi-mutation" && !value.Cancellable);
     }
@@ -250,6 +275,20 @@ public sealed class DeploymentOperationTests : IDisposable
         cancelled.Cancel();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => operations.ApplyWifiAsync(
             connection, new WifiSettings("Studio", "wifi-secret"), cancelled.Token));
+    }
+
+    [Fact]
+    public async Task WifiAcceptsAndNormalizesAHexPskWithoutDerivingItAgain()
+    {
+        var remote = new FakeRemote();
+        string uppercasePsk = new('A', 64);
+        await Create(remote).ApplyWifiAsync(
+            new PiConnection("pi.local", "pi", Password: "ssh-secret"),
+            new WifiSettings("Studio", uppercasePsk, Connect: false),
+            CancellationToken.None);
+        string sentPsk = Assert.Single(remote.Commands).Input
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries)[^1];
+        Assert.Equal(new string('a', 64), sentPsk);
     }
 
     [Fact]
@@ -319,12 +358,12 @@ public sealed class DeploymentOperationTests : IDisposable
     [Fact]
     public async Task PromotionInstallerAndChecksumCommandFailuresAreReportedAndCleaned()
     {
-        foreach (var failingFragment in new[] { "sha256sum", " promote ", "printf" })
+        foreach (var failingFragment in new[] { "sha256sum", " promote ", "&& sudo" })
         {
             var remote = new FakeRemote { FailCommandContaining = failingFragment };
             var operations = Create(remote);
             await Assert.ThrowsAsync<CommandException>(() => operations.DeployAsync(Snapshot(), CancellationToken.None));
-            if (failingFragment != "printf")
+            if (failingFragment != "&& sudo")
             {
                 Assert.Contains(remote.Commands, call => call.Command.StartsWith("if [ -d", StringComparison.Ordinal));
             }
@@ -426,10 +465,17 @@ public sealed class DeploymentOperationTests : IDisposable
         "deploy/host/install.sh\n" +
         "deploy/host/uninstall.sh\n" +
         "deploy/host/host-diagnostics.sh\n" +
+        "deploy/host/host-event-watcher.sh\n" +
         "deploy/host/host-reboot.sh\n" +
+        "deploy/lib/reboot-request.sh\n" +
+        "deploy/lib/hdmi-config.sh\n" +
         "deploy/lib/host-validation.sh\n" +
         "deploy/lib/publication.sh\n" +
         "deploy/lib/service-install.sh\n" +
+        "deploy/openrc/omt-client\n" +
+        "deploy/openrc/omt-client-avahi-proxy\n" +
+        "deploy/openrc/omt-client-host-diagnostics\n" +
+        "deploy/openrc/omt-client-reboot\n" +
         "deploy/transaction.sh\n" +
         "deploy/manifest-v2.txt\n" +
         "LICENSE\n" +
@@ -474,6 +520,9 @@ internal sealed class FakeRemote : IRemoteClient
 {
     private readonly Dictionary<string, string> _uploads = new(StringComparer.Ordinal);
     public string Architecture { get; init; } = "aarch64";
+    public string OperatingSystem { get; init; } = "alpine";
+    public string AlpineVersion { get; init; } = "3.23.5";
+    public string PiModel { get; init; } = "Raspberry Pi 5 Model B Rev 1.0";
     public string GenericOutput { get; init; } = string.Empty;
     public bool WrongChecksum { get; init; }
     public bool FailArchitectureCommand { get; init; }
@@ -505,7 +554,12 @@ internal sealed class FakeRemote : IRemoteClient
         {
             return Task.FromResult(FailArchitectureCommand
                 ? new CommandResult(command, 1, StandardError: "failed")
-                : new CommandResult(command, 0, Architecture.Length == 0 ? "\n" : $"{Architecture}\npi\n"));
+                : new CommandResult(
+                    command,
+                    0,
+                    Architecture.Length == 0
+                        ? "\n"
+                        : $"{Architecture}\n{OperatingSystem}\n{AlpineVersion}\n{PiModel}\npi\n"));
         }
 
         if (command.Contains(" install -d ", StringComparison.Ordinal) &&
@@ -517,7 +571,8 @@ internal sealed class FakeRemote : IRemoteClient
 
         if (command.StartsWith("sha256sum", StringComparison.Ordinal))
         {
-            var staged = _uploads.Keys.Single(path => command.Contains(path, StringComparison.Ordinal));
+            var staged = _uploads.Keys.Single(path =>
+                command.EndsWith(Shell.Quote(path), StringComparison.Ordinal));
             var digest = ChecksumOverride ?? (WrongChecksum ? new string('0', 64) : Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(_uploads[staged]))));
             if (string.Equals(FailCommandContaining, "sha256sum", StringComparison.Ordinal))
             {

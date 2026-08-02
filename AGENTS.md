@@ -10,7 +10,9 @@ Raspberry Pi OMT Client receives OMT video/audio streams on a Raspberry Pi 5 and
 - A Flask web UI for authentication and OMT source selection
 - Direct DRM/KMS video and ALSA audio playback inside the container
 
-Target platform: Raspberry Pi 5, 64-bit Raspberry Pi OS Lite. Local development usually happens on amd64.
+Target platform: Raspberry Pi 5, Alpine Linux 3.23 aarch64 in persistent sys
+mode. Raspberry Pi OS and Alpine diskless mode are unsupported. Local
+development usually happens on amd64.
 
 ## Read First
 
@@ -94,7 +96,8 @@ If you cannot run a relevant validation step, say so explicitly in your final ha
 - `deploy/container/runtime-lib.sh`: shared shell validation, bounded reads, and process identity
 - `deploy/container/entrypoint.sh`: container bootstrap, secret/cert generation, gunicorn startup
 - `deploy/container/start-omt.sh`: validated native OMT receiver launcher
-- `deploy/host/install.sh`: Pi install, Docker/bootstrap, HDMI config, systemd integration
+- `deploy/host/install.sh`: Alpine/Pi preflight, hardening, firmware, Docker, HDMI, and OpenRC integration
+- `deploy/openrc/`: fixed OpenRC service definitions
 - `deploy/Dockerfile`: cross-build and runtime image assembly
 - `tests/unit/` and `tests/integration/`: main safety net
 - `tests/schema/`: vectors shared by the Python and C# suites

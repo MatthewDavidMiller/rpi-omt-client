@@ -343,24 +343,22 @@ start_packet_captures
         'if [ -r /proc/device-tree/model ]; then tr -d "\000" < /proc/device-tree/model; printf "\n"; else echo unavailable; fi'
     run "OS release" cat /etc/os-release
     run "kernel" uname -a
-    run "boot target" systemctl get-default
+    run "OpenRC runlevels" rc-status --all
     run "effective kernel command line (sanitized)" sh -c \
         'sed -E "s/((password|passwd|secret|token|credential|psk|key)=)[^ ]+/\1<redacted>/Ig" /proc/cmdline'
     run "managed HDMI settings" sh -c \
-        'for file in /boot/firmware/config.txt /etc/omt-client/installer.conf; do printf "### %s\n" "$file"; if [ "$file" = /boot/firmware/config.txt ]; then sed -n "/^# BEGIN OMT Client HDMI configuration$/,/^# END OMT Client HDMI configuration$/p" "$file" 2>&1; else cat "$file" 2>&1; fi; done'
+        'for file in /media/mmcblk0p1/usercfg.txt /boot/usercfg.txt /etc/omt-client/installer.conf; do [ -e "$file" ] || continue; printf "### %s\n" "$file"; if [ "${file##*/}" = usercfg.txt ]; then sed -n "/^# BEGIN OMT Client HDMI configuration$/,/^# END OMT Client HDMI configuration$/p" "$file" 2>&1; else cat "$file" 2>&1; fi; done'
 
     run "service definitions (sanitized)" sh -c \
-        'systemctl cat omt-client.service omt-client-avahi-proxy.service omt-client-host-diagnostics.service omt-client-host-diagnostics.path 2>&1 | sed -E "s/(([A-Za-z0-9_]*(PASSWORD|SECRET|TOKEN|CREDENTIAL|PRIVATE_KEY)[A-Za-z0-9_]*)=)[^[:space:]]+/\1<redacted>/Ig"'
+        'for file in /etc/init.d/omt-client* /etc/conf.d/omt-client*; do [ -f "$file" ] || continue; printf "### %s\n" "$file"; sed -E "s/(([A-Za-z0-9_]*(PASSWORD|SECRET|TOKEN|CREDENTIAL|PRIVATE_KEY)[A-Za-z0-9_]*)=)[^[:space:]]+/\1<redacted>/Ig" "$file"; done'
     run "OMT service status (sanitized)" sh -c \
-        'systemctl status omt-client.service --no-pager -l 2>&1 | sed -E "s/((password|passwd|secret|token|credential|psk|key)[[:space:]]*[:=][[:space:]]*)[^[:space:]]+/\1<redacted>/Ig"'
-    run "systemd lifecycle state" systemctl show omt-client.service \
-        --no-pager \
-        --property=LoadState,ActiveState,SubState,Result,ExecMainCode,ExecMainStatus,NRestarts,InactiveEnterTimestamp,ActiveEnterTimestamp,StateChangeTimestamp
-    run "OMT service journal" sh -c \
-        'journalctl -u omt-client.service -b --no-pager -n 200 -o short-iso 2>&1 | sed -E "s/((password|passwd|secret|token|credential|psk|key)[[:space:]]*[:=][[:space:]]*)[^[:space:]]+/\1<redacted>/Ig"'
-    run "filtered Avahi proxy status" systemctl status omt-client-avahi-proxy.service --no-pager -l
-    run "filtered Avahi proxy journal" journalctl -u omt-client-avahi-proxy.service -b --no-pager -n 200 -o short-iso
-    run "host diagnostics trigger status" systemctl status omt-client-host-diagnostics.path --no-pager -l
+        'rc-service omt-client status 2>&1 | sed -E "s/((password|passwd|secret|token|credential|psk|key)[[:space:]]*[:=][[:space:]]*)[^[:space:]]+/\1<redacted>/Ig"'
+    run "OpenRC OMT lifecycle state" rc-status --all
+    run "OMT host log" sh -c \
+        'tail -n 400 /var/log/messages 2>&1 | grep -E "omt-client|docker|avahi" | sed -E "s/((password|passwd|secret|token|credential|psk|key)[[:space:]]*[:=][[:space:]]*)[^[:space:]]+/\1<redacted>/Ig" || true'
+    run "filtered Avahi proxy status" rc-service omt-client-avahi-proxy status
+    run "host diagnostics watcher status" rc-service omt-client-host-diagnostics status
+    run "reboot watcher status" rc-service omt-client-reboot status
 
     run "Docker version" docker version
     run "Docker Compose version" docker compose version
@@ -422,14 +420,11 @@ start_packet_captures
         'cd "$1" && cid=$(docker compose -f deploy/compose.yml ps -q omt-client 2>/dev/null || true); if [ -z "$cid" ]; then echo no_container; exit; fi; docker exec "$cid" sh -c '\''printf "DBUS_SYSTEM_BUS_ADDRESS=%s\n" "${DBUS_SYSTEM_BUS_ADDRESS:-<unset>}"; stat -Lc "socket_type=%F uid=%u gid=%g mode=%a" /host-avahi/system-bus 2>&1; timeout 5 dbus-send --bus="${DBUS_SYSTEM_BUS_ADDRESS}" --type=method_call --print-reply --dest=org.freedesktop.Avahi / org.freedesktop.Avahi.Server.GetVersionString 2>&1'\''' \
         sh "${INSTALL_DIR}"
     run "resolver configuration" cat /etc/resolv.conf
-    run "NetworkManager devices" nmcli device status
-    run "Wi-Fi access points" nmcli -f IN-USE,SSID,SIGNAL,CHAN,RATE,SECURITY dev wifi list
-    run "Avahi status" systemctl status avahi-daemon --no-pager -l
-    run "D-Bus journal" journalctl -u dbus.service -b --no-pager -n 200 -o short-iso
-    run "Avahi journal" journalctl -u avahi-daemon.service -b --no-pager -n 200 -o short-iso
-    run "firewalld status and zones" sh -c \
-        'firewall-cmd --state 2>&1; firewall-cmd --get-active-zones 2>&1'
-    run "ufw status" ufw status verbose
+    run "wpa_supplicant status" sh -c \
+        'for interface in /run/wpa_supplicant/*; do [ -S "$interface" ] || continue; wpa_cli -i "${interface##*/}" status 2>&1 | sed -E "s/^(psk|password)=.*/\1=<redacted>/"; done'
+    run "Avahi status" rc-service avahi-daemon status
+    run "D-Bus and Avahi log" sh -c \
+        'tail -n 400 /var/log/messages 2>&1 | grep -E "dbus|avahi" || true'
     run "nftables rules" nft list ruleset
     run "iptables input rules" iptables -S INPUT
     # shellcheck disable=SC2016 # Expanded by the nested host shell.
@@ -440,9 +435,9 @@ start_packet_captures
     run "host ALSA HDMI state" sh -c \
         'for file in /proc/asound/cards /proc/asound/pcm /proc/asound/devices; do printf "### %s\n" "$file"; cat "$file" 2>&1; done; for eld in /proc/asound/card*/eld*; do [ -e "$eld" ] || continue; printf "### %s\n" "$eld"; sed -n "1,120p" "$eld"; done'
     run "kernel security denials" sh -c \
-        'journalctl -k -b --no-pager -n 1000 -o short-iso 2>&1 | grep -Ei "apparmor|audit|denied|seccomp|operation not permitted" | tail -n 200 || true'
+        'dmesg 2>&1 | grep -Ei "apparmor|audit|denied|seccomp|operation not permitted" | tail -n 200 || true'
     run "kernel vc4 DRM HDMI and ALSA messages" sh -c \
-        'journalctl -k -b --no-pager -n 2000 -o short-iso 2>&1 | grep -Ei "vc4|drm|hdmi|edid|alsa|snd|audio" | tail -n 300 || true'
+        'dmesg 2>&1 | grep -Ei "vc4|drm|hdmi|edid|alsa|snd|audio" | tail -n 300 || true'
 
     finish_packet_captures
     publish_pcap
