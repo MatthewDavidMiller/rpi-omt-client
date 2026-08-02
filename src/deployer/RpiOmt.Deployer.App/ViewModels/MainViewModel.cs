@@ -30,9 +30,11 @@ public sealed record LogLine(string Message, string Level)
 public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 {
     public const int MaximumLogLines = 5000;
+    public const int ActivityTabIndex = 4;
     private readonly IDeploymentOperations _operations;
     private CancellationTokenSource? _cancellation;
     private bool _closeAfterAction;
+    private int _selectedTabIndex;
     private AppTheme _theme = AppTheme.System;
     private readonly string _appVersion = BuildInformation.Version;
     private readonly string _copyrightNotice = BuildInformation.Copyright;
@@ -162,6 +164,12 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     public string Activity { get => OperationState.Activity; private set => SetSection(OperationState.Activity, value, newValue => OperationState.Activity = newValue); }
 
     public string ValidationMessage { get => OperationState.ValidationMessage; private set => SetSection(OperationState.ValidationMessage, value, newValue => OperationState.ValidationMessage = newValue); }
+
+    public int SelectedTabIndex
+    {
+        get => _selectedTabIndex;
+        set => Set(ref _selectedTabIndex, value);
+    }
 
     public IReadOnlyList<AppTheme> ThemeOptions { get; } = [AppTheme.System, AppTheme.Light, AppTheme.Dark];
 
@@ -297,6 +305,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         CanCancel = true;
         RaiseActionCommands();
         ShowActivity();
+        SelectedTabIndex = ActivityTabIndex;
         Append("Starting...");
         try
         {

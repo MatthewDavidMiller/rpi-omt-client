@@ -18,15 +18,16 @@ make build-windows-deployer
 
 Run `dist/rpi-omt-client-deployer-windows-x64.exe` on Windows 10/11 with
 Docker Desktop, OpenSSH host trust, Pi SSH credentials, and this source tree.
-The Deploy tab builds/uploads; Manage reads status/logs or restarts; Wi-Fi
-updates NetworkManager; About displays version, copyright, license, and
-third-party notices. The theme selector in the title row offers System (the
+Connect stores the SSH target used by every action; Deploy builds/uploads;
+Manage reads status/logs or restarts; Wi-Fi updates NetworkManager; Activity
+shows the operation transcript; and About displays version, copyright, license,
+and third-party notices. The theme selector in the title row offers System (the
 default, which follows Windows), Light, and Dark. While an action runs, the
-activity row shows the state chip and an indeterminate progress bar; validation
-problems appear in the message bar above it. Log text can be selected directly,
+compact status bar remains visible and the Activity tab opens automatically.
+Validation problems appear above the tabs. Log text can be selected directly,
 copied in full with **Copy Log**, or saved as a UTF-8 text file with **Export
-Log**. The connection, activity controls, and other panes reflow or scroll when
-the window is resized for a compact display.
+Log**. Every task page reflows or scrolls when the window is resized for a
+compact display; the layout does not rely on draggable pane dividers.
 
 ## CLI deployment
 

@@ -9,6 +9,14 @@
     <Setter Property="Padding" Value="{StaticResource AppPanelPadding}" />
   </Style>
 
+  <Style Selector="Border.statusbar">
+    <Setter Property="Background" Value="{DynamicResource AppSurfaceBrush}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource AppBorderBrush}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CornerRadius" Value="{StaticResource AppCornerRadius}" />
+    <Setter Property="Padding" Value="10,8" />
+  </Style>
+
   <Style Selector="Border.console">
     <Setter Property="Background" Value="{DynamicResource ConsoleBackgroundBrush}" />
     <Setter Property="BorderBrush" Value="{DynamicResource AppBorderBrush}" />
@@ -65,6 +73,11 @@
     <Setter Property="CornerRadius" Value="{StaticResource AppCornerRadiusSmall}" />
   </Style>
 
+  <Style Selector="TabItem">
+    <Setter Property="MinHeight" Value="40" />
+    <Setter Property="Padding" Value="12,8" />
+  </Style>
+
   <Style Selector="Button.primary">
     <Setter Property="Background" Value="{DynamicResource AppAccentBrush}" />
     <Setter Property="Foreground" Value="{DynamicResource AppSurfaceBrush}" />
@@ -91,8 +104,4 @@
     <Setter Property="Foreground" Value="{DynamicResource LogErrorBrush}" />
   </Style>
 
-  <Style Selector="GridSplitter.section-splitter">
-    <Setter Property="Background" Value="{DynamicResource AppBorderBrush}" />
-    <Setter Property="Cursor" Value="SizeNorthSouth" />
-  </Style>
 </Styles>

@@ -111,6 +111,9 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    private void ShowActivity(object? sender, RoutedEventArgs eventArgs) =>
+        TaskTabs.SelectedIndex = MainViewModel.ActivityTabIndex;
+
     private void OnClosing(object? sender, WindowClosingEventArgs eventArgs)
     {
         if (ViewModel is not null && !ViewModel.RequestWindowClose())

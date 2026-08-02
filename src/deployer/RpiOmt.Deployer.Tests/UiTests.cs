@@ -32,24 +32,23 @@ public sealed class AvaloniaUiTests
         var window = new MainWindow { DataContext = viewModel };
         window.Show();
         var tabItems = window.GetLogicalDescendants().OfType<TabItem>().ToArray();
-        Assert.Equal(["Deploy", "Manage", "Wi-Fi", "About"], tabItems.Select(item => item.Header?.ToString() ?? string.Empty));
-        Assert.IsType<ScrollViewer>(tabItems.Single(item => item.Header?.ToString() == "Wi-Fi").Content);
-        Assert.IsType<ScrollViewer>(tabItems.Single(item => item.Header?.ToString() == "About").Content);
+        Assert.Equal(
+            ["Connect", "Deploy", "Manage", "Wi-Fi", "Activity", "About"],
+            tabItems.Select(item => item.Header?.ToString() ?? string.Empty));
+        foreach (var header in new[] { "Connect", "Deploy", "Manage", "Wi-Fi", "About" })
+        {
+            Assert.IsType<ScrollViewer>(tabItems.Single(item => item.Header?.ToString() == header).Content);
+        }
+
         Assert.Contains("Matthew David Miller", viewModel.CopyrightNotice, StringComparison.Ordinal);
         Assert.Contains("MIT License", viewModel.ProjectLicense, StringComparison.Ordinal);
         Assert.Contains("THIRD-PARTY", viewModel.ThirdPartyNotices, StringComparison.Ordinal);
-        var splitters = window.GetLogicalDescendants().OfType<GridSplitter>().ToArray();
-        Assert.Equal(2, splitters.Length);
-        Assert.All(splitters, splitter =>
-        {
-            Assert.Equal(GridResizeDirection.Rows, splitter.ResizeDirection);
-            Assert.Equal(GridResizeBehavior.PreviousAndNext, splitter.ResizeBehavior);
-        });
+        Assert.Empty(window.GetLogicalDescendants().OfType<GridSplitter>());
         foreach (var name in new[]
         {
             "InstallPrerequisitesButton", "DeployButton", "TestSshButton", "StatusButton",
             "LogsButton", "RestartButton", "ApplyWifiButton", "CopyLogButton", "ExportLogButton",
-            "ClearLogButton",
+            "ClearLogButton", "ViewActivityButton",
         })
         {
             Assert.NotNull(window.FindControl<Button>(name));
@@ -83,19 +82,21 @@ public sealed class AvaloniaUiTests
         window.Show();
 
         Assert.Equal(360, window.MinWidth);
-        Assert.Equal(400, window.MinHeight);
+        Assert.Equal(360, window.MinHeight);
         Assert.Equal(1, Grid.GetRow(window.FindControl<StackPanel>("ThemeSettings")!));
 
-        var connectionColumn = window.GetLogicalDescendants().OfType<StackPanel>()
-            .Single(panel => panel.Classes.Contains("connection-column-b"));
+        var connectionColumn = window.FindControl<StackPanel>("ConnectionColumnB")!;
         Assert.Equal(2, Grid.GetRow(connectionColumn));
         Assert.Equal(0, Grid.GetColumn(connectionColumn));
         Assert.Equal(2, Grid.GetColumnSpan(connectionColumn));
 
-        var activityButtons = window.GetLogicalDescendants().OfType<WrapPanel>()
-            .Single(panel => panel.Classes.Contains("activity-buttons"));
+        var tabs = window.FindControl<TabControl>("TaskTabs")!;
+        tabs.SelectedIndex = MainViewModel.ActivityTabIndex;
+        window.UpdateLayout();
+        var activityButtons = window.FindControl<WrapPanel>("ActivityButtons")!;
         Assert.Equal(1, Grid.GetRow(activityButtons));
-        Assert.Equal(3, Grid.GetColumnSpan(activityButtons));
+        Assert.Equal(2, Grid.GetColumnSpan(activityButtons));
+        Assert.Empty(window.GetLogicalDescendants().OfType<GridSplitter>());
         window.Close();
     }
 
@@ -107,6 +108,7 @@ public sealed class AvaloniaUiTests
         viewModel.Host = "original.local";
         viewModel.DeployCommand.Execute(null);
         await operations.Started.Task.WaitAsync(TimeSpan.FromSeconds(2), TestContext.Current.CancellationToken);
+        Assert.Equal(MainViewModel.ActivityTabIndex, viewModel.SelectedTabIndex);
         viewModel.Host = "changed.local";
         viewModel.DeployCommand.Execute(null);
         Assert.True(viewModel.IsBusy);
