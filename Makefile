@@ -1,7 +1,7 @@
 # Raspberry Pi OMT Client Build System
 # Usage: make [target]
 
-.PHONY: help install setup-arm64-emulation build build-arm64 build-amd64 build-windows-deployer deploy up down logs lint test test-quick test-py test-receiver test-deployer test-setup security-scan clean
+.PHONY: help install setup-arm64-emulation build build-arm64 build-amd64 build-deployer build-windows-deployer deploy up down logs lint test test-quick test-py test-receiver test-deployer test-setup security-scan clean
 
 IMAGE_NAME   := omt-client
 ARM64_TARBALL := omt-client-arm64.tar.gz
@@ -18,7 +18,7 @@ help:
 	@echo "  build-arm64   Build ARM64 image (for Raspberry Pi), output: $(ARM64_TARBALL)"
 	@echo "  build-amd64   Build amd64 image locally (for testing)"
 	@echo "  build         Alias for build-arm64"
-	@echo "  build-windows-deployer  Test and publish the Windows x64 deployer"
+	@echo "  build-deployer Test and publish the native deployer for this host"
 	@echo ""
 	@echo "Deploy targets:"
 	@echo "  deploy HOST=user@ip  Copy ARM64 image to Pi and start container"
@@ -35,9 +35,9 @@ help:
 	@echo "  test          Run all tests (unit + live container build)"
 	@echo "  test-quick    Run every unit suite, no container engine (~1m)"
 	@echo "  test-py       Run Python unit tests only (requires test-setup)"
-	@echo "  test-receiver Run receiver-core analyzers, tests, and coverage gate"
-	@echo "  test-deployer Run locked C# build, unit/headless tests, and coverage gate"
-	@echo "  test-setup    Bootstrap Python and pinned repo-local .NET tooling"
+	@echo "  test-receiver Build and test the native receiver with sanitizers"
+	@echo "  test-deployer Build and test the native deployer"
+	@echo "  test-setup    Bootstrap Python test tooling"
 	@echo "  security-scan Run Trivy filesystem + image scans"
 	@echo "  clean         Remove build artifacts and stopped containers"
 	@echo ""
@@ -73,8 +73,11 @@ build-amd64:
 
 build: build-arm64
 
-build-windows-deployer:
+build-deployer:
 	RPI_OMT_CLIENT_VERSION="$(RPI_OMT_CLIENT_VERSION)" ./scripts/check-deployer.sh --publish
+
+# Compatibility alias; the native application builds for the current host.
+build-windows-deployer: build-deployer
 
 # Deploy ARM64 image to Raspberry Pi
 # Usage: make deploy HOST=pi@192.168.1.100
@@ -135,14 +138,7 @@ test-setup:
 	python3 -m venv tests/.venv
 	$(TEST_PYTHON) -m pip install --upgrade pip -q
 	$(TEST_PYTHON) -m pip install -r tests/requirements-dev.txt
-	./scripts/install-dotnet-sdk.sh
-	@mkdir -p .build/dotnet-home .build/nuget-packages
-	DOTNET_CLI_HOME="$(CURDIR)/.build/dotnet-home" \
-	NUGET_PACKAGES="$(CURDIR)/.build/nuget-packages" \
-	DOTNET_NOLOGO=1 \
-		.build/dotnet/dotnet restore src/deployer/RpiOmt.Deployer.slnx --locked-mode --runtime win-x64 \
-		-p:NuGetAudit=true -p:NuGetAuditMode=all -p:TreatWarningsAsErrors=true
-	@echo "Done. Run: make test-py test-deployer"
+	@echo "Done. Run: make test-py test-receiver test-deployer"
 
 # Clean build artifacts
 clean:

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Behavioral tests for manifest-v2 nested deployment promotion and recovery.
+# Behavioral tests for manifest-v3 nested deployment promotion and recovery.
 
 set -euo pipefail
 
@@ -12,7 +12,7 @@ trap 'rm -rf "${TEST_DIR}"' EXIT
 write_manifest() {
     local path="$1"
     mkdir -p "$(dirname "${path}")"
-    printf 'version=2\nnested/a.txt\nb.txt\n' > "${path}"
+    printf 'version=3\nnested/a.txt\nb.txt\n' > "${path}"
 }
 
 prepare_generation() {
@@ -21,10 +21,10 @@ prepare_generation() {
     local generation="$3"
     local stage="${root}/.deploy-staging/${token}"
     mkdir -p "${stage}/nested"
-    write_manifest "${stage}/manifest-v2.txt"
-    # The transaction requires the manifest path to be the v2 production path.
+    write_manifest "${stage}/manifest-v3.txt"
+    # The transaction requires the manifest path to be the v3 production path.
     mkdir -p "${stage}/deploy"
-    cp "${stage}/manifest-v2.txt" "${stage}/deploy/manifest-v2.txt"
+    cp "${stage}/manifest-v3.txt" "${stage}/deploy/manifest-v3.txt"
     printf '%s-a\n' "${generation}" > "${stage}/nested/a.txt"
     printf '%s-b\n' "${generation}" > "${stage}/b.txt"
 }
@@ -34,10 +34,10 @@ promote() {
     local root="$2"
     local token="$3"
     bash "${helper}" promote "${root}" "${token}" \
-        "${root}/.deploy-staging/${token}/deploy/manifest-v2.txt"
+        "${root}/.deploy-staging/${token}/deploy/manifest-v3.txt"
 }
 
-# Custom fixtures omit the production helper paths but still exercise the v2
+# Custom fixtures omit the production helper paths but still exercise the v3
 # grammar, nested staging, journal-owned manifest, and rollback behavior.
 root="${TEST_DIR}/success"
 token="0123456789abcdef01234567"
@@ -102,7 +102,7 @@ committed="${cleanup_root}/.deploy-transactions/888888888888888888888888.committ
 rolled_back="${cleanup_root}/.deploy-transactions/999999999999999999999999.rolled-back"
 mkdir -p "${committed}/backup/nested" "${rolled_back}"
 printf 'stale\n' > "${committed}/backup/nested/a.txt"
-printf 'version=2\nnested/a.txt\n' > "${committed}/manifest-v2.txt"
+printf 'version=3\nnested/a.txt\n' > "${committed}/manifest-v3.txt"
 bash "${TRANSACTION}" recover "${cleanup_root}"
 [[ ! -d "${cleanup_root}/.deploy-transactions" ]]
 
@@ -112,7 +112,7 @@ journal="${recover_root}/.deploy-transactions/888888888888888888888888.prepared"
 mkdir -p "${recover_root}/nested" "${journal}/backup/nested"
 printf 'new\n' > "${recover_root}/nested/a.txt"
 printf 'old\n' > "${journal}/backup/nested/a.txt"
-printf 'version=2\nnested/a.txt\n' > "${journal}/manifest-v2.txt"
+printf 'version=3\nnested/a.txt\n' > "${journal}/manifest-v3.txt"
 printf 'nested/a.txt\tpresent\n' > "${journal}/state.tsv"
 touch "${journal}/ready"
 bash "${TRANSACTION}" recover "${recover_root}"
@@ -122,8 +122,8 @@ bash "${TRANSACTION}" recover "${recover_root}"
 unsafe_root="${TEST_DIR}/unsafe"
 unsafe_token="999999999999999999999999"
 mkdir -p "${unsafe_root}/.deploy-staging/${unsafe_token}/deploy"
-printf 'version=2\n../escape\n' \
-    > "${unsafe_root}/.deploy-staging/${unsafe_token}/deploy/manifest-v2.txt"
+printf 'version=3\n../escape\n' \
+    > "${unsafe_root}/.deploy-staging/${unsafe_token}/deploy/manifest-v3.txt"
 if promote "${TRANSACTION}" "${unsafe_root}" "${unsafe_token}" >/dev/null 2>&1; then
     echo "FAIL: manifest traversal was accepted" >&2
     exit 1
@@ -141,8 +141,23 @@ if promote "${TRANSACTION}" "${symlink_root}" "${symlink_token}" >/dev/null 2>&1
 fi
 [[ ! -e "${outside}/a.txt" ]]
 
+# A symlinked staging root must never redirect validation, promotion, or
+# cleanup outside the deployment directory.
+staging_link_root="${TEST_DIR}/staging-link"
+staging_link_outside="${TEST_DIR}/staging-link-outside"
+staging_link_token="bbbbbbbbbbbbbbbbbbbbbbbb"
+mkdir -p "${staging_link_root}" "${staging_link_outside}"
+ln -s "${staging_link_outside}" "${staging_link_root}/.deploy-staging"
+prepare_generation "${staging_link_root}" "${staging_link_token}" "new"
+if promote "${TRANSACTION}" "${staging_link_root}" "${staging_link_token}" >/dev/null 2>&1; then
+    echo "FAIL: symlinked staging root was accepted" >&2
+    exit 1
+fi
+[[ "$(< "${staging_link_outside}/${staging_link_token}/b.txt")" == "new-b" ]]
+
 grep -q "deploy-transaction.sh.*recover" "${PROJECT_ROOT}/scripts/deploy.sh"
 grep -q "deploy/transaction.sh.*recover" "${PROJECT_ROOT}/scripts/deploy.sh"
 grep -q "sha256sum" "${PROJECT_ROOT}/scripts/deploy.sh"
+grep -q "REMOTE_STAGING_ROOT.*deploy-staging" "${PROJECT_ROOT}/scripts/deploy.sh"
 
-echo "PASS: manifest-v2 nested promotion is durable and recoverable"
+echo "PASS: manifest-v3 nested promotion is durable and recoverable"

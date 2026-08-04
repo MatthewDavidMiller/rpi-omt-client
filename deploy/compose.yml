@@ -3,11 +3,11 @@ services:
     image: omt-client
     container_name: omt-client
     restart: unless-stopped
-    # A 1080p receiver needs working room for decoded frames, but should not be
-    # able to consume a low-memory Pi 5 host. The limit can be lowered only
-    # after hardware validation through the root-owned installer environment.
-    mem_limit: "${OMT_CONTAINER_MEMORY_LIMIT:-768m}"
-    pids_limit: 128
+    # The receiver decodes directly into three scanout buffers, so the complete
+    # appliance stays inside a 256 MiB budget even on the 512 MiB design target.
+    mem_limit: "${OMT_CONTAINER_MEMORY_LIMIT:-256m}"
+    memswap_limit: "${OMT_CONTAINER_MEMORY_LIMIT:-256m}"
+    pids_limit: 64
     logging:
       driver: local
       options:
@@ -34,13 +34,13 @@ services:
       - /dev/dri:/dev/dri
       - /dev/snd:/dev/snd
     volumes:
-      - omt-config:/etc/omt
+      - omt-config-v3:/etc/omt
       - /var/lib/omt-client/avahi:/host-avahi:ro
       - /var/lib/omt-client/diagnostics:/host-diagnostics
       - /var/lib/omt-client/host-actions:/host-actions
       # Per-boot receiver state. The receiver republishes playback status on
       # every change and then at a heartbeat, so keeping it on the SD-card-backed
-      # omt-config volume meant a continuous write + fsync + rename onto flash.
+      # Persistent config volumes must never carry heartbeat writes to flash.
       # It is all state that must not survive a restart anyway. Capped because a
       # tmpfs is RAM; the lock, PID record, and status document total under 1 KB.
       - type: tmpfs
@@ -64,6 +64,6 @@ services:
       - "${OMT_AUDIO_GID:-18}"   # Alpine audio
 
 volumes:
-  omt-config:
-    name: omt-config
+  omt-config-v3:
+    name: omt-config-v3
     external: true

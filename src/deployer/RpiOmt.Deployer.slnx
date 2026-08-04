@@ -1,6 +1,0 @@
-<Solution>
-  <Project Path="RpiOmt.Deployer.App/RpiOmt.Deployer.App.csproj" />
-  <Project Path="RpiOmt.Deployer.Core/RpiOmt.Deployer.Core.csproj" />
-  <Project Path="RpiOmt.Deployer.IntegrationTests/RpiOmt.Deployer.IntegrationTests.csproj" />
-  <Project Path="RpiOmt.Deployer.Tests/RpiOmt.Deployer.Tests.csproj" />
-</Solution>

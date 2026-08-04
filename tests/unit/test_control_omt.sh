@@ -17,7 +17,7 @@ trap cleanup EXIT
 
 mkdir -p "${CASE_DIR}/config/run"
 
-# The fake receiver stands in for the NativeAOT binary. Its path is what the
+# The fake receiver stands in for the native binary. Its path is what the
 # controller's process-identity check is given, so every variant below must
 # leave the interpreter on that pid rather than exec'ing something else.
 install_receiver() {

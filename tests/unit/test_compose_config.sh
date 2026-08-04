@@ -57,7 +57,7 @@ assert_contains '^[[:space:]]*-[[:space:]]+/dev/dri:/dev/dri[[:space:]]*$' \
     "DRM device is passed through"
 assert_contains '^[[:space:]]*-[[:space:]]+/dev/snd:/dev/snd[[:space:]]*$' \
     "ALSA device is passed through"
-assert_contains '^[[:space:]]*-[[:space:]]+omt-config:/etc/omt[[:space:]]*$' \
+assert_contains '^[[:space:]]*-[[:space:]]+omt-config-v3:/etc/omt[[:space:]]*$' \
     "persistent config volume is mounted at /etc/omt"
 assert_contains '^[[:space:]]*-[[:space:]]+/var/lib/omt-client/diagnostics:/host-diagnostics[[:space:]]*$' \
     "least-privilege host diagnostics directory is mounted"
@@ -79,14 +79,16 @@ assert_not_contains '^[[:space:]]*-[[:space:]]+/proc(/|:)' \
     "proc subpaths are not bind-mounted because current runc rejects them"
 assert_contains '^[[:space:]]*target:[[:space:]]+/tmp[[:space:]]*$' \
     "tmpfs is mounted at /tmp"
-assert_contains '^[[:space:]]*mem_limit:[[:space:]]+"\$\{OMT_CONTAINER_MEMORY_LIMIT:-768m\}"[[:space:]]*$' \
+assert_contains '^[[:space:]]*mem_limit:[[:space:]]+"\$\{OMT_CONTAINER_MEMORY_LIMIT:-256m\}"[[:space:]]*$' \
     "container memory is bounded for low-RAM Pi 5 models"
-assert_contains '^[[:space:]]*pids_limit:[[:space:]]+128[[:space:]]*$' \
+assert_contains '^[[:space:]]*memswap_limit:[[:space:]]+"\$\{OMT_CONTAINER_MEMORY_LIMIT:-256m\}"[[:space:]]*$' \
+    "container cannot expand beyond its RAM limit into swap"
+assert_contains '^[[:space:]]*pids_limit:[[:space:]]+64[[:space:]]*$' \
     "container process count is bounded"
 assert_contains '^[[:space:]]*driver:[[:space:]]+local[[:space:]]*$' \
     "container logs use Docker's bounded local driver"
 # Playback status is rewritten continuously, so a runtime directory left on the
-# omt-config volume is a permanent write load on SD-card-backed flash.
+# Persistent config volume writes would be a permanent load on SD-card flash.
 assert_contains '^[[:space:]]*target:[[:space:]]+/run/omt[[:space:]]*$' \
     "per-boot receiver state is mounted as tmpfs at /run/omt"
 assert_contains '^[[:space:]]*size:[[:space:]]+[0-9]+[[:space:]]*$' \
@@ -96,7 +98,7 @@ assert_contains '^[[:space:]]*size:[[:space:]]+[0-9]+[[:space:]]*$' \
 # create its own directory under the latter, so the container never starts.
 assert_contains '^[[:space:]]*mode:[[:space:]]+1023[[:space:]]*$' \
     "the runtime tmpfs mode is explicit rather than engine-dependent"
-assert_not_contains '^[[:space:]]*-[[:space:]]+omt-config:/etc/omt/run' \
+assert_not_contains '^[[:space:]]*-[[:space:]]+omt-config-v3:/etc/omt/run' \
     "the runtime directory is not bound back onto the persistent volume"
 assert_contains '^[[:space:]]*-[[:space:]]+"\$\{OMT_VIDEO_GID:-27\}"[[:space:]]*(#.*)?$' \
     "video group uses an installer-provided GID with the Alpine fallback"
@@ -106,12 +108,12 @@ assert_contains '^[[:space:]]*-[[:space:]]+"\$\{OMT_AUDIO_GID:-18\}"[[:space:]]*
     "audio group uses an installer-provided GID with the Alpine fallback"
 assert_contains '^volumes:[[:space:]]*$' \
     "top-level volumes section exists"
-assert_contains '^[[:space:]]+omt-config:[[:space:]]*$' \
-    "omt-config volume is declared"
-assert_contains '^[[:space:]]+name:[[:space:]]+omt-config[[:space:]]*$' \
-    "omt-config has a stable platform-wide name"
+assert_contains '^[[:space:]]+omt-config-v3:[[:space:]]*$' \
+    "native-generation config volume is declared"
+assert_contains '^[[:space:]]+name:[[:space:]]+omt-config-v3[[:space:]]*$' \
+    "native-generation config has a stable platform-wide name"
 assert_contains '^[[:space:]]+external:[[:space:]]+true[[:space:]]*$' \
-    "installer-created omt-config volume is declared external"
+    "installer-created native config volume is declared external"
 
 echo ""
 echo "Results: ${PASS} passed, ${FAIL} failed"

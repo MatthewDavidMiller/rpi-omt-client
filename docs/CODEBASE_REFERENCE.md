@@ -4,12 +4,12 @@
 
 | Area | Files |
 |---|---|
-| Native receiver | `src/receiver/RpiOmt.Receiver/Program.cs` |
-| Receiver policy/status core | `src/receiver/RpiOmt.Receiver.Core` |
-| Status projection and publish throttle | `src/receiver/RpiOmt.Receiver.Core/PlaybackState.cs` |
-| Receiver heartbeat waits and atomic status publication | `src/receiver/RpiOmt.Receiver.Core/InterruptibleWait.cs`, `src/receiver/RpiOmt.Receiver.Core/AtomicFilePublisher.cs` |
-| HDMI connector selection | `src/receiver/RpiOmt.Receiver.Core/HdmiConnectors.cs` |
-| Audited OMT source | `third_party/omt/PROVENANCE.md`, `third_party/omt/libomtnet`, `third_party/omt/libvmx`, `third_party/omt/omtplayer` |
+| Native receiver | `src/native/receiver/main.cpp` |
+| OMT wire transport and validation | `src/native/omt/omt_wire.c`, `src/native/omt/include/omt/omt_wire.h` |
+| Status projection and atomic publication | `src/native/receiver/playback_status.cpp` |
+| Discovery and bounded network channels | `src/native/receiver/discovery.cpp`, `src/native/receiver/omt_channel.cpp` |
+| DRM/ALSA playback | `src/native/receiver/drm_output.cpp`, `src/native/receiver/alsa_output.cpp` |
+| Audited VMX source | `third_party/omt/PROVENANCE.md`, `third_party/omt/libvmx` |
 | Flask composition | `src/omt_client/factory.py`, `src/omt_client/wsgi.py` |
 | Service composition | `src/omt_client/services/composition.py` |
 | Typed service protocols | `src/omt_client/services/protocols.py` |
@@ -48,17 +48,17 @@ site-packages rather than a copied tree. That list names only `omt_client*`, so
 image. Nothing under `src/omt_client/` may import it;
 `tests/unit/test_preview_services.py` enforces that.
 
-`runtime-sha256.manifest` covers `/app`, `/usr/local/bin`, `libvmx.so`, **and**
+`runtime-sha256.manifest` covers `/app`, `/usr/local/bin`, **and**
 the installed `omt_client` package with its `.dist-info`, so the integrity
 check still spans the application code after the move. The first-party wheel is
 excluded from the third-party notice sweep and from the SBOM's PyPI components;
 `tests/integration/test_docker_build.sh` asserts all of this.
 
-The native receiver is built in the digest-pinned Alpine NativeAOT SDK stage.
-The compiler stays on amd64 and emits ARM64 against a minimal Alpine target
-sysroot, avoiding failures in the ARM64-hosted .NET 10 ILC process. The build
-step then removes NuGet and compiler intermediates. A `scratch` stage
-contains only `omt-receiver` and `libvmx.so`; the runtime copies from that
+The native receiver is built with CMake, Ninja, Clang, and LLD in a
+digest-pinned Alpine builder stage. The compiler stays on amd64 and emits
+ARM64 against a minimal Alpine target sysroot. A `scratch` stage contains only
+the stripped native `omt-receiver`; the runtime supplies its small Alpine
+ALSA, Avahi, DRM, C/C++ runtime dependency set and copies the executable from that
 stage, so neither the SDK nor build toolchain is part of the deployed image.
 
 Public routes are `/login`, `/logout`, `/`, `/sources/select`,
@@ -78,18 +78,17 @@ are POST and CSRF protected.
 | Reboot validator | `deploy/host/host-reboot.sh`, `deploy/lib/reboot-request.sh` |
 | Shared host helpers | `deploy/lib/host-validation.sh`, `deploy/lib/publication.sh`, `deploy/lib/service-install.sh` |
 | HDMI boot-configuration rules | `deploy/lib/hdmi-config.sh` |
-| Deployment contract | `deploy/manifest-v2.txt`, `deploy/transaction.sh` |
+| Deployment contract | `deploy/manifest-v3.txt`, `deploy/transaction.sh` |
 | CLI deployment | `scripts/deploy.sh` |
-| Windows models/validation | `src/deployer/RpiOmt.Deployer.Core/Models.cs` |
-| Windows action state | `src/deployer/RpiOmt.Deployer.Core/ActionController.cs` |
-| Windows deployment facade | `src/deployer/RpiOmt.Deployer.Core/DeploymentOperations.cs` |
-| Windows view models | `src/deployer/RpiOmt.Deployer.App/ViewModels/MainViewModel.cs`, `src/deployer/RpiOmt.Deployer.App/ViewModels/SectionViewModels.cs` |
-| Windows About UI | `src/deployer/RpiOmt.Deployer.App/BuildInformation.cs`, `src/deployer/RpiOmt.Deployer.App/Views/MainWindow.axaml` |
-| Windows theme and control styles | `src/deployer/RpiOmt.Deployer.App/App.axaml`, `src/deployer/RpiOmt.Deployer.App/Styles/Tokens.axaml`, `src/deployer/RpiOmt.Deployer.App/Styles/Controls.axaml` |
+| Native deployer validation and models | `src/native/deployer/core.cpp`, `src/native/deployer/core.hpp` |
+| Secure local process and SSH boundaries | `src/native/deployer/process.cpp`, `src/native/deployer/ssh_client.cpp` |
+| Deployment/Wi-Fi operations | `src/native/deployer/deployment.cpp` |
+| SDL3/ImGui presentation and About UI | `src/native/deployer/ui_main.cpp` |
+| Hash-locked deployer dependencies | `cmake/NativeDependencies.cmake` |
 
 ## Legal and release
 
 `LICENSE`, `THIRD_PARTY_NOTICES.txt`, and `THIRD_PARTY_SOURCE.md` are release
-inputs. `scripts/check-legal-notices.py` compares shipped Python and Windows
+inputs. `scripts/check-legal-notices.py` compares shipped Python and native
 dependencies to the notices. `scripts/generate-runtime-sbom.py` and
-`scripts/generate-windows-sbom.py` create CycloneDX inventories.
+`scripts/generate-deployer-sbom.py` create CycloneDX inventories.

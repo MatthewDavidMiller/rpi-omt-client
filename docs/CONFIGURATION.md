@@ -9,7 +9,7 @@
 | `RPI_OMT_CLIENT_VERSION_FILE` | `/app/RPI_OMT_CLIENT_VERSION` |
 | `OMT_CONFIG_DIR` | `/etc/omt` persistent application state |
 | `OMT_RUNTIME_DIR` | `/run/omt/state` in the shipped image (tmpfs); per-boot lock, PID record, and playback status. Falls back to `$OMT_CONFIG_DIR/run` when unset |
-| `OMT_STORAGE_PATH` | `/etc/omt/omt`, libomtnet storage |
+| `OMT_STORAGE_PATH` | `/etc/omt/omt`, native OMT settings storage |
 | `OMT_RUNTIME_CONFIG_FILE` | `$OMT_STORAGE_PATH/settings.xml` |
 | `OMT_PASSWORD_FILE` | `$OMT_CONFIG_DIR/web_password` |
 | `OMT_WEB_PASSWORD` | Emergency plaintext password override (unset in production). When set, the password file is ignored and the value is compared with a constant-time digest rather than a Werkzeug hash. Prefer a hashed `web_password` file. |

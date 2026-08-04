@@ -74,7 +74,7 @@ rm -f -- \
     "${HOST_COMPONENT_DIR}/host-reboot.sh" \
     "${HOST_COMPONENT_DIR}/reboot-request.sh" \
     "${HOST_COMPONENT_DIR}/recover-deployment.sh" \
-    "${HOST_COMPONENT_DIR}/manifest-v2.txt" \
+    "${HOST_COMPONENT_DIR}/manifest-v3.txt" \
     "${HOST_COMPONENT_DIR}/deploy-artifacts.txt"
 rmdir "${HOST_COMPONENT_DIR}" 2>/dev/null || true
 
@@ -84,13 +84,13 @@ if [[ "${REMOVE_DIR}" =~ ^[Yy] ]]; then
         echo "ERROR: Docker is required to verify OMT volume removal." >&2
         exit 1
     fi
-    if docker volume inspect omt-config >/dev/null 2>&1 && \
-       ! docker volume rm omt-config >/dev/null; then
-        echo "ERROR: Could not remove Docker volume omt-config." >&2
+    if docker volume inspect omt-config-v3 >/dev/null 2>&1 && \
+       ! docker volume rm omt-config-v3 >/dev/null; then
+        echo "ERROR: Could not remove Docker volume omt-config-v3." >&2
         exit 1
     fi
     rm -rf "${INSTALL_DIR}"
-    echo "Removed ${INSTALL_DIR} and omt-config."
+    echo "Removed ${INSTALL_DIR} and omt-config-v3. Older volumes were left untouched."
 fi
 
 echo "Docker log policy, zram, and Wi-Fi configuration were retained as safe host defaults."

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Upload, verify, recover, and journal-promote a manifest-v2 deployment.
+# Upload, verify, recover, and journal-promote a manifest-v3 deployment.
 
 set -euo pipefail
 export LC_ALL=C
@@ -8,7 +8,7 @@ umask 077
 PROJECT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 HOST="${1:-}"
 REMOTE_DIR="${2:-/opt/omt-client}"
-MANIFEST="${PROJECT_ROOT}/deploy/manifest-v2.txt"
+MANIFEST="${PROJECT_ROOT}/deploy/manifest-v3.txt"
 TRANSACTION_HELPER="${PROJECT_ROOT}/deploy/transaction.sh"
 
 if [[ -z "${HOST}" || "${HOST}" == -* || \
@@ -31,8 +31,8 @@ for support_file in "${MANIFEST}" "${TRANSACTION_HELPER}"; do
 done
 
 IFS= read -r manifest_version < "${MANIFEST}" || true
-[[ "${manifest_version}" == "version=2" ]] || {
-    echo "ERROR: deployment manifest must begin with version=2." >&2
+[[ "${manifest_version}" == "version=3" ]] || {
+    echo "ERROR: deployment manifest must begin with version=3." >&2
     exit 1
 }
 
@@ -62,8 +62,8 @@ done < <(tail -n +2 -- "${MANIFEST}")
     exit 1
 }
 [[ -n "${seen_names[deploy/transaction.sh]+x}" && \
-   -n "${seen_names[deploy/manifest-v2.txt]+x}" ]] || {
-    echo "ERROR: v2 manifest must include its transaction helper and manifest." >&2
+   -n "${seen_names[deploy/manifest-v3.txt]+x}" ]] || {
+    echo "ERROR: v3 manifest must include its transaction helper and manifest." >&2
     exit 1
 }
 
@@ -96,6 +96,7 @@ token="$(od -An -N12 -tx1 /dev/urandom | tr -d '[:space:]')"
     exit 1
 }
 REMOTE_STAGE="${REMOTE_DIR}/.deploy-staging/${token}"
+REMOTE_STAGING_ROOT="${REMOTE_DIR}/.deploy-staging"
 cleanup_required=true
 cleanup() {
     if [[ "${cleanup_required}" == "true" ]]; then
@@ -111,11 +112,14 @@ ssh -t "${HOST}" \
     "sudo install -d -m 755 -o \"\$(id -u)\" -g \"\$(id -g)\" '${REMOTE_DIR}'"
 
 # Settle journals with the helper and manifest that created them. This must
-# happen before v2 can create nested-path state.
+# happen before v3 can create nested-path state.
 ssh "${HOST}" \
     "if [ -x '${REMOTE_DIR}/deploy-transaction.sh' ] && [ -f '${REMOTE_DIR}/deploy-artifacts.txt' ]; then '${REMOTE_DIR}/deploy-transaction.sh' recover '${REMOTE_DIR}' '${REMOTE_DIR}/deploy-artifacts.txt'; fi; if [ -x '${REMOTE_DIR}/deploy/transaction.sh' ]; then '${REMOTE_DIR}/deploy/transaction.sh' recover '${REMOTE_DIR}'; fi"
 
-remote_directories=("${REMOTE_STAGE}")
+ssh "${HOST}" \
+    "if [ -L '${REMOTE_STAGING_ROOT}' ] || { [ -e '${REMOTE_STAGING_ROOT}' ] && [ ! -d '${REMOTE_STAGING_ROOT}' ]; }; then exit 14; fi; install -d -m 700 -- '${REMOTE_STAGING_ROOT}'; mkdir -- '${REMOTE_STAGE}'"
+
+remote_directories=()
 declare -A seen_directories=()
 for name in "${ARTIFACT_NAMES[@]}"; do
     parent="${name%/*}"
@@ -124,7 +128,9 @@ for name in "${ARTIFACT_NAMES[@]}"; do
         remote_directories+=("${REMOTE_STAGE}/${parent}")
     fi
 done
-ssh "${HOST}" mkdir -p -- "${remote_directories[@]}"
+if (( ${#remote_directories[@]} > 0 )); then
+    ssh "${HOST}" mkdir -p -- "${remote_directories[@]}"
+fi
 
 for name in "${ARTIFACT_NAMES[@]}"; do
     local_path="${LOCAL_PATHS[${name}]}"
@@ -147,7 +153,7 @@ done
 echo "Promoting verified deployment set..."
 ssh "${HOST}" bash "${REMOTE_STAGE}/deploy/transaction.sh" \
     promote "${REMOTE_DIR}" "${token}" \
-    "${REMOTE_STAGE}/deploy/manifest-v2.txt"
+    "${REMOTE_STAGE}/deploy/manifest-v3.txt"
 
 cleanup_required=false
 ssh -t "${HOST}" \

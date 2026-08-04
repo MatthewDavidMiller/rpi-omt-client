@@ -106,7 +106,7 @@ def main() -> int:
         [
             {
                 "type": "library",
-                "name": "libomtnet",
+                "name": "libomtnet-derived-native-transport",
                 "version": "1.0.0.17",
                 "licenses": [{"license": {"id": "MIT"}}],
                 "properties": [
@@ -124,7 +124,7 @@ def main() -> int:
             },
             {
                 "type": "library",
-                "name": "omtplayer-derived-playback",
+                "name": "omtplayer-derived-native-playback",
                 "version": "c47397c",
                 "licenses": [{"license": {"id": "MIT"}}],
             },

@@ -1,5 +1,5 @@
 #!/bin/ash
-# Build the NativeAOT receiver and libvmx from the stable amd64 compiler stage.
+# Build the native C/C++ receiver from the stable amd64 compiler stage.
 
 set -eu
 
@@ -7,29 +7,37 @@ target_arch="${1:-}"
 target_sysroot="${2:-}"
 version="${RPI_OMT_CLIENT_VERSION:-unknown}"
 
-mkdir -p /out/native
+build_dir=/tmp/receiver-build
+rm -rf "${build_dir}"
+mkdir -p "${build_dir}" /out/receiver
 
 case "${target_arch}" in
     amd64)
-        clang++ -O3 -std=c++17 -fdeclspec -fPIC -mlzcnt -mavx2 -mbmi -shared \
-            third_party/omt/libvmx/src/vmxcodec_x86.cpp \
-            third_party/omt/libvmx/src/vmxcodec_avx2.cpp \
-            third_party/omt/libvmx/src/vmxcodec.cpp \
-            -Wl,-rpath,'$ORIGIN' -o /out/native/libvmx.so
-        runtime_id=linux-musl-x64
+        cmake -S /src -B "${build_dir}" -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER=clang \
+            -DCMAKE_CXX_COMPILER=clang++ \
+            -DOMT_BUILD_RECEIVER=ON \
+            -DOMT_BUILD_DEPLOYER=OFF \
+            -DOMT_BUILD_TESTS=OFF \
+            -DOMT_CLIENT_VERSION="${version}"
         ;;
     arm64)
         if [ ! -f "${target_sysroot}/etc/os-release" ]; then
             echo "ERROR: ARM64 Alpine sysroot is missing." >&2
             exit 1
         fi
-        clang++ --target=aarch64-alpine-linux-musl \
-            --sysroot="${target_sysroot}" -fuse-ld=bfd \
-            -O3 -std=c++17 -fdeclspec -fPIC -shared \
-            third_party/omt/libvmx/src/vmxcodec_arm.cpp \
-            third_party/omt/libvmx/src/vmxcodec.cpp \
-            -Wl,-rpath,'$ORIGIN' -o /out/native/libvmx.so
-        runtime_id=linux-musl-arm64
+        export OMT_ARM64_SYSROOT="${target_sysroot}"
+        export PKG_CONFIG_SYSROOT_DIR="${target_sysroot}"
+        export PKG_CONFIG_LIBDIR="${target_sysroot}/usr/lib/pkgconfig:${target_sysroot}/usr/share/pkgconfig"
+        cmake -S /src -B "${build_dir}" -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_TOOLCHAIN_FILE=/src/cmake/toolchains/alpine-aarch64.cmake \
+            -DCMAKE_EXE_LINKER_FLAGS=-fuse-ld=lld \
+            -DOMT_BUILD_RECEIVER=ON \
+            -DOMT_BUILD_DEPLOYER=OFF \
+            -DOMT_BUILD_TESTS=OFF \
+            -DOMT_CLIENT_VERSION="${version}"
         ;;
     *)
         echo "ERROR: unsupported target architecture: ${target_arch}" >&2
@@ -37,25 +45,7 @@ case "${target_arch}" in
         ;;
 esac
 
-set -- \
-    --configuration Release \
-    --runtime "${runtime_id}" \
-    --self-contained true \
-    --output /out/receiver \
-    -p:InformationalVersion="${version}" \
-    -p:DebugType=None \
-    -p:DebugSymbols=false
-
-if [ "${target_arch}" = "arm64" ]; then
-    set -- "$@" \
-        -p:SysRoot="${target_sysroot}" \
-        -p:LinkerFlavor=bfd \
-        -p:ObjCopyName=/usr/aarch64-alpine-linux-musl/bin/objcopy
-fi
-
-dotnet publish src/receiver/RpiOmt.Receiver/RpiOmt.Receiver.csproj "$@"
-
-# These files are useful only while compiling. Keeping them in a completed
-# builder layer previously added hundreds of MiB per test run.
-find /src -type d \( -name bin -o -name obj \) -prune -exec rm -rf {} +
-rm -rf /root/.nuget/packages
+cmake --build "${build_dir}" --target omt-receiver --parallel 2
+install -m 0755 "${build_dir}/src/native/receiver/omt-receiver" /out/receiver/omt-receiver
+llvm-strip /out/receiver/omt-receiver
+rm -rf "${build_dir}"

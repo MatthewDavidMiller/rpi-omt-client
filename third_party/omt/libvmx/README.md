@@ -35,28 +35,8 @@ These are available for Windows and MacOS and are the recommended way to get sta
 ### C/C++
 Include vmxcodec.h, reference libvmx.lib and you're ready to go.
 
-### C#/VB.Net
-All functions can be called with DllImport
-
-Use IntPtr for the instance type. No structs need to be defined.
-
 ## Compiling
 
-### Windows
-
-1. Install Visual Studio 2022 and Intel C++ Compiler 2024 or higher
-2. Open libvmx.sln
-3. Build
-
-### Linux
-
-1. Install Clang
-2. cd ./build
-3. Run ./buildlinuxx64.sh or ./buildlinuxarm64.sh depending on platform
-
-### Mac (ARM64)
-
-1. Install xcode with Apple Clang Compiler
-2. cd ./build
-3. Run ./buildmacuniversal.sh
-
+This repository builds the required decoder sources through its root CMake
+project. Use the documented native receiver or deployer build commands rather
+than invoking the upstream project files directly.

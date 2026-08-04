@@ -129,9 +129,9 @@ struct VMX_SLICE_SET
 	VMX_SIZE PixelSize; //Size in pixels of the slice, for copying from source image data. Due to alignment last slice will be only 8 pixels height for 1080 for example.
 	VMX_SIZE PixelSizeInterlaced; //Same as above but for second field alignment adjustment at the mid point.
 	int LowerField; //=1 when this is a lower field slice
-	__declspec(align(64)) short TempBlock[128];
-	__declspec(align(64)) short TempBlock2[128];
-	__declspec(align(64)) short TempBlock3[128];
+	alignas(64) short TempBlock[128];
+	alignas(64) short TempBlock2[128];
+	alignas(64) short TempBlock3[128];
 };
 
 struct VMX_PLANE
@@ -552,5 +552,4 @@ VMX_API int VMX_Test(VMX_INSTANCE* instance, short* src, short* dst);
 //Private functions
 void VMX_ResetData(VMX_SLICE_DATA* s);
 void VMX_ResetStream(VMX_INSTANCE* instance);
-
 

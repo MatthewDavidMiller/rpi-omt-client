@@ -1,7 +1,7 @@
 """The receiver's published playback-status contract.
 
 This is the consumer half of a cross-language contract; the producer is
-`src/receiver/RpiOmt.Receiver.Core/PlaybackState.cs`. `tests/schema/
+`src/native/receiver/playback_status.cpp`. `tests/schema/
 playback-status-vectors.json` holds the shared vectors and both suites assert
 against it, so a field or state added on only one side fails the other.
 

@@ -6,7 +6,7 @@ This file provides guidance to Codex and other coding agents working in this rep
 
 Raspberry Pi OMT Client receives OMT video/audio streams on a Raspberry Pi 5 and outputs them to HDMI. The system uses:
 
-- A multi-stage Docker build for the NativeAOT .NET OMT receiver and `libvmx`
+- A multi-stage Docker build for the C17/C++20 OMT receiver and `libvmx`
 - A Flask web UI for authentication and OMT source selection
 - Direct DRM/KMS video and ALSA audio playback inside the container
 
@@ -91,8 +91,8 @@ If you cannot run a relevant validation step, say so explicitly in your final ha
 - `src/omt_client/state_store.py`: bounded state and atomic OMT target persistence
 - `src/omt_client/templates/` and `src/omt_client/static/`: web UI
 - `src/omt_client_preview/`: dev-only in-memory fakes; deliberately outside the shipped package
-- `src/receiver/RpiOmt.Receiver.Core/`: dependency-free CLI parsing, validation, and status core
-- `src/deployer/`: Windows Avalonia deployer and its core
+- `src/native/omt/` and `src/native/receiver/`: bounded wire parsing, validation, playback, and status
+- `src/native/deployer/`: portable SDL3/ImGui deployment application and dependency-free core
 - `deploy/container/runtime-lib.sh`: shared shell validation, bounded reads, and process identity
 - `deploy/container/entrypoint.sh`: container bootstrap, secret/cert generation, gunicorn startup
 - `deploy/container/start-omt.sh`: validated native OMT receiver launcher
@@ -100,7 +100,7 @@ If you cannot run a relevant validation step, say so explicitly in your final ha
 - `deploy/openrc/`: fixed OpenRC service definitions
 - `deploy/Dockerfile`: cross-build and runtime image assembly
 - `tests/unit/` and `tests/integration/`: main safety net
-- `tests/schema/`: vectors shared by the Python and C# suites
+- `tests/schema/`: vectors shared by the Python and native suites
 
 ## Agent Handoff
 

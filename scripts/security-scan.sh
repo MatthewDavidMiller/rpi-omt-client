@@ -37,14 +37,7 @@ echo "=== Trivy filesystem scan ==="
     --skip-dirs .git \
     --skip-dirs .build \
     --skip-dirs dist \
-    --skip-dirs src/deployer/RpiOmt.Deployer.App/bin \
-    --skip-dirs src/deployer/RpiOmt.Deployer.App/obj \
-    --skip-dirs src/deployer/RpiOmt.Deployer.Core/bin \
-    --skip-dirs src/deployer/RpiOmt.Deployer.Core/obj \
-    --skip-dirs src/deployer/RpiOmt.Deployer.Tests/bin \
-    --skip-dirs src/deployer/RpiOmt.Deployer.Tests/obj \
-    --skip-dirs src/deployer/RpiOmt.Deployer.IntegrationTests/bin \
-    --skip-dirs src/deployer/RpiOmt.Deployer.IntegrationTests/obj \
+    --skip-dirs .build \
     --skip-dirs build \
     --skip-dirs output \
     --skip-dirs work \

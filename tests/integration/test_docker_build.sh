@@ -87,7 +87,7 @@ import tarfile
 
 forbidden_prefixes = (
     "opt/omt-sdk",
-    "src/receiver",
+    "src/native",
     "src/third_party/omt",
 )
 hits = []
@@ -113,7 +113,6 @@ rm -f "${saved_image}"
 
 checks=(
     "test -x /usr/local/bin/omt-receiver"
-    "test -s /usr/local/lib/libvmx.so"
     "test -x /usr/local/bin/entrypoint.sh && test -x /usr/local/bin/control-omt.sh && test -x /usr/local/bin/start-omt.sh"
     "/opt/venv/bin/python -c 'import importlib.resources as r; files=r.files(\"omt_client\"); assert (files / \"factory.py\").is_file(); assert all((files / \"templates\" / n).is_file() for n in (\"about.html\", \"system.html\", \"reboot_confirm.html\", \"login.html\")); assert (files / \"static\" / \"style.css\").is_file()'"
     "/opt/venv/bin/python -c 'import importlib.metadata as m; assert m.version(\"rpi-omt-client\")'"
@@ -128,14 +127,13 @@ checks=(
     "/usr/local/bin/omt-receiver --version | grep -Fxq vtest"
     "result=\$(/usr/local/bin/omt-receiver discover --wait-ms 0 --json) && printf '%s' \"\${result}\" | /opt/venv/bin/python -c 'import json,sys; assert isinstance(json.load(sys.stdin), list)'"
     "/opt/venv/bin/python -c 'import flask, flask_limiter, flask_wtf, gunicorn'"
-    "/opt/venv/bin/python -c 'import json; p=\"/app/legal/runtime-sbom.cdx.json\"; d=json.load(open(p, encoding=\"utf-8\")); assert d[\"bomFormat\"] == \"CycloneDX\"; assert d[\"specVersion\"] == \"1.6\"; assert d[\"metadata\"][\"component\"][\"version\"] == \"vtest\"; assert d[\"metadata\"][\"component\"][\"licenses\"] == [{\"license\": {\"id\": \"MIT\"}}]; names={x[\"name\"] for x in d[\"components\"]}; assert {\"libomtnet\", \"libvmx\", \"omtplayer-derived-playback\"} <= names'"
+    "/opt/venv/bin/python -c 'import json; p=\"/app/legal/runtime-sbom.cdx.json\"; d=json.load(open(p, encoding=\"utf-8\")); assert d[\"bomFormat\"] == \"CycloneDX\"; assert d[\"specVersion\"] == \"1.6\"; assert d[\"metadata\"][\"component\"][\"version\"] == \"vtest\"; assert d[\"metadata\"][\"component\"][\"licenses\"] == [{\"license\": {\"id\": \"MIT\"}}]; names={x[\"name\"] for x in d[\"components\"]}; assert {\"libomtnet-derived-native-transport\", \"libvmx\", \"omtplayer-derived-native-playback\"} <= names'"
     "test -s /app/runtime-sha256.manifest && sha256sum --check /app/runtime-sha256.manifest >/dev/null"
     "! command -v gst-launch-1.0 >/dev/null 2>&1 && ! find / -name 'libgstndi*' -print -quit 2>/dev/null | grep -q ."
     "test \"\$HOME\" = /etc/omt && test \"\$(id -un)\" = omt"
 )
 labels=(
     "native OMT receiver is executable"
-    "native libvmx codec library is present"
     "OMT runtime scripts are executable"
     "Web views and static assets ship as package data"
     "application wheel is installed with metadata"
@@ -202,17 +200,14 @@ if timeout 30 "${CONTAINER_ENGINE}" run --rm --platform linux/arm64 \
     "${CONTAINER_ENGINE}" create \
         --name "${ARM64_ARTIFACT_CONTAINER}" "${ARM64_ARTIFACT_TAG}" >/dev/null
     receiver_artifact="$(mktemp)"
-    vmx_artifact="$(mktemp)"
     if "${CONTAINER_ENGINE}" cp \
            "${ARM64_ARTIFACT_CONTAINER}:/omt-receiver" "${receiver_artifact}" &&
-       "${CONTAINER_ENGINE}" cp \
-           "${ARM64_ARTIFACT_CONTAINER}:/libvmx.so" "${vmx_artifact}" &&
-       [[ -s "${receiver_artifact}" && -s "${vmx_artifact}" ]]; then
-        pass "ARM64 builder produced the receiver and libvmx"
+       [[ -s "${receiver_artifact}" ]]; then
+        pass "ARM64 builder produced the native receiver artifact"
     else
         fail "ARM64 builder artifacts are missing"
     fi
-    if python3 - "${receiver_artifact}" "${vmx_artifact}" <<'PY'
+    if python3 - "${receiver_artifact}" <<'PY'
 import struct
 import sys
 
@@ -230,7 +225,7 @@ PY
     else
         fail "ARM64 builder artifacts have the wrong architecture"
     fi
-    rm -f "${receiver_artifact}" "${vmx_artifact}"
+    rm -f "${receiver_artifact}"
 elif [[ "${REQUIRE_ARM64_BUILD:-0}" == "1" ]]; then
     fail "ARM64 emulation is required but unavailable"
 else

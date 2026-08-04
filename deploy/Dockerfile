@@ -1,31 +1,46 @@
-ARG DOTNET_SDK_ALPINE_AOT_DIGEST=sha256:804af59ab9617c61c0a7f57d548c76e436d4c32e36c77c006aa8064c608f70fb
 ARG ALPINE_DIGEST=sha256:fd791d74b68913cbb027c6546007b3f0d3bc45125f797758156952bc2d6daf40
 ARG TARGETARCH
 
-# The official NativeAOT SDK already includes Clang, binutils, musl headers,
-# and zlib headers. Keep the compiler on amd64: the .NET 10 ARM64-hosted ILC
-# failed under QEMU, and native Raspberry Pi compilation was also reported to
-# fail. It emits ARM64 code against the small target sysroot below instead.
+# Keep the compiler on amd64 and emit Alpine/musl ARM64 code against a bounded
+# target sysroot. No target executable is run during compilation, so the same
+# build works through Linux Docker/Podman and Windows Docker Desktop.
 # hadolint ignore=DL3029
-FROM --platform=linux/amd64 mcr.microsoft.com/dotnet/sdk:10.0-alpine3.23-aot@${DOTNET_SDK_ALPINE_AOT_DIGEST} AS receiver-builder-base
+FROM --platform=linux/amd64 alpine:3.23.5@${ALPINE_DIGEST} AS receiver-builder-base
 
 SHELL ["/bin/ash", "-eo", "pipefail", "-c"]
 
 ARG RPI_OMT_CLIENT_VERSION=unknown
 
-RUN apk add --no-cache binutils-aarch64
+RUN apk add --no-cache \
+        alsa-lib-dev \
+        avahi-dev \
+        clang \
+        cmake \
+        g++ \
+        libdrm-dev \
+        lld \
+        linux-headers \
+        llvm \
+        ninja \
+        pkgconf
 
 WORKDIR /src
-COPY Directory.Build.props global.json ./
-COPY src/receiver/ src/receiver/
-COPY third_party/omt/ third_party/omt/
+COPY CMakeLists.txt CMakePresets.json ./
+COPY cmake/ cmake/
+COPY src/native/ src/native/
+COPY third_party/omt/libvmx/ third_party/omt/libvmx/
 COPY scripts/build-native-receiver.sh /usr/local/bin/build-native-receiver
 
 FROM receiver-builder-base AS receiver-builder-amd64
 RUN build-native-receiver amd64
 
 FROM --platform=$TARGETPLATFORM alpine:3.23.5@${ALPINE_DIGEST} AS receiver-sysroot
-RUN apk add --no-cache g++ zlib-dev
+RUN apk add --no-cache \
+        alsa-lib-dev \
+        avahi-dev \
+        g++ \
+        libdrm-dev \
+        linux-headers
 
 FROM receiver-builder-base AS receiver-builder-arm64
 COPY --from=receiver-sysroot /etc/os-release /opt/receiver-sysroot/etc/os-release
@@ -40,10 +55,9 @@ RUN build-native-receiver arm64 /opt/receiver-sysroot
 FROM receiver-builder-${TARGETARCH} AS receiver-builder
 
 # Keep the testable/exportable ARM64 target limited to shipped artifacts. The
-# SDK, source, NuGet cache, and NativeAOT object files never enter this image.
+# Compiler, source, and CMake intermediates never enter this image.
 FROM scratch AS receiver-artifacts
 COPY --from=receiver-builder /out/receiver/omt-receiver /omt-receiver
-COPY --from=receiver-builder /out/native/libvmx.so /libvmx.so
 
 FROM alpine:3.23.5@${ALPINE_DIGEST} AS python-builder
 
@@ -78,7 +92,6 @@ RUN apk add --no-cache \
         avahi-libs \
         bash \
         coreutils \
-        icu-libs \
         libdrm \
         libgcc \
         libstdc++ \
@@ -88,13 +101,12 @@ RUN apk add --no-cache \
         zlib \
     && addgroup -S omt \
     && adduser -S -D -H -G omt -h /etc/omt -s /sbin/nologin omt \
-    && mkdir -p /app/legal /etc/omt /usr/local/lib /run/omt \
+    && mkdir -p /app/legal /etc/omt /run/omt \
     && chown omt:omt /etc/omt /run/omt \
     && chmod 700 /run/omt
 
 COPY --from=python-builder /opt/venv /opt/venv
 COPY --from=receiver-artifacts /omt-receiver /usr/local/bin/omt-receiver
-COPY --from=receiver-artifacts /libvmx.so /usr/local/lib/libvmx.so
 COPY deploy/container/ /usr/local/bin/
 COPY LICENSE THIRD_PARTY_NOTICES.txt /app/legal/
 COPY scripts/generate-runtime-sbom.py /tmp/generate-runtime-sbom.py
@@ -123,7 +135,6 @@ RUN chmod 0755 \
     && { \
         find /app -type f ! -name runtime-sha256.manifest -print0; \
         find /usr/local/bin -maxdepth 1 -type f -print0; \
-        find /usr/local/lib -maxdepth 1 -type f -name 'libvmx.so' -print0; \
         find /opt/venv/lib -type d \
                 \( -name omt_client -o -name 'rpi_omt_client-*.dist-info' \) \
                 -exec find {} -type f -print0 \; ; \
@@ -142,7 +153,6 @@ ENV FLASK_APP=omt_client.wsgi:app
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1
 ENV PYTHONUNBUFFERED=1
 ENV WEB_PORT=${WEB_PORT}
-ENV LD_LIBRARY_PATH=/usr/local/lib
 ENV PATH="/opt/venv/bin:${PATH}"
 
 LABEL org.opencontainers.image.title="Raspberry Pi OMT Client"

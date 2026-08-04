@@ -1,12 +1,12 @@
 # Architecture
 
-The appliance is a clean OMT implementation built around `libomtnet` and
-`libvmx`.
+The appliance is a clean, bounded native OMT implementation built around its
+C17 wire transport and the audited `libvmx` decoder.
 
 ```text
 OMT network
-  └─ libomtnet discovery/receive
-       └─ omt-receiver (NativeAOT .NET 10)
+  └─ C17 discovery/receive transport
+       └─ omt-receiver (C++20)
             ├─ dependency-free parsing/status core
             ├─ VMX decoder (libvmx)
             ├─ DRM/KMS HDMI presenter
@@ -28,15 +28,24 @@ unprivileged container
 
 ## Receiver
 
-`src/receiver/RpiOmt.Receiver` builds against audited source snapshots in
-`third_party/omt`. Its dependency-free
-`src/receiver/RpiOmt.Receiver.Core` owns typed CLI parsing, shared target
+`src/native/receiver` builds against the audited VMX source snapshot in
+`third_party/omt`. The C transport in `src/native/omt` and the C++ receiver own
+typed CLI parsing, shared target
 validation, format policy, sanitization, synchronized status projection, and
 HDMI connector selection over the DRM sysfs tree.
 `discover` emits bounded JSON, `probe` checks a direct OMT target, and `play`
 owns receive, DRM, ALSA, hotplug, retry, and status publication. Discovered
 names are NFC, have no control characters, and are at most 63 UTF-8 bytes.
-Direct targets must be exact `omt://host:port` URIs.
+Direct targets must be exact `omt://host:port` URIs. The validation path uses
+no locale-dependent or unbounded parsing; the native receiver conservatively
+rejects decomposed combining-mark source names to preserve the Web layer's NFC
+contract without carrying a large Unicode runtime.
+
+The runtime is capped at 256 MiB and 64 processes. At 1080p it uses three DRM
+scanout buffers, bounded network frames, and two VMX workers with 512 KiB
+stacks. A 512 MiB Pi Zero 2 W is the memory-design floor, but remains outside
+the supported hardware matrix because the installer, DRM integration, and
+1080p60 performance target are Pi 5-specific.
 
 Playback supports either Pi HDMI connector. A missing, unreadable, or
 half-populated DRM tree reads as "no display connected", so the play loop
@@ -72,7 +81,7 @@ field can select a command or argument.
 
 ## Persistent state
 
-The external `omt-config` volume contains credentials, sessions,
+The external `omt-config-v3` volume contains credentials, sessions,
 `source_target.json`, OMT `settings.xml`, TLS material, and the receiver log.
 Source state is one atomic schema-versioned record, not a pair of files. The
 installer never migrates state from incompatible predecessor installations.
@@ -91,22 +100,21 @@ for state that is meaningless after a restart.
 
 ## Deployment capsule
 
-`deploy/manifest-v2.txt` defines manifest version 2: a bounded, variable-size
+`deploy/manifest-v3.txt` defines manifest version 3: a bounded, variable-size
 capsule with normalized nested paths. `deploy/transaction.sh` stages the files
 under a nonce-specific directory, records the transaction's own manifest in a
 durable journal, rejects symlinked ancestors, and can roll back nested paths
-without trusting a later release's manifest. CLI and Windows deployment hash
-every stable local snapshot, verify every remote SHA-256, recover any v1
-journal with its installed v1 helper, promote the v2 set, and only then invoke
+without trusting a later release's manifest. CLI and native GUI deployment hash
+every stable local snapshot, verify every remote SHA-256, recover predecessor
+journals with their installed helpers, promote the v3 set, and only then invoke
 `deploy/host/install.sh`.
 
 ## Trust and legal surfaces
 
 `LICENSE` governs project-owned code. `THIRD_PARTY_NOTICES.txt` covers shipped
-runtime dependencies. The Web and Windows About pages display those texts and
-their build version. The container generates a CycloneDX SBOM from final Alpine
-and Python contents; the Windows publisher generates another from its locked
-NuGet graph.
+runtime dependencies. The Web and native deployer About pages display those
+texts and their build version. The container and deployer publishers generate
+CycloneDX inventories from their native dependency locks.
 
 The host is Alpine Linux 3.23 aarch64 in persistent sys mode. The installer
 rejects other distributions, other Pi generations, and RAM-backed diskless

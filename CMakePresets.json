@@ -1,0 +1,55 @@
+{
+  "version": 6,
+  "configurePresets": [
+    {
+      "name": "linux-debug",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/native-linux-debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "OMT_BUILD_DEPLOYER": "OFF",
+        "OMT_BUILD_TESTS": "ON"
+      }
+    },
+    {
+      "name": "linux-sanitize",
+      "inherits": "linux-debug",
+      "binaryDir": "${sourceDir}/build/native-linux-sanitize",
+      "cacheVariables": {
+        "OMT_ENABLE_SANITIZERS": "ON"
+      }
+    },
+    {
+      "name": "linux-arm64-musl-release",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/native-linux-arm64",
+      "toolchainFile": "${sourceDir}/cmake/toolchains/alpine-aarch64.cmake",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "OMT_BUILD_DEPLOYER": "OFF",
+        "OMT_BUILD_TESTS": "OFF"
+      }
+    },
+    {
+      "name": "deployer-linux-release",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/deployer-linux",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "OMT_BUILD_RECEIVER": "OFF",
+        "OMT_BUILD_DEPLOYER": "ON",
+        "OMT_BUILD_TESTS": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "linux-debug", "configurePreset": "linux-debug" },
+    { "name": "linux-sanitize", "configurePreset": "linux-sanitize" },
+    { "name": "linux-arm64-musl-release", "configurePreset": "linux-arm64-musl-release" },
+    { "name": "deployer-linux-release", "configurePreset": "deployer-linux-release" }
+  ],
+  "testPresets": [
+    { "name": "linux-debug", "configurePreset": "linux-debug", "output": { "outputOnFailure": true } },
+    { "name": "linux-sanitize", "configurePreset": "linux-sanitize", "output": { "outputOnFailure": true } }
+  ]
+}

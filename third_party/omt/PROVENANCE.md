@@ -1,8 +1,9 @@
 # Open Media Transport provenance
 
-The Raspberry Pi OMT Client vendors the following upstream MIT-licensed
-components. Build outputs, repository metadata, and the upstream `omtplayer`
-web server are intentionally excluded.
+The Raspberry Pi OMT Client vendors the MIT-licensed `libvmx` decoder. Its
+native wire transport and playback code were independently ported from the
+listed MIT-licensed revisions; the former C# source snapshots are deliberately
+not vendored or built.
 
 | Component | Upstream | Commit |
 |---|---|---|
@@ -10,6 +11,6 @@ web server are intentionally excluded.
 | `libomtnet` | https://github.com/openmediatransport/libomtnet | `bda284e86ea56166b0caa45f30136def8c893e5e` |
 | `libvmx` | https://github.com/openmediatransport/libvmx | `f73569e767b9d9177519bf5765c9434dfe8af51f` |
 
-Local integration changes are limited to target-framework/build integration,
-DRM connector selection, lifecycle/status reporting, and the hardened command
-line interface in `receiver/`.
+The native implementation adds bounded frame parsing, conservative source and
+target validation, direct DRM/ALSA output, lifecycle/status publication, and a
+hardened command line under `src/native/`.

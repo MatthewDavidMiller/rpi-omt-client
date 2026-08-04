@@ -18,18 +18,26 @@ keep OpenSSH reachable, enable the v3.23 `community` repository, and fully
 update the machine before deployment. Ethernet is strongly recommended for the
 first install. The installer applies its own current package update as well.
 
-## Windows GUI
+## Native deployment GUI
 
-Build the self-contained Windows x64 deployer:
+Build the deployer for the current Linux or Windows host:
 
 ```bash
 make test-setup
-make build-windows-deployer
+make build-deployer
 ```
 
-Run `dist/rpi-omt-client-deployer-windows-x64.exe` on Windows 10/11 with Docker
-Desktop, OpenSSH host trust, administrator SSH/sudo credentials, and this source
-tree. Connect validates Alpine 3.23 aarch64 and the Pi 5 device-tree model.
+On Windows, run these commands from a Bash environment (Git Bash or MSYS2)
+with GNU Make, CMake, Ninja, Clang/Clang++, Python 3, and Docker Desktop's Linux
+engine on `PATH`. The native host build uses WinSock and Windows CNG and emits
+`rpi-omt-deployer.exe`; the appliance build still runs entirely in the pinned
+Linux containers. On Linux, `make install` provisions the supported local
+toolchain and optional persistent ARM64 emulation.
+
+Run `.build/deployer-publish/bin/rpi-omt-deployer` (or the `.exe` produced on
+Windows) with Docker, a Pi key already trusted in `~/.ssh/known_hosts`,
+administrator SSH/sudo credentials, and this source tree. Connect validates
+Alpine 3.23 aarch64 and the Pi 5 device-tree model.
 Deploy builds, verifies, uploads, and installs the capsule. Manage reads
 container status/logs or restarts it. Wi-Fi updates the running
 `wpa_supplicant` through its control socket and stores a derived WPA PSK rather
@@ -42,11 +50,11 @@ make build-arm64
 make deploy HOST=admin@192.168.1.50
 ```
 
-`deploy/manifest-v2.txt` is the authoritative capsule. It includes the image,
+`deploy/manifest-v3.txt` is the authoritative capsule. It includes the image,
 Compose definition, host scripts, OpenRC definitions, shared validation rules,
 transaction helper, and legal files. The deployment clients hash every local
 snapshot, verify every remote SHA-256, and promote the complete set through the
-durable v2 transaction journal.
+durable v3 transaction journal.
 
 Its nested-path boundary is:
 
@@ -67,7 +75,7 @@ deploy/openrc/omt-client-avahi-proxy
 deploy/openrc/omt-client-host-diagnostics
 deploy/openrc/omt-client-reboot
 deploy/transaction.sh
-deploy/manifest-v2.txt
+deploy/manifest-v3.txt
 LICENSE
 THIRD_PARTY_NOTICES.txt
 THIRD_PARTY_SOURCE.md
@@ -85,7 +93,7 @@ The installer then:
    Broadcom firmware, ALSA/DRM tools, Docker/Compose, Avahi/D-Bus, nftables,
    inotify, `wpa_supplicant`, and zram support;
 2. applies kernel/network sysctls, SSH safeguards, bounded Docker logs, daemon
-   no-new-privileges, zram swap, a 768 MiB container cap, a 128-PID cap, and
+   no-new-privileges, zram swap, a 256 MiB container cap, a 64-PID cap, and
    bounded tmpfs mounts;
 3. installs a default-deny nftables input policy allowing established traffic,
    loopback, ICMP/IPv6 neighbor discovery, DHCP, mDNS, SSH, and the Web port;
@@ -110,8 +118,10 @@ source or save a direct target such as `omt://192.168.1.60:6400`.
 
 ## Upgrade and uninstall
 
-Deploy a complete newer manifest-v2 capsule to the same directory. Persistent
-credentials, sessions, TLS material, and source state remain in `omt-config`.
+Deploy a complete newer manifest-v3 capsule to the same directory. Persistent
+credentials, sessions, TLS material, and source state remain in
+`omt-config-v3`. The legacy `omt-config` volume is deliberately neither
+imported nor removed.
 
 Run `sudo ./deploy/host/uninstall.sh` to remove owned OpenRC services, host
 state, firewall rules, image, and optionally the volume/install directory. The

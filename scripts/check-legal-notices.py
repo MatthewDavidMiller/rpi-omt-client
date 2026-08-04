@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import json
 import re
 import sys
 from pathlib import Path
@@ -30,39 +29,28 @@ def python_packages() -> set[str]:
     }
 
 
-def windows_packages() -> set[str]:
-    document = json.loads(
-        (ROOT / "src/deployer/RpiOmt.Deployer.App/packages.lock.json").read_text(encoding="utf-8")
-    )
-    return {
-        name.lower()
-        for name, record in document["dependencies"]["net10.0"].items()
-        if record["type"] != "Project"
-    }
-
-
 def main() -> int:
     notices = (ROOT / "THIRD_PARTY_NOTICES.txt").read_text(encoding="utf-8").lower()
     for package in sorted(python_packages()):
         if package not in notices:
             fail(f"Python runtime package is missing from notices: {package}")
-    for package in sorted(windows_packages()):
-        family = package.split(".", 1)[0]
-        if package not in notices and family not in notices:
-            fail(f"Windows runtime package is missing from notices: {package}")
+    for package in ("sdl 3.4.8", "dear imgui 1.92.8", "libssh2 1.11.1"):
+        if package not in notices:
+            fail(f"Native deployer dependency is missing from notices: {package}")
 
     for path in (
         ROOT / "LICENSE",
         ROOT / "src/omt_client/templates/about.html",
-        ROOT / "src/deployer/RpiOmt.Deployer.App/BuildInformation.cs",
+        ROOT / "src/native/deployer/ui_main.cpp",
     ):
         require_text(path, COPYRIGHT)
     require_text(ROOT / "LICENSE", "MIT License")
 
+    require_text(ROOT / "third_party/omt/libvmx/LICENSE.txt", "MIT License")
     for component in ("libomtnet", "libvmx", "omtplayer"):
-        license_path = ROOT / f"third_party/omt/{component}/LICENSE.txt"
-        require_text(license_path, "MIT License")
         require_text(ROOT / "third_party/omt/PROVENANCE.md", component)
+        if component not in notices:
+            fail(f"OMT attribution is missing from notices: {component}")
 
     dockerfile = (ROOT / "deploy/Dockerfile").read_text(encoding="utf-8").lower()
     for required in (
@@ -78,30 +66,12 @@ def main() -> int:
         if forbidden in dockerfile:
             fail(f"Dockerfile still references legacy software: {forbidden}")
 
-    deployer_project = (
-        (ROOT / "src/deployer/RpiOmt.Deployer.App/RpiOmt.Deployer.App.csproj")
-        .read_text(encoding="utf-8")
-        .lower()
-    )
-    deployer_build_info = (
-        (ROOT / "src/deployer/RpiOmt.Deployer.App/BuildInformation.cs")
-        .read_text(encoding="utf-8")
-        .lower()
-    )
-    for required in (
-        "microsoft.netcore.app.runtime.win-x64",
-        "skiasharp.nativeassets.win32",
-    ):
-        if required not in deployer_project:
-            fail(f"Windows About resources omit required notice input: {required}")
-    for resource in (
-        "rpiomt.dotnetthirdpartynotices.txt",
-        "rpiomt.skiaharfbuzzthirdpartynotices.txt",
-    ):
-        if resource not in deployer_build_info:
-            fail(f"Windows About does not render required notice resource: {resource}")
+    dependency_lock = (ROOT / "cmake/NativeDependencies.cmake").read_text(encoding="utf-8")
+    for required in ("SDL3-3.4.8", "v1.92.8", "libssh2-1.11.1", "URL_HASH", "SHA256"):
+        if required not in dependency_lock:
+            fail(f"Native dependency lock omits required input: {required}")
 
-    manifest = (ROOT / "deploy/manifest-v2.txt").read_text(encoding="ascii").splitlines()[1:]
+    manifest = (ROOT / "deploy/manifest-v3.txt").read_text(encoding="ascii").splitlines()[1:]
     required_artifacts = {
         "LICENSE",
         "THIRD_PARTY_NOTICES.txt",
@@ -113,7 +83,7 @@ def main() -> int:
 
     print(
         f"Legal notice check passed: {len(python_packages())} Python and "
-        f"{len(windows_packages())} Windows runtime packages covered."
+        "3 native deployer runtime packages covered."
     )
     return 0
 

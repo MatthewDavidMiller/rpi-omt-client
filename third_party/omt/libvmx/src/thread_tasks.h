@@ -24,59 +24,100 @@
 */
 
 #pragma once
-#include <thread>
+#include <cstddef>
+#include <algorithm>
 #include <queue>
 #include <mutex>
 #include <condition_variable>
 #include <functional>
+#include <stdexcept>
+
+#if defined(_WIN32)
+#include <thread>
+#else
+#include <pthread.h>
+#endif
 
 struct ThreadTask
 {
+#if defined(_WIN32)
 	std::thread thread;
+#else
+	pthread_t thread{};
+	bool threadCreated = false;
+#endif
 	std::queue<std::function<void()>> queue;
 	std::mutex mtx;
 	std::condition_variable cv;
 	std::condition_variable complete;
 	bool running = false;
+	bool busy = false;
 
 	void Join()
 	{
 		std::unique_lock<std::mutex> lock(mtx);
-		if (queue.size() > 0)
-		{
-			complete.wait(lock);
-		}
+		complete.wait(lock, [this] { return queue.empty() && !busy; });
 	}
 
 	void TaskLoop()
 	{
-		while (running)
-		{			
+		for (;;)
+		{
 			std::unique_lock<std::mutex> lock(mtx);
-			if (queue.size() == 0)
-			{
-				complete.notify_all();
-				cv.wait(lock);
-			}
+			cv.wait(lock, [this] { return !running || !queue.empty(); });
 			if (!running) break;
-			std::function<void()> func = NULL;
-			if (queue.size() > 0)
-			{
-				func = queue.front();
-				queue.pop();
-			}
-			if (func)
-			{
-				func();
-			}
-
+			std::function<void()> func = std::move(queue.front());
+			queue.pop();
+			busy = true;
+			lock.unlock();
+			func();
+			lock.lock();
+			busy = false;
+			if (queue.empty()) complete.notify_all();
 		}
+		complete.notify_all();
 	}
+
+#if !defined(_WIN32)
+	static void* ThreadEntry(void* context)
+	{
+		static_cast<ThreadTask*>(context)->TaskLoop();
+		return nullptr;
+	}
+#endif
+
 	void Initialize()
 	{
-		running = true;
-		queue = std::queue<std::function<void()>>();
+		{
+			std::lock_guard<std::mutex> lock(mtx);
+			running = true;
+			busy = false;
+			queue = std::queue<std::function<void()>>();
+		}
+#if defined(_WIN32)
 		thread = std::thread(&ThreadTask::TaskLoop, this);
+#else
+		pthread_attr_t attributes;
+		if (pthread_attr_init(&attributes) != 0)
+		{
+			throw std::runtime_error("Unable to initialize VMX worker attributes");
+		}
+		const long minimumStack = PTHREAD_STACK_MIN;
+		const std::size_t stackSize = std::max<std::size_t>(
+			512U * 1024U, minimumStack > 0 ? static_cast<std::size_t>(minimumStack) : 0U);
+		const int stackResult = pthread_attr_setstacksize(&attributes, stackSize);
+		const int createResult = stackResult == 0
+			? pthread_create(&thread, &attributes, &ThreadTask::ThreadEntry, this)
+			: stackResult;
+		pthread_attr_destroy(&attributes);
+		if (createResult != 0)
+		{
+			std::lock_guard<std::mutex> lock(mtx);
+			running = false;
+			throw std::runtime_error("Unable to create bounded-stack VMX worker");
+		}
+		threadCreated = true;
+#endif
 	}
 	void Push(std::function<void()> task)
 	{
@@ -93,7 +134,15 @@ struct ThreadTask
 			running = false;
 		}
 		cv.notify_all();
-		thread.join();
+#if defined(_WIN32)
+		if (thread.joinable()) thread.join();
+#else
+		if (threadCreated)
+		{
+			pthread_join(thread, nullptr);
+			threadCreated = false;
+		}
+#endif
 	}
 };
 
@@ -103,21 +152,38 @@ struct ThreadTasks
 	ThreadTask** tasks;
 };
 
-static ThreadTasks* CreateTasks(int numThreads)
+[[maybe_unused]] static ThreadTasks* CreateTasks(int numThreads)
 {
 	ThreadTasks* th = new ThreadTasks();
 	th->numThreads = numThreads;
-	th->tasks = new ThreadTask*[numThreads];
-	for (int i = 0; i < numThreads; i++)
+	th->tasks = new ThreadTask*[static_cast<std::size_t>(numThreads)]{};
+	try
 	{
-		ThreadTask* task = new ThreadTask();
-		th->tasks[i] = task;
-		task->Initialize();
+		for (int i = 0; i < numThreads; i++)
+		{
+			ThreadTask* task = new ThreadTask();
+			th->tasks[i] = task;
+			task->Initialize();
+		}
+	}
+	catch (...)
+	{
+		for (int i = 0; i < numThreads; i++)
+		{
+			if (th->tasks[i] != nullptr)
+			{
+				th->tasks[i]->Destroy();
+				delete th->tasks[i];
+			}
+		}
+		delete[] th->tasks;
+		delete th;
+		throw;
 	}
 	return th;
 }
 
-static void DestroyTasks(ThreadTasks* tasks)
+[[maybe_unused]] static void DestroyTasks(ThreadTasks* tasks)
 {
 	if (tasks)
 	{
@@ -127,7 +193,7 @@ static void DestroyTasks(ThreadTasks* tasks)
 			ThreadTask* task = tasks->tasks[i];
 			delete task;
 		}
+		delete[] tasks->tasks;
 		delete tasks;
 	}
 }
-

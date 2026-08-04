@@ -63,7 +63,7 @@ def _service(tmp_path: Path) -> RuntimeSourcePlayback:
 
 
 def test_consumer_accept_lists_match_the_shared_receiver_contract():
-    """The C# producer asserts against the same file. If these drift, Python's
+    """The C++ producer asserts against the same file. If these drift, Python's
     exact `set(document) == STATUS_FIELDS` check rejects every real status
     record and the dashboard silently pins to 'Playback status stale'."""
     assert STATUS_FIELDS == set(VECTORS["fields"])

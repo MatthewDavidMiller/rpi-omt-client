@@ -1,5 +1,5 @@
 #!/bin/bash
-# Recover or promote a manifest-v2 deployment under one durable journal.
+# Recover or promote a manifest-v3 deployment under one durable journal.
 
 set -euo pipefail
 export LC_ALL=C
@@ -80,8 +80,8 @@ load_manifest() {
     (( $(stat -c '%s' -- "${source}") <= 32768 )) ||
         fail "deployment manifest exceeds 32768 bytes"
     IFS= read -r line < "${source}" || true
-    [[ "${line}" == "version=2" ]] ||
-        fail "deployment manifest must begin with version=2"
+    [[ "${line}" == "version=3" ]] ||
+        fail "deployment manifest must begin with version=3"
     while IFS= read -r line || [[ -n "${line}" ]]; do
         [[ -n "${line}" ]] || fail "deployment manifest contains an empty path"
         safe_relative_path "${line}" ||
@@ -110,13 +110,13 @@ validate_journal() {
     local journal="$1"
     [[ -d "${journal}" && ! -L "${journal}" ]] ||
         fail "unsafe deployment journal: ${journal}"
-    [[ -f "${journal}/manifest-v2.txt" && ! -L "${journal}/manifest-v2.txt" ]] ||
+    [[ -f "${journal}/manifest-v3.txt" && ! -L "${journal}/manifest-v3.txt" ]] ||
         fail "deployment journal has no safe transaction manifest"
     [[ -f "${journal}/state.tsv" && ! -L "${journal}/state.tsv" ]] ||
         fail "deployment journal has no safe state record"
     [[ -f "${journal}/ready" && ! -L "${journal}/ready" ]] ||
         fail "deployment journal has no safe ready marker"
-    load_manifest "${journal}/manifest-v2.txt"
+    load_manifest "${journal}/manifest-v3.txt"
     local expected_lines="${#names[@]}"
     (( $(wc -l < "${journal}/state.tsv") == expected_lines )) ||
         fail "deployment journal state count does not match its manifest"
@@ -199,11 +199,14 @@ safe_absolute_directory "${deployment_dir}" ||
 if [[ "${command_name}" == "promote" ]]; then
     [[ "${token}" =~ ^[0-9a-f]{24}$ ]] ||
         fail "deployment transaction identifier must contain 24 lowercase hex characters"
-    [[ -n "${manifest_path}" ]] || fail "promote requires the staged v2 manifest"
+    [[ -n "${manifest_path}" ]] || fail "promote requires the staged v3 manifest"
 fi
 
 journal_root="${deployment_dir}/.deploy-transactions"
 staging_root="${deployment_dir}/.deploy-staging"
+if [[ -L "${staging_root}" || ( -e "${staging_root}" && ! -d "${staging_root}" ) ]]; then
+    fail "unsafe deployment staging root"
+fi
 exec 9<"${deployment_dir}"
 flock -x 9
 
@@ -215,7 +218,7 @@ fi
 staging="${staging_root}/${token}"
 [[ -d "${staging}" && ! -L "${staging}" ]] ||
     fail "unsafe or missing token-specific staging directory"
-[[ "${manifest_path}" == "${staging}/deploy/manifest-v2.txt" ]] ||
+[[ "${manifest_path}" == "${staging}/deploy/manifest-v3.txt" ]] ||
     fail "promotion must use the manifest inside its token-specific stage"
 load_manifest "${manifest_path}"
 for relative in "${names[@]}"; do
@@ -258,8 +261,8 @@ trap 'exit 143' TERM
 
 mkdir -- "${prepared}"
 mkdir -- "${prepared}/backup"
-cp -- "${manifest_path}" "${prepared}/manifest-v2.txt"
-cmp -s -- "${manifest_path}" "${prepared}/manifest-v2.txt" ||
+cp -- "${manifest_path}" "${prepared}/manifest-v3.txt"
+cmp -s -- "${manifest_path}" "${prepared}/manifest-v3.txt" ||
     fail "staged manifest changed while journaling"
 : > "${prepared}/state.tsv"
 sync_dir "${journal_root}"
@@ -273,7 +276,7 @@ for relative in "${names[@]}"; do
         printf '%s\tabsent\n' "${relative}" >> "${prepared}/state.tsv"
     fi
 done
-sync -f "${prepared}/manifest-v2.txt"
+sync -f "${prepared}/manifest-v3.txt"
 sync -f "${prepared}/state.tsv"
 : > "${prepared}/ready"
 sync -f "${prepared}/ready"

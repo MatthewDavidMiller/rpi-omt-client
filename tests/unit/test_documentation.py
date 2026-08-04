@@ -27,8 +27,8 @@ def test_public_application_settings_are_documented():
 
 
 def test_deployment_manifest_names_existing_files():
-    names = (REPO_ROOT / "deploy" / "manifest-v2.txt").read_text(encoding="ascii").splitlines()
-    assert names.pop(0) == "version=2"
+    names = (REPO_ROOT / "deploy" / "manifest-v3.txt").read_text(encoding="ascii").splitlines()
+    assert names.pop(0) == "version=3"
     assert names
     assert all(name == "omt-client-arm64.tar.gz" or (REPO_ROOT / name).is_file() for name in names)
 
@@ -43,11 +43,11 @@ def test_high_value_paths_are_documented():
         "src/omt_client/state_store.py",
         "deploy/container/runtime-lib.sh",
         "deploy/container/entrypoint.sh",
-        "src/receiver/RpiOmt.Receiver.Core",
-        "src/deployer/RpiOmt.Deployer.Core/Models.cs",
-        "src/deployer/RpiOmt.Deployer.Core/ActionController.cs",
-        "src/deployer/RpiOmt.Deployer.Core/DeploymentOperations.cs",
-        "deploy/manifest-v2.txt",
+        "src/native/receiver/main.cpp",
+        "src/native/omt/omt_wire.c",
+        "src/native/deployer/core.cpp",
+        "src/native/deployer/deployment.cpp",
+        "deploy/manifest-v3.txt",
         "deploy/transaction.sh",
     )
     assert all(f"`{path}`" in reference for path in paths)
@@ -90,12 +90,12 @@ def test_public_factory_routes_are_documented():
     assert not missing
 
 
-def test_manifest_v2_nested_capsule_boundary_is_documented():
+def test_manifest_v3_nested_capsule_boundary_is_documented():
     manifest_names = (
-        (REPO_ROOT / "deploy" / "manifest-v2.txt").read_text(encoding="ascii").splitlines()[1:]
+        (REPO_ROOT / "deploy" / "manifest-v3.txt").read_text(encoding="ascii").splitlines()[1:]
     )
     architecture = (REPO_ROOT / "docs" / "ARCHITECTURE.md").read_text(encoding="utf-8")
     setup = (REPO_ROOT / "docs" / "SETUP.md").read_text(encoding="utf-8")
-    assert "manifest version 2" in architecture
+    assert "manifest version 3" in architecture
     assert "nested paths" in architecture
     assert all(name in setup or name == "omt-client-arm64.tar.gz" for name in manifest_names)

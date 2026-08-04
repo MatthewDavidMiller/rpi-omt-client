@@ -1,9 +1,9 @@
 # Raspberry Pi OMT Client
 
 Raspberry Pi OMT Client receives Open Media Transport (OMT) video and audio on
-a Raspberry Pi 5 and presents it directly on HDMI. It combines a native
-.NET 10 OMT receiver, direct DRM/KMS video output, ALSA audio, a hardened Flask
-Web GUI, and a Windows deployment GUI.
+a Raspberry Pi 5 and presents it directly on HDMI. It combines a bounded
+C17/C++20 OMT receiver, direct DRM/KMS video output, ALSA audio, a hardened
+Flask Web GUI, and a portable native deployment GUI.
 
 The only supported appliance host is a Raspberry Pi 5 running Alpine Linux
 3.23 aarch64 in persistent `sys` mode. Diskless Alpine and Raspberry Pi OS are
@@ -19,17 +19,18 @@ faster input is reported as unsupported instead of being silently converted.
 make install
 make test-quick
 make build-arm64
-make build-windows-deployer
+make build-deployer
 ```
 
-The ARM64 build creates `omt-client-arm64.tar.gz`. The Windows build creates
-`dist/rpi-omt-client-deployer-windows-x64.exe` and its CycloneDX SBOM.
-On Linux x86-64, `make install` also installs persistent ARM64 emulation for
-the container builder.
+The ARM64 build creates `omt-client-arm64.tar.gz`. The deployer build stages a
+host-native SDL3/ImGui application and CycloneDX SBOM in
+`.build/deployer-publish/`. Linux and Windows hosts build the same ARM64
+appliance through the hermetic Dockerfile; Linux x86-64 can install persistent
+ARM64 emulation with `make install`.
 
 ## Install
 
-Copy the nested files named in `deploy/manifest-v2.txt` to the Pi, then run:
+Copy the nested files named in `deploy/manifest-v3.txt` to the Pi, then run:
 
 ```bash
 sudo ./deploy/host/install.sh
@@ -58,7 +59,7 @@ The authenticated Web GUI provides:
 - an About page with version, copyright, project license, and third-party
   notices.
 
-The Windows GUI has matching version, copyright, project license, and
+The native deployment GUI has matching version, copyright, project license, and
 third-party notices on its About tab.
 
 ## Documentation
