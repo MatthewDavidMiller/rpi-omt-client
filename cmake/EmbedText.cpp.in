@@ -6,8 +6,9 @@
 namespace omt::deployer {
 namespace {
 
-// `unsigned char` because the texts are UTF-8: a byte above 0x7F does not
-// narrow into a plain `char` on a platform where `char` is signed.
+// `unsigned char` because the texts are UTF-8. They happen to be ASCII today,
+// but a byte above 0x7F does not narrow into a plain `char` where `char` is
+// signed, and a notice for a new component must not break the build.
 @arrays@
 std::string_view text_of(const unsigned char* bytes, std::size_t size) noexcept {
     return {reinterpret_cast<const char*>(bytes), size};

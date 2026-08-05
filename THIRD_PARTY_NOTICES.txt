@@ -1,4 +1,4 @@
-RASPBERRY PI OMT CLIENT — THIRD-PARTY SOFTWARE NOTICES
+RASPBERRY PI OMT CLIENT -- THIRD-PARTY SOFTWARE NOTICES
 
 This file covers software included in the shipped Raspberry Pi OMT Client
 runtime image and native deployer. Build-only and test-only tools are not part
