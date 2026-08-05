@@ -1,4 +1,5 @@
 #include "core.hpp"
+#include "legal_texts.hpp"
 #include "process.hpp"
 #include "sha256.hpp"
 
@@ -82,49 +83,24 @@ void manifest_contract(const std::filesystem::path& path) {
     assert(rejected);
 }
 
-/// A published package is `<package>/bin/<executable>` with the legal texts
-/// beside `bin`, so About must find them from the executable's own location.
+/// The deployer is started from an installed package or a desktop shortcut as
+/// often as from a checkout, so it locates the tree it uploads itself.
 /// `root` already holds `deploy/manifest-v3.txt` from the manifest suite.
-void resource_contract(const std::filesystem::path& root) {
+void project_root_contract(const std::filesystem::path& root) {
     using namespace omt::deployer;
-    const auto package = root / "package";
-    const auto binaries = package / "bin";
-    const auto shared = package / "share" / "rpi-omt-deployer";
+    const auto binaries = root / "package" / "bin";
     std::filesystem::create_directories(binaries);
-    std::filesystem::create_directories(shared);
-    for (const auto& file : {package / "LICENSE", shared / "NOTICES.txt", root / "LOCAL.txt"}) {
-        std::ofstream(file, std::ios::binary) << "text";
-    }
 
-    const auto roots = resource_roots(binaries, root);
-    assert(locate_resource(roots, "LICENSE") == package / "LICENSE");
-    assert(locate_resource(roots, "NOTICES.txt") == shared / "NOTICES.txt");
-    // The working directory is the last resort, not the first: a source tree
-    // may hold a different revision's texts than the package that shipped.
-    assert(locate_resource(roots, "LOCAL.txt") == root / "LOCAL.txt");
-    assert(locate_resource(roots, "missing.txt").empty());
-
-    // A resource name is a single file name. About renders whatever this
-    // returns, so a name may not walk out of the roots it was given.
-    for (const auto& unsafe : {"../LICENSE", "package/LICENSE", "..\\LICENSE", "", ".", ".."}) {
-        assert(locate_resource(roots, unsafe).empty());
-    }
-    assert(resource_roots({}, {}).empty());
-    assert(locate_resource({}, "LICENSE").empty());
-
-    // SDL reports the executable's directory with a trailing separator, which
-    // leaves an empty filename component: without normalization the package
-    // directory resolves back to the bin directory and the texts stay hidden.
-    const auto trailing = resource_roots(binaries.string() + "/", root.string() + "/");
-    assert(trailing == roots);
-    assert(locate_resource(trailing, "LICENSE") == package / "LICENSE");
-    assert(discover_project_root(binaries.string() + "/", {}) == root);
-
-    // Started from an installed package or a desktop shortcut, the deployer
-    // still has to find the source tree it uploads.
     assert(discover_project_root(binaries, root / "deploy") == root);
     assert(discover_project_root(binaries, {}) == root);
     assert(discover_project_root({}, root) == root);
+    assert(discover_project_root({}, {}).empty());
+
+    // SDL reports the executable's directory with a trailing separator, which
+    // leaves an empty filename component: `parent_path()` then returns the
+    // directory itself and the ascent stalls on its first step.
+    assert(discover_project_root(binaries.string() + "/", {}) == root);
+    assert(discover_project_root({}, root.string() + "/") == root);
 
     // The ascent is bounded, so a marker far above an unrelated directory is
     // not adopted as the project root.
@@ -133,8 +109,26 @@ void resource_contract(const std::filesystem::path& root) {
         deep /= "level";
     }
     assert(discover_project_root({}, deep) == deep);
-    std::filesystem::remove_all(package);
-    std::filesystem::remove(root / "LOCAL.txt");
+    std::filesystem::remove_all(root / "package");
+}
+
+/// The legal texts are compiled in, so About cannot be left with nothing to
+/// show by a package that travelled without its files. This asserts the
+/// generated translation unit actually carries the repository's texts.
+void legal_contract() {
+    const auto documents = omt::deployer::legal_documents();
+    assert(documents.size() == 2);
+    assert(documents[0].name == "LICENSE");
+    assert(documents[1].name == "THIRD_PARTY_NOTICES.txt");
+    assert(documents[0].text.find("MIT License") != std::string_view::npos);
+    assert(documents[0].text.find("Matthew David Miller") != std::string_view::npos);
+    assert(documents[1].text.find("Dear ImGui") != std::string_view::npos);
+    for (const auto& document : documents) {
+        // Text, not a truncated or NUL-padded blob: About renders it verbatim.
+        assert(document.text.size() > 512);
+        assert(document.text.find('\0') == std::string_view::npos);
+        assert(document.text.back() == '\n');
+    }
 }
 
 }  // namespace
@@ -201,7 +195,8 @@ int main() {
     }
     assert(sha256_file(root / "sample.txt") ==
            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
-    resource_contract(root);
+    project_root_contract(root);
+    legal_contract();
     std::filesystem::remove_all(root);
 
     // WPA2 accepts either an 8-63 character passphrase or a 64-digit hex PSK;

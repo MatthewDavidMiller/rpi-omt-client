@@ -65,7 +65,8 @@ endif()
 
 if(TARGET omt_deployer_core)
     add_executable(test_deployer_core test_deployer_core.cpp)
-    target_link_libraries(test_deployer_core PRIVATE omt_deployer_core omt_warnings omt_sanitizers)
+    target_link_libraries(test_deployer_core PRIVATE
+        omt_deployer_core omt_deployer_legal omt_warnings omt_sanitizers)
     omt_enable_test_assertions(test_deployer_core)
     add_test(NAME native-deployer-core COMMAND test_deployer_core)
 endif()

@@ -1,4 +1,5 @@
 #include "deployment.hpp"
+#include "legal_texts.hpp"
 
 #include <SDL3/SDL.h>
 #include <backends/imgui_impl_sdl3.h>
@@ -14,16 +15,12 @@
 #include <cstddef>
 #include <cstdlib>
 #include <filesystem>
-#include <fstream>
 #include <future>
 #include <mutex>
-#include <optional>
-#include <sstream>
 #include <string>
 #include <string_view>
 #include <system_error>
 #include <utility>
-#include <vector>
 
 namespace {
 // Unscaled window geometry. Every value is multiplied by the display's content
@@ -67,45 +64,6 @@ void clear_value(std::array<char, Size>& buffer) noexcept {
     }
 }
 
-std::optional<std::string> bounded_file(const std::filesystem::path& path) {
-    std::ifstream input(path, std::ios::binary);
-    if (!input) {
-        return std::nullopt;
-    }
-    std::ostringstream output;
-    std::array<char, 16 * 1024> buffer{};
-    std::size_t total = 0;
-    while (input && total < 2U * 1024U * 1024U) {
-        input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
-        const auto count = static_cast<std::size_t>(input.gcount());
-        output.write(buffer.data(), static_cast<std::streamsize>(count));
-        total += count;
-    }
-    return output.str();
-}
-
-/// Render one legal document, or the search that failed to find it.
-std::string legal_document(const std::vector<std::filesystem::path>& roots,
-                           const std::string_view name) {
-    std::string section = "===== ";
-    section.append(name);
-    section += " =====\n";
-    const auto located = omt::deployer::locate_resource(roots, name);
-    if (!located.empty()) {
-        if (const auto text = bounded_file(located)) {
-            return section + located.string() + "\n\n" + *text + "\n";
-        }
-    }
-    section += "Not found. Searched:\n";
-    for (const auto& root : roots) {
-        section += "  " + (root / name).string() + "\n";
-    }
-    section +=
-        "The published package ships this file beside its bin directory. Reinstall it, or point "
-        "Project root at the source tree.\n";
-    return section;
-}
-
 /// Re-derive every style metric and the font size from `scale`.
 ///
 /// ImGui bakes the display scale into absolute pixel values, so a rescale has
@@ -144,8 +102,7 @@ void field(const char* label, std::array<char, Size>& buffer,
 }
 
 struct Application final {
-    explicit Application(std::filesystem::path base_directory)
-        : executable_directory(std::move(base_directory)) {
+    explicit Application(const std::filesystem::path& executable_directory) {
         std::error_code error;
         auto working = std::filesystem::current_path(error);
         if (error) {
@@ -427,14 +384,14 @@ struct Application final {
         ImGui::Text("Raspberry Pi OMT Client %s", OMT_CLIENT_VERSION);
         ImGui::TextUnformatted("Copyright (c) 2026 Matthew David Miller");
         ImGui::TextWrapped("Native C17/C++20 deployer using SDL3, Dear ImGui, and libssh2. Project code is MIT licensed.");
-        // The texts ship with the package, so they are found next to the
-        // executable first and only then under the operator's project root.
-        const auto root = value(project_root);
-        if (legal_text.empty() || legal_root != root) {
-            const auto roots = omt::deployer::resource_roots(executable_directory, root);
-            legal_text = legal_document(roots, "LICENSE") + "\n" +
-                         legal_document(roots, "THIRD_PARTY_NOTICES.txt");
-            legal_root = root;
+        if (legal_text.empty()) {
+            for (const auto& document : omt::deployer::legal_documents()) {
+                legal_text += "===== ";
+                legal_text += document.name;
+                legal_text += " =====\n";
+                legal_text += document.text;
+                legal_text += "\n";
+            }
         }
         ImGui::InputTextMultiline("##legal", legal_text.data(), legal_text.size() + 1,
                                   ImVec2(-1, -1), ImGuiInputTextFlags_ReadOnly);
@@ -459,9 +416,7 @@ struct Application final {
     std::atomic_bool cancel_requested{};
     std::mutex log_mutex;
     std::string log{"Ready.\n"};
-    std::filesystem::path executable_directory;
     std::string legal_text;
-    std::string legal_root;
 };
 }  // namespace
 

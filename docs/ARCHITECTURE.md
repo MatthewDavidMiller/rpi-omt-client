@@ -134,7 +134,9 @@ image; the capsule they upload is built by the hermetic Dockerfile.
 
 `LICENSE` governs project-owned code. `THIRD_PARTY_NOTICES.txt` covers shipped
 runtime dependencies. The Web and native deployer About pages display those
-texts and their build version. The container and deployer publishers generate
+texts and their build version; the deployer compiles them into its executable
+through `cmake/EmbedText.cmake` rather than reading files beside it, so a
+relocated binary still states its terms. The container and deployer publishers generate
 CycloneDX inventories from their native dependency locks.
 
 The host is Alpine Linux 3.23 aarch64 in persistent sys mode. The installer

@@ -70,9 +70,8 @@ bool contains_control(const std::string_view value) noexcept {
 /// Normalize a directory path and drop any trailing separator.
 ///
 /// A trailing separator leaves an empty filename component, so `parent_path()`
-/// returns the directory itself rather than its parent. `SDL_GetBasePath()`
-/// always ends in one, which would otherwise make the package directory and
-/// the executable directory the same place.
+/// returns the directory itself rather than its parent, wasting a step of the
+/// bounded ascent below. `SDL_GetBasePath()` always ends in one.
 std::filesystem::path directory_of(const std::filesystem::path& path) {
     auto normal = path.lexically_normal();
     return normal.has_filename() ? normal : normal.parent_path();
@@ -226,51 +225,6 @@ std::string shell_quote(const std::string_view value) {
     }
     result += '\'';
     return result;
-}
-
-// A published package is `<package>/bin/<executable>` with `LICENSE` and
-// `THIRD_PARTY_NOTICES.txt` beside the `bin` directory, so the executable's own
-// location -- not the process working directory, which is whatever the shell or
-// desktop shortcut happened to set -- is what locates shipped resources.
-std::vector<std::filesystem::path> resource_roots(
-    const std::filesystem::path& executable_directory,
-    const std::filesystem::path& working_directory) {
-    std::vector<std::filesystem::path> roots;
-    const auto add = [&roots](const std::filesystem::path& candidate) {
-        if (candidate.empty()) {
-            return;
-        }
-        if (std::ranges::find(roots, candidate) == roots.end()) {
-            roots.push_back(candidate);
-        }
-    };
-    const auto executable = directory_of(executable_directory);
-    add(executable);
-    if (!executable.empty()) {
-        const auto package = executable.parent_path();
-        add(package);
-        if (!package.empty()) {
-            add(package / "share" / "rpi-omt-deployer");
-        }
-    }
-    add(directory_of(working_directory));
-    return roots;
-}
-
-std::filesystem::path locate_resource(const std::vector<std::filesystem::path>& roots,
-                                      const std::string_view name) {
-    if (name.empty() || name.find('/') != std::string_view::npos ||
-        name.find('\\') != std::string_view::npos || name == "." || name == "..") {
-        return {};
-    }
-    for (const auto& root : roots) {
-        std::error_code error;
-        auto candidate = root / name;
-        if (std::filesystem::is_regular_file(candidate, error)) {
-            return candidate;
-        }
-    }
-    return {};
 }
 
 // The deployer reads a source tree, so it needs one even when it was started
