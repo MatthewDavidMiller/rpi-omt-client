@@ -124,7 +124,42 @@ assert_literal "${PROJECT_ROOT}/src/native/deployer/deployment.cpp" 'tonistiigi/
 assert_literal "${PROJECT_ROOT}/scripts/security-scan.sh" '--skip-files vars.yml' "Security scan does not inspect sensitive vars.yml"
 assert_executable "${PROJECT_ROOT}/scripts/install-arm64-emulation.sh" "ARM64 emulation bootstrap is executable"
 assert_literal "${PROJECT_ROOT}/scripts/install-arm64-emulation.sh" 'docker.io/tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0' "ARM64 bootstrap pins its emulator image"
-assert_literal "${PROJECT_ROOT}/scripts/test-local.sh" 'export REQUIRE_ARM64_BUILD=1' "Full local gate requires the ARM64 builder"
+assert_literal "${PROJECT_ROOT}/tests/integration/test_docker_build.sh" \
+    'fail "ARM64 emulation is unavailable' "Container gate requires the ARM64 builder"
+
+# Windows deployment application, cross-built from this Linux workstation.
+assert_executable "${PROJECT_ROOT}/scripts/build-windows-deployer.sh" "Windows cross build is executable"
+assert_executable "${PROJECT_ROOT}/scripts/verify-windows-deployer.sh" "Windows artifact verifier is executable"
+assert_contains "${PROJECT_ROOT}/Makefile" '^build-windows-deployer:' "Make exposes build-windows-deployer"
+assert_literal "${PROJECT_ROOT}/scripts/test-local.sh" \
+    '"${PROJECT_ROOT}/scripts/build-windows-deployer.sh"' "Local gate cross-builds the Windows deployer"
+assert_literal "${PROJECT_ROOT}/scripts/build-windows-deployer.sh" \
+    'cmake/toolchains/windows-x86_64-mingw.cmake' "Windows build uses the pinned cross toolchain"
+assert_literal "${PROJECT_ROOT}/cmake/toolchains/windows-x86_64-mingw.cmake" \
+    'set(CMAKE_SYSTEM_NAME Windows)' "Cross toolchain targets Windows"
+assert_literal "${PROJECT_ROOT}/cmake/toolchains/windows-x86_64-mingw.cmake" \
+    '-static -static-libgcc -static-libstdc++' "Windows deployer links its runtime statically"
+assert_literal "${PROJECT_ROOT}/CMakeLists.txt" \
+    '-Wl,--dynamicbase;-Wl,--nxcompat;-Wl,--high-entropy-va' "Windows release links are hardened"
+assert_literal "${PROJECT_ROOT}/scripts/install-dev-deps.sh" \
+    'x86_64-w64-mingw32-g++' "Install provisions the Windows cross toolchain"
+assert_executable "${PROJECT_ROOT}/scripts/install-trivy.sh" "Trivy bootstrap is executable"
+assert_literal "${PROJECT_ROOT}/scripts/install-dev-deps.sh" \
+    'install-trivy.sh' "Install provisions the security scanner"
+
+# No gate may report a pass for work it did not do. A missing tool, an
+# unregistered emulator, or a case that excuses itself has to fail the run.
+skip_escapes="$(grep -rInE 'SKIP_RETURN_CODE|pytest\.(skip|mark\.skip|mark\.xfail)|SKIP\$\{NC\}|"SKIP:|SKIP: ' \
+    "${PROJECT_ROOT}/tests" "${PROJECT_ROOT}/scripts" "${PROJECT_ROOT}/tools" \
+    --include='*.sh' --include='*.py' --include='CMakeLists.txt' \
+    --exclude-dir=.venv --exclude="$(basename -- "${BASH_SOURCE[0]}")" || true)"
+if [[ -z "${skip_escapes}" ]]; then
+    pass "No gate can skip a check instead of running it"
+else
+    printf '%s\n' "${skip_escapes}" >&2
+    fail "No gate can skip a check instead of running it"
+fi
+assert_literal "${PROJECT_ROOT}/tests/conftest.py" 'session.exitstatus = 1' "Python suite fails on any excused case"
 
 assert_literal "${PYTHON_AUDIT}" 'run_audit audit_hash_locked "requirements/runtime.txt"' "Python audit covers runtime dependencies"
 assert_literal "${PYTHON_AUDIT}" 'run_audit audit_pinned_no_deps "tests/requirements-dev.txt"' "Python audit covers development dependencies"

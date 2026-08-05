@@ -117,6 +117,19 @@ every stable local snapshot, verify every remote SHA-256, recover predecessor
 journals with their installed helpers, promote the v3 set, and only then invoke
 `deploy/host/install.sh`.
 
+## Operator deployment applications
+
+The same C++20 deployer sources build for the operator's own machine and for
+Windows x86-64. A Linux workstation publishes both: `scripts/check-deployer.sh
+--publish` stages the host package, and `scripts/build-windows-deployer.sh`
+cross-compiles the Windows package with mingw-w64 through
+`cmake/toolchains/windows-x86_64-mingw.cmake`. Both link SDL3, Dear ImGui, and
+libssh2 statically from the same hash-locked archives, so the two packages
+never diverge in dependency version. The cross build cannot execute what it
+produces, so `scripts/verify-windows-deployer.sh` reads the shipping contract
+out of the PE headers instead. Neither application is part of the appliance
+image; the capsule they upload is built by the hermetic Dockerfile.
+
 ## Trust and legal surfaces
 
 `LICENSE` governs project-owned code. `THIRD_PARTY_NOTICES.txt` covers shipped

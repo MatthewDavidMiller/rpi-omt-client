@@ -19,6 +19,7 @@ help:
 	@echo "  build-amd64   Build amd64 image locally (for testing)"
 	@echo "  build         Alias for build-arm64"
 	@echo "  build-deployer Test and publish the native deployer for this host"
+	@echo "  build-windows-deployer  Cross-compile the Windows x86-64 deployer (Linux host)"
 	@echo ""
 	@echo "Deploy targets:"
 	@echo "  deploy HOST=user@ip  Copy ARM64 image to Pi and start container"
@@ -76,8 +77,9 @@ build: build-arm64
 build-deployer:
 	RPI_OMT_CLIENT_VERSION="$(RPI_OMT_CLIENT_VERSION)" ./scripts/check-deployer.sh --publish
 
-# Compatibility alias; the native application builds for the current host.
-build-windows-deployer: build-deployer
+# Cross-compile the Windows x86-64 deployer from Linux with mingw-w64.
+build-windows-deployer:
+	RPI_OMT_CLIENT_VERSION="$(RPI_OMT_CLIENT_VERSION)" ./scripts/build-windows-deployer.sh
 
 # Deploy ARM64 image to Raspberry Pi
 # Usage: make deploy HOST=pi@192.168.1.100

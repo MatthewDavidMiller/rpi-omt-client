@@ -63,9 +63,15 @@ done
 
 cat > "${fixture_root}/tests/integration/test_docker_build.sh" <<'EOF'
 #!/bin/bash
-printf '%s\n' "${REQUIRE_ARM64_BUILD:-unset}" > "${ARM64_REQUIRE_LOG}"
+printf 'ran\n' > "${DOCKER_BUILD_LOG}"
 EOF
 chmod +x "${fixture_root}/tests/integration/test_docker_build.sh"
+
+cat > "${fixture_root}/scripts/build-windows-deployer.sh" <<'EOF'
+#!/bin/bash
+printf 'ran\n' >> "${WINDOWS_BUILD_LOG}"
+EOF
+chmod +x "${fixture_root}/scripts/build-windows-deployer.sh"
 for stub_path in "${stub_paths[@]}"; do
     ln -s /bin/true "${fixture_root}/${stub_path}"
 done
@@ -100,6 +106,7 @@ if (
     EXPECTED_PROJECT_ROOT="${fixture_root}" \
         PROBE_RESULT="${probe_result}" \
         CHECK_DEPLOYER_LOG="${case_dir}/quick-deployer" \
+        WINDOWS_BUILD_LOG="${case_dir}/quick-windows" \
         "${fixture_root}/scripts/test-local.sh" --quick \
         > "${case_dir}/runner-output" 2>&1
 ) && grep -Fxq "${fixture_root}" "${probe_result}"; then
@@ -125,23 +132,25 @@ run_container_mode() {
     [[ "${mode}" == "full" ]] && mode_args=(--full)
     (
         cd "${outside_dir}"
-        unset REQUIRE_ARM64_BUILD
         PATH="${fixture_root}/test-bin:${PATH}" \
             CONTAINER_ENGINE=docker \
-            ARM64_REQUIRE_LOG="${case_dir}/${mode}-arm64" \
+            DOCKER_BUILD_LOG="${case_dir}/${mode}-docker-build" \
+            WINDOWS_BUILD_LOG="${case_dir}/${mode}-windows" \
             EXPECTED_PROJECT_ROOT="${fixture_root}" \
             PROBE_RESULT="${probe_result}" \
             CHECK_DEPLOYER_LOG="${log_file}" \
             "${fixture_root}/scripts/test-local.sh" "${mode_args[@]}" \
             > "${case_dir}/${mode}-output" 2>&1
     )
-    local expected_arm64=unset
-    [[ "${mode}" == "full" ]] && expected_arm64=1
+    # Every mode that reaches a container engine builds the image and both
+    # deployer packages. A mode that quietly drops one of them would still be
+    # green here without these three logs.
     if [[ "$(wc -l < "${log_file}")" -eq 2 ]] &&
        grep -Fxq -- '--publish' "${log_file}" &&
        grep -Fxq -- '--integration-only' "${log_file}" &&
-       grep -Fxq -- "${expected_arm64}" "${case_dir}/${mode}-arm64"; then
-        echo "PASS: ${mode} mode publishes and runs Alpine-userland integration"
+       grep -Fxq ran "${case_dir}/${mode}-docker-build" &&
+       grep -Fxq ran "${case_dir}/${mode}-windows"; then
+        echo "PASS: ${mode} mode builds the image and publishes both deployers"
     else
         echo "FAIL: ${mode} mode deployer contract changed" >&2
         cat "${case_dir}/${mode}-output" >&2
@@ -151,3 +160,11 @@ run_container_mode() {
 
 run_container_mode default
 run_container_mode full
+
+# Quick mode is the one gate allowed to omit container and cross builds. It
+# still may not omit a Python or shell suite.
+if [[ -e "${case_dir}/quick-windows" ]]; then
+    echo "FAIL: quick mode ran the Windows cross build" >&2
+    exit 1
+fi
+echo "PASS: quick mode omits only the container and cross builds"

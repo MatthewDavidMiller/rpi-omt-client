@@ -75,12 +75,17 @@ if (
     echo "FAIL: lint accepted missing repo-local Python modules" >&2
     exit 1
 fi
-(
+# No flag turns a missing linter into a pass: an option that did would make the
+# lint gate report on whichever tools happened to be installed.
+if (
     cd "${OUTSIDE}"
     PATH="${FIXTURE}/fake-bin:${PATH}" \
         PYTHON_MODULES_AVAILABLE=0 \
         PYTHON_MODULE_LOG="${CASE_DIR}/missing.log" \
-        "${FIXTURE}/scripts/lint.sh" --allow-missing >/dev/null
-)
+        "${FIXTURE}/scripts/lint.sh" --allow-missing >/dev/null 2>&1
+); then
+    echo "FAIL: lint still offers a mode that tolerates missing linters" >&2
+    exit 1
+fi
 
 echo "Python tooling relocation and missing-tool tests passed"

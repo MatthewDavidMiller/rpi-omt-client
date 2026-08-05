@@ -1,11 +1,31 @@
 # Testing
 
-Bootstrap Python tooling, the native C/C++ toolchain, and ARM64 container
-emulation once:
+Bootstrap Python tooling, the native C/C++ toolchain, the mingw-w64 Windows
+cross toolchain, Hadolint, Trivy, and ARM64 container emulation once:
 
 ```bash
 make install
 ```
+
+`make install` fails if it cannot provision one of those tools, because every
+gate below runs on every commit and none of them substitute a pass for a tool
+they could not find.
+
+## No gate skips
+
+There is no mode, flag, or environment variable that makes a gate report a pass
+for a check it did not run:
+
+- a missing Hadolint, ShellCheck, yamllint, Ruff, mypy, Trivy, or Python 3
+  fails its gate rather than stepping over it;
+- unregistered ARM64 emulation fails the container gate rather than omitting
+  the appliance's own architecture;
+- a skipped, expected-failure, or deselected pytest case fails the Python run
+  through `tests/conftest.py`;
+- `tests/unit/test_supply_chain.sh` fails if a new skip escape appears in
+  `tests/`, `scripts/`, or `tools/`.
+
+Fix the workstation with `make install` instead of narrowing the suite.
 
 Use the narrowest relevant gate:
 
@@ -13,6 +33,7 @@ Use the narrowest relevant gate:
 make test-py
 make test-receiver
 make test-deployer
+make build-windows-deployer
 make test-quick
 make test
 ./scripts/test-local.sh --full
@@ -32,20 +53,29 @@ safety. Full
 mode also resolves hash-locked SDL3, Dear ImGui, and libssh2 archives and
 publishes the host-native GUI.
 
-Restricted or offline builders may point the publish gate at trusted,
-previously verified source trees with `RPI_OMT_SDL3_SOURCE_DIR`,
-`RPI_OMT_IMGUI_SOURCE_DIR`, and `RPI_OMT_LIBSSH2_SOURCE_DIR`. Otherwise CMake
-downloads the pinned archives and verifies their SHA-256 locks before use.
+Restricted or offline builders may point the publish gate and the Windows cross
+build at trusted, previously verified source trees with
+`RPI_OMT_SDL3_SOURCE_DIR`, `RPI_OMT_IMGUI_SOURCE_DIR`, and
+`RPI_OMT_LIBSSH2_SOURCE_DIR`. Otherwise CMake downloads the pinned archives and
+verifies their SHA-256 locks before use.
+
+`make build-windows-deployer` cross-compiles the deployment application for
+Windows x86-64 with mingw-w64 and verifies the PE headers it cannot execute:
+64-bit GUI subsystem, ASLR, DEP, high-entropy address randomization, and no
+redistributable runtime imports. Every non-quick local run performs this cross
+build, so both published deployer packages come off the same commit.
 
 `make test-quick` runs every shell contract/behavior suite, receiver tests,
 deployer tests, lint, and Python tests without requiring a container image
-build. Shell coverage includes the Alpine-only preflight, OpenRC definitions,
+build or the Windows cross build. Shell coverage includes the Alpine-only preflight, OpenRC definitions,
 installer hardening/firmware contract, reboot validation, host diagnostics,
 HDMI `usercfg.txt` rules, transactions, Compose resource limits, and supply
 chain pins.
 
-The normal `make test` adds an amd64 image build. Full mode adds container
-smoke and OMT network tests and requires the ARM64 receiver builder stage.
+The normal `make test` adds the Windows cross build, an amd64 image build, and
+the ARM64 receiver builder stage. Full mode adds container smoke and OMT
+network tests. The pre-commit hook runs full mode, the Python dependency audit,
+and the Trivy scans.
 
 ## Hardware validation boundary
 

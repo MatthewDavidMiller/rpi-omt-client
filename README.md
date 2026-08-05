@@ -20,13 +20,16 @@ make install
 make test-quick
 make build-arm64
 make build-deployer
+make build-windows-deployer
 ```
 
 The ARM64 build creates `omt-client-arm64.tar.gz`. The deployer build stages a
 host-native SDL3/ImGui application and CycloneDX SBOM in
-`.build/deployer-publish/`. Linux and Windows hosts build the same ARM64
-appliance through the hermetic Dockerfile; Linux x86-64 can install persistent
-ARM64 emulation with `make install`.
+`.build/deployer-publish/`. On Linux, `make build-windows-deployer`
+cross-compiles the same application for Windows x86-64 with mingw-w64 into
+`.build/deployer-publish-windows/`. Linux and Windows hosts build the same
+ARM64 appliance through the hermetic Dockerfile; `make install` provisions the
+full local toolchain, including persistent ARM64 emulation on Linux x86-64.
 
 ## Install
 

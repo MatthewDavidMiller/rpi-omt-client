@@ -6,7 +6,6 @@ set -e
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
 NC='\033[0m'
 
 echo "Flask App Syntax Validation"
@@ -22,8 +21,9 @@ if [[ ! -f "${APP_PACKAGE}/factory.py" || ! -f "${APP_PACKAGE}/wsgi.py" ]]; then
 fi
 
 if ! command -v python3 &>/dev/null; then
-    echo -e "${YELLOW}SKIP${NC}: Python 3 not available"
-    exit 0
+    echo -e "${RED}FAIL${NC}: Python 3 is required for this gate"
+    echo "  Install it with: make install"
+    exit 1
 fi
 
 echo "Checking Python syntax..."

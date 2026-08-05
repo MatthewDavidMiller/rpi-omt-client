@@ -27,9 +27,13 @@ target_compile_options(omt_warnings INTERFACE
 add_library(omt_hardening INTERFACE)
 target_compile_options(omt_hardening INTERFACE
     $<$<AND:$<PLATFORM_ID:Linux>,$<CONFIG:Release>>:-U_FORTIFY_SOURCE;-D_FORTIFY_SOURCE=3;-fstack-protector-strong;-fPIE;-fno-plt>
+    $<$<AND:$<PLATFORM_ID:Windows>,$<CXX_COMPILER_ID:GNU>,$<CONFIG:Release>>:-fstack-protector-strong>
 )
 target_link_options(omt_hardening INTERFACE
     $<$<AND:$<PLATFORM_ID:Linux>,$<CONFIG:Release>>:-pie;-Wl,-z,relro,-z,now,-z,noexecstack;-Wl,--as-needed>
+    # ASLR, DEP, and 64-bit address-space layout randomization for the
+    # cross-compiled deployer, which MinGW does not enable by default.
+    $<$<AND:$<PLATFORM_ID:Windows>,$<CXX_COMPILER_ID:GNU>,$<CONFIG:Release>>:-Wl,--dynamicbase;-Wl,--nxcompat;-Wl,--high-entropy-va>
 )
 
 if(OMT_ENABLE_SANITIZERS)
@@ -40,7 +44,11 @@ else()
     add_library(omt_sanitizers INTERFACE)
 endif()
 
-add_subdirectory(src/native/omt)
+# POSIX sockets and byte-order code that only the appliance receiver links.
+# The Windows deployer cross build has no receiver, so it must not require it.
+if(OMT_BUILD_RECEIVER OR (OMT_BUILD_TESTS AND UNIX))
+    add_subdirectory(src/native/omt)
+endif()
 
 if(OMT_BUILD_RECEIVER)
     add_subdirectory(src/native/receiver)

@@ -38,6 +38,44 @@ install_brew_packages() {
     brew install "$@"
 }
 
+# The deployment application ships for Windows as well, and it is cross-built
+# here so one Linux workstation can publish both packages and gate both on
+# every commit.
+install_windows_cross_toolchain() {
+    case "${OS}" in
+        ubuntu|debian)
+            install_apt_packages mingw-w64
+            ;;
+        fedora)
+            sudo dnf install -y --setopt=install_weak_deps=False \
+                mingw64-gcc mingw64-gcc-c++ mingw64-winpthreads-static
+            ;;
+        rocky|almalinux|rhel|centos)
+            # The mingw packages live in CRB, which is not enabled everywhere.
+            sudo dnf install -y --enablerepo=crb \
+                mingw64-gcc mingw64-gcc-c++ mingw64-winpthreads-static
+            ;;
+        arch)
+            install_pacman_packages mingw-w64-gcc
+            ;;
+        darwin)
+            install_brew_packages mingw-w64
+            ;;
+        *)
+            if [[ " ${OS_LIKE} " == *" debian "* ]]; then
+                install_apt_packages mingw-w64
+            elif [[ " ${OS_LIKE} " == *" fedora "* ]] || \
+                 [[ " ${OS_LIKE} " == *" rhel "* ]] || \
+                 [[ " ${OS_LIKE} " == *" centos "* ]]; then
+                sudo dnf install -y --enablerepo=crb \
+                    mingw64-gcc mingw64-gcc-c++ mingw64-winpthreads-static
+            else
+                echo -e "${YELLOW}WARN${NC}: Unknown OS. Install the x86_64-w64-mingw32 toolchain manually."
+            fi
+            ;;
+    esac
+}
+
 echo "=== Installing Development Dependencies ==="
 echo "Detected OS: ${OS}${OS_LIKE:+ (${OS_LIKE})}"
 
@@ -99,23 +137,54 @@ if ! command -v hadolint >/dev/null 2>&1; then
     esac
 fi
 
+if ! command -v x86_64-w64-mingw32-g++ >/dev/null 2>&1; then
+    install_windows_cross_toolchain
+fi
+
+# The pre-commit gate scans the tree and the runtime image with Trivy.
+if ! command -v trivy >/dev/null 2>&1; then
+    case "${OS}" in
+        arch)
+            sudo pacman -S --noconfirm trivy || "${SCRIPT_DIR}/install-trivy.sh"
+            ;;
+        darwin)
+            brew install trivy
+            ;;
+        *)
+            "${SCRIPT_DIR}/install-trivy.sh"
+            ;;
+    esac
+fi
+
 if [[ "$(uname -s)" == "Linux" ]]; then
     "${SCRIPT_DIR}/install-arm64-emulation.sh"
 fi
 
 echo ""
 echo "=== Development Dependency Summary ==="
-summary_tools=(clang cmake curl ninja pkg-config python3 sha512sum shellcheck tar hadolint)
+summary_tools=(clang cmake curl ninja pkg-config python3 sha512sum shellcheck tar hadolint trivy)
 if [[ "$(uname -s)" == "Linux" ]]; then
-    summary_tools+=(podman)
+    # Podman or Docker runs the image gates; the mingw toolchain cross-builds
+    # the Windows deployer that ships alongside the Linux one.
+    summary_tools+=(podman x86_64-w64-mingw32-gcc x86_64-w64-mingw32-g++ x86_64-w64-mingw32-objdump)
 fi
+missing_tools=()
 for tool in "${summary_tools[@]}"; do
     if command -v "${tool}" >/dev/null 2>&1; then
         echo -e "  ${tool}: ${GREEN}installed${NC}"
     else
         echo -e "  ${tool}: ${RED}missing${NC}"
+        missing_tools+=("${tool}")
     fi
 done
 
 echo -e "  yamllint: ${GREEN}managed by tests/.venv${NC}"
 echo -e "  Native toolchain: ${GREEN}C17/C++20 with CMake and Ninja${NC}"
+
+# Every gate runs on every commit, so a workstation missing a tool has to say
+# so here rather than at the commit that cannot complete.
+if ((${#missing_tools[@]} > 0)); then
+    echo ""
+    echo -e "${RED}ERROR${NC}: install did not provision: ${missing_tools[*]}" >&2
+    exit 1
+fi

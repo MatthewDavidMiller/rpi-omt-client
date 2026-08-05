@@ -36,11 +36,14 @@ def serve(listener: socket.socket) -> None:
 
 def main() -> int:
     receiver = Path(sys.argv[1])
+    # Discovery is the receiver's only network entry point, so a build host that
+    # cannot open a loopback socket cannot certify it. Fail rather than pass an
+    # unexercised transport.
     try:
         listener_context = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    except PermissionError:
-        print("SKIP: sandbox forbids loopback sockets")
-        return 77
+    except PermissionError as error:
+        print(f"FAIL: this host forbids loopback sockets, so discovery is untestable: {error}")
+        return 1
     with listener_context as listener:
         listener.bind(("127.0.0.1", 0))
         listener.listen(1)

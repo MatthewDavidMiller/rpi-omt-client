@@ -6,7 +6,6 @@ set -e
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
 NC='\033[0m'
 
 echo "Dockerfile Lint Check"
@@ -21,10 +20,12 @@ if [[ ! -f "${DOCKERFILE}" ]]; then
     exit 1
 fi
 
+# A missing linter is a broken workstation, not a passing Dockerfile: the gate
+# fails so `make install` gets run rather than the check quietly disappearing.
 if ! command -v hadolint &>/dev/null; then
-    echo -e "${YELLOW}SKIP${NC}: hadolint not installed"
-    echo "  Install with: brew install hadolint  OR  apt-get install hadolint"
-    exit 0
+    echo -e "${RED}FAIL${NC}: hadolint is required for this gate"
+    echo "  Install it with: make install"
+    exit 1
 fi
 
 # A wedged web process leaves a running container serving nothing, so the image

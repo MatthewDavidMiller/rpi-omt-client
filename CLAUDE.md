@@ -25,8 +25,15 @@ Raspberry Pi OMT Client — receives Open Media Transport video/audio streams on
 ## Essential Commands
 
 ```bash
+# Provision every local gate tool (compilers, linters, Trivy, mingw-w64, ARM64 emulation)
+make install
+
 # Build ARM64 image (for Raspberry Pi 5)
 make build-arm64         # → omt-client-arm64.tar.gz
+
+# Build the operator deployment application
+make build-deployer            # host-native package
+make build-windows-deployer    # Windows x86-64 cross build (Linux host)
 
 # Deploy to Pi
 make deploy HOST=pi@<ip>   # scp + docker load + docker compose up
@@ -42,8 +49,11 @@ make test                  # Unit + Docker build tests
 ./scripts/test-local.sh --quick  # Unit tests only (no Docker)
 
 # Lint
-make lint                  # hadolint + shellcheck
+make lint                  # shellcheck + hadolint + yamllint + ruff + mypy
 ```
+
+No gate skips: a missing tool, an unregistered ARM64 emulator, or a skipped
+pytest case fails the run. Repair the workstation with `make install`.
 
 ## Architecture
 

@@ -6,20 +6,25 @@ function(omt_enable_test_assertions target)
     endif()
 endfunction()
 
-add_executable(test_omt_wire test_omt_wire.c)
-target_link_libraries(test_omt_wire PRIVATE omt_wire omt_warnings omt_sanitizers)
-omt_enable_test_assertions(test_omt_wire)
-add_test(NAME native-wire-contract COMMAND test_omt_wire)
-
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
-add_executable(test_omt_validation_probe validation_probe.c)
-target_link_libraries(test_omt_validation_probe PRIVATE omt_wire omt_warnings omt_sanitizers)
-omt_enable_test_assertions(test_omt_validation_probe)
-add_test(
-    NAME native-validation-vectors
-    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test_validation_vectors.py
-            $<TARGET_FILE:test_omt_validation_probe>
-            ${PROJECT_SOURCE_DIR}/tests/schema/omt-target-vectors.json)
+
+# The wire suites exist wherever the appliance code does. A Windows deployer
+# cross build carries no receiver, so it contributes only the deployer suites.
+if(TARGET omt_wire)
+    add_executable(test_omt_wire test_omt_wire.c)
+    target_link_libraries(test_omt_wire PRIVATE omt_wire omt_warnings omt_sanitizers)
+    omt_enable_test_assertions(test_omt_wire)
+    add_test(NAME native-wire-contract COMMAND test_omt_wire)
+
+    add_executable(test_omt_validation_probe validation_probe.c)
+    target_link_libraries(test_omt_validation_probe PRIVATE omt_wire omt_warnings omt_sanitizers)
+    omt_enable_test_assertions(test_omt_validation_probe)
+    add_test(
+        NAME native-validation-vectors
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test_validation_vectors.py
+                $<TARGET_FILE:test_omt_validation_probe>
+                ${PROJECT_SOURCE_DIR}/tests/schema/omt-target-vectors.json)
+endif()
 
 if(UNIX)
     add_executable(test_playback_status
@@ -56,7 +61,6 @@ if(TARGET omt-receiver)
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test_discovery_server.py
                 $<TARGET_FILE:omt-receiver>
     )
-    set_tests_properties(native-discovery-server PROPERTIES SKIP_RETURN_CODE 77)
 endif()
 
 if(TARGET omt_deployer_core)

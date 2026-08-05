@@ -105,6 +105,27 @@ CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
 ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 POSSIBILITY OF SUCH DAMAGE.
 
+WINDOWS DEPLOYER RUNTIME
+------------------------
+
+These components are statically linked into rpi-omt-deployer.exe by the
+mingw-w64 cross build so the application runs on a stock Windows host. They are
+not part of the appliance image or the Linux deployer package.
+
+mingw-w64 runtime (headers, CRT, winpthreads)
+  Copyright (c) 2009-2026 mingw-w64 project contributors
+  License: permissive mingw-w64 runtime terms, comprising public-domain,
+    BSD-style, and ZPL 2.1 components. The full text ships with the toolchain
+    as COPYING.MinGW-w64-runtime.txt.
+  Source: https://www.mingw-w64.org/
+
+GCC runtime libraries (libgcc, libstdc++)
+  Copyright (C) Free Software Foundation, Inc.
+  License: GPL-3.0-or-later WITH GCC-exception-3.1. The GCC Runtime Library
+    Exception permits distribution of the compiled result under this project's
+    own MIT terms.
+  Source: https://gcc.gnu.org/
+
 PYTHON WEB APPLICATION
 ----------------------
 

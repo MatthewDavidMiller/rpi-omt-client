@@ -86,6 +86,8 @@ are POST and CSRF protected.
 | Deployment/Wi-Fi operations | `src/native/deployer/deployment.cpp` |
 | SDL3/ImGui presentation and About UI | `src/native/deployer/ui_main.cpp` |
 | Hash-locked deployer dependencies | `cmake/NativeDependencies.cmake` |
+| Windows cross build and artifact contract | `scripts/build-windows-deployer.sh`, `scripts/verify-windows-deployer.sh`, `cmake/toolchains/windows-x86_64-mingw.cmake` |
+| Local toolchain provisioning | `scripts/install-dev-deps.sh`, `scripts/install-hadolint.sh`, `scripts/install-trivy.sh`, `scripts/install-arm64-emulation.sh` |
 
 ## Legal and release
 

@@ -34,6 +34,12 @@ namespace {
 constexpr std::size_t max_remote_output = 4U * 1024U * 1024U;
 constexpr long connect_timeout_seconds = 15;
 
+#ifdef _WIN32
+// WinSock spells FIONBIO as an unsigned control code but takes the command as
+// a signed long. The wrap to a negative value is the intended bit pattern.
+constexpr long nonblocking_control = static_cast<long>(FIONBIO);
+#endif
+
 void close_socket(const Socket socket) noexcept {
 #ifdef _WIN32
     closesocket(socket);
@@ -54,7 +60,7 @@ bool begin_nonblocking(const Socket socket, int& original_flags) noexcept {
 #ifdef _WIN32
     (void)original_flags;
     u_long enabled = 1;
-    return ioctlsocket(socket, FIONBIO, &enabled) == 0;
+    return ioctlsocket(socket, nonblocking_control, &enabled) == 0;
 #else
     original_flags = fcntl(socket, F_GETFL, 0);
     return original_flags >= 0 && fcntl(socket, F_SETFL, original_flags | O_NONBLOCK) == 0;
@@ -65,7 +71,7 @@ bool restore_blocking(const Socket socket, const int original_flags) noexcept {
 #ifdef _WIN32
     (void)original_flags;
     u_long disabled = 0;
-    return ioctlsocket(socket, FIONBIO, &disabled) == 0;
+    return ioctlsocket(socket, nonblocking_control, &disabled) == 0;
 #else
     return fcntl(socket, F_SETFL, original_flags) == 0;
 #endif

@@ -3,33 +3,30 @@
 
 set -euo pipefail
 
-ALLOW_MISSING=false
 if [[ $# -gt 1 ]]; then
-    echo "Usage: $0 [--allow-missing]" >&2
+    echo "Usage: $0" >&2
     exit 2
 fi
 case "${1:-}" in
     "") ;;
-    --allow-missing) ALLOW_MISSING=true ;;
     -h|--help)
-        echo "Usage: $0 [--allow-missing]"
+        echo "Usage: $0"
         exit 0
         ;;
     *)
-        echo "Usage: $0 [--allow-missing]" >&2
+        echo "Usage: $0" >&2
         exit 2
         ;;
 esac
 
+# There is no mode that runs a smaller lint set. A linter this host lacks is a
+# provisioning failure, and reporting it as a pass would hide every finding the
+# linter exists to make.
 MISSING_TOOLS=()
 missing_tool() {
     local tool="$1"
-    if [[ "${ALLOW_MISSING}" == "true" ]]; then
-        echo "SKIP: ${tool} not installed"
-    else
-        echo "ERROR: ${tool} is required (run make install)" >&2
-        MISSING_TOOLS+=("${tool}")
-    fi
+    echo "ERROR: ${tool} is required (run make install)" >&2
+    MISSING_TOOLS+=("${tool}")
 }
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -104,8 +101,4 @@ if ((${#MISSING_TOOLS[@]} > 0)); then
     exit 1
 fi
 
-if [[ "${ALLOW_MISSING}" == "true" ]]; then
-    echo "All available linters passed."
-else
-    echo "All required linters passed."
-fi
+echo "All required linters passed."

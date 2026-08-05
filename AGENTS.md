@@ -46,9 +46,14 @@ Use these as the primary map of the system. Then pull in task-specific docs as n
 ## Key Commands
 
 ```bash
+# Setup (provisions every gate tool; fails if one is missing)
+make install
+
 # Build
 make build-arm64
 make build-amd64
+make build-deployer
+make build-windows-deployer   # mingw-w64 cross build, Linux host
 
 # Local dev / preview
 make up
@@ -78,9 +83,15 @@ Run the narrowest relevant checks for the files you touched, then broaden if the
 - Receiver core or the playback-status contract: `make test-receiver` and `make test-py`; both
   suites assert against `tests/schema/playback-status-vectors.json` and must be updated together
 - Dockerfile, entrypoint, or image contents: `make test` or `./scripts/test-local.sh --full` when feasible
+- Deployer core, SSH, or UI: `make test-deployer` and `make build-windows-deployer`, since the
+  same sources ship as a host package and a cross-built Windows package
 - Documentation-only changes: no test run required, but keep commands and paths accurate
 
 If you cannot run a relevant validation step, say so explicitly in your final handoff.
+
+No gate has a skip mode. A missing linter, scanner, cross toolchain, or ARM64
+emulator fails its gate; repair the workstation with `make install` rather than
+narrowing what runs.
 
 ## High-Value File Map
 

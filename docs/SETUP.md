@@ -27,12 +27,28 @@ make test-setup
 make build-deployer
 ```
 
-On Windows, run these commands from a Bash environment (Git Bash or MSYS2)
-with GNU Make, CMake, Ninja, Clang/Clang++, Python 3, and Docker Desktop's Linux
-engine on `PATH`. The native host build uses WinSock and Windows CNG and emits
-`rpi-omt-deployer.exe`; the appliance build still runs entirely in the pinned
-Linux containers. On Linux, `make install` provisions the supported local
-toolchain and optional persistent ARM64 emulation.
+A Linux workstation also publishes the Windows application without a Windows
+machine:
+
+```bash
+make build-windows-deployer
+```
+
+That target cross-compiles with mingw-w64 through
+`cmake/toolchains/windows-x86_64-mingw.cmake` and stages
+`.build/deployer-publish-windows/bin/rpi-omt-deployer.exe` with the license,
+notices, and CycloneDX SBOM. SDL3, Dear ImGui, and libssh2 link statically, so
+the executable runs on a stock Windows host with no redistributable installed;
+`scripts/verify-windows-deployer.sh` fails the build if that stops being true
+or if ASLR, DEP, or high-entropy address randomization is missing.
+`make install` provisions the cross toolchain along with the rest of the local
+gate tooling.
+
+Building on Windows itself still works: run the commands from a Bash
+environment (Git Bash or MSYS2) with GNU Make, CMake, Ninja, Clang/Clang++,
+Python 3, and Docker Desktop's Linux engine on `PATH`. Either path uses WinSock
+and Windows CNG and emits `rpi-omt-deployer.exe`; the appliance build itself
+still runs entirely in the pinned Linux containers.
 
 Run `.build/deployer-publish/bin/rpi-omt-deployer` (or the `.exe` produced on
 Windows) with Docker, a Pi key already trusted in `~/.ssh/known_hosts`,

@@ -37,6 +37,11 @@ def main() -> int:
     for package in ("sdl 3.4.8", "dear imgui 1.92.8", "libssh2 1.11.1"):
         if package not in notices:
             fail(f"Native deployer dependency is missing from notices: {package}")
+    # The Windows cross build links these into the shipped .exe, so they are
+    # redistributed even though no repository file carries their source.
+    for package in ("mingw-w64 runtime", "gcc runtime libraries", "gcc-exception-3.1"):
+        if package not in notices:
+            fail(f"Windows deployer runtime is missing from notices: {package}")
 
     for path in (
         ROOT / "LICENSE",

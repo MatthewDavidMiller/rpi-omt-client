@@ -10,7 +10,6 @@ source "${PROJECT_ROOT}/scripts/docker-test-env.sh"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
 NC='\033[0m'
 IMAGE_TAG="omt-client:test-build"
 ARM64_ARTIFACT_TAG="omt-client:test-build-arm64-artifacts"
@@ -163,51 +162,57 @@ for index in "${!checks[@]}"; do
     fi
 done
 
+# The appliance only ever runs ARM64, so its builder stage is not an optional
+# extra: without registered emulation this host cannot certify what it ships.
+# `make install` registers it; `make setup-arm64-emulation` repairs it.
 arm_probe_image="docker.io/library/debian:bookworm-slim@sha256:4724b8cc51e33e398f0e2e15e18d5ec2851ff0c2280647e1310bc1642182655d"
-if timeout 30 "${CONTAINER_ENGINE}" run --rm --platform linux/arm64 \
+if ! timeout 30 "${CONTAINER_ENGINE}" run --rm --platform linux/arm64 \
     --entrypoint /bin/true "${arm_probe_image}" >/dev/null 2>&1; then
-    if [[ "${CONTAINER_ENGINE_KIND}" == "docker" ]]; then
-        arm_build=(
-            "${CONTAINER_ENGINE}" buildx build
-            --platform linux/arm64
-            --target receiver-artifacts
-            --load
-            -f deploy/Dockerfile
-            -t "${ARM64_ARTIFACT_TAG}" .
-        )
-    else
-        arm_build=(
-            "${CONTAINER_ENGINE}" build
-            --format docker
-            --layers=false
-            --platform linux/arm64
-            --target receiver-artifacts
-            -f deploy/Dockerfile
-            -t "${ARM64_ARTIFACT_TAG}" .
-        )
-    fi
-    "${arm_build[@]}" || fail "ARM64 receiver builder stage failed"
+    fail "ARM64 emulation is unavailable; run: make setup-arm64-emulation"
+fi
 
-    arm64_artifact_image_size="$("${CONTAINER_ENGINE}" image inspect \
-        --format '{{ .Size }}' "${ARM64_ARTIFACT_TAG}")"
-    if [[ "${arm64_artifact_image_size}" =~ ^[0-9]+$ ]] &&
-       (( arm64_artifact_image_size <= MAX_ARM64_ARTIFACT_IMAGE_BYTES )); then
-        pass "ARM64 artifact image remains at or below 64 MiB (${arm64_artifact_image_size} bytes)"
-    else
-        fail "ARM64 artifact image exceeds the 64 MiB size budget (${arm64_artifact_image_size} bytes)"
-    fi
+if [[ "${CONTAINER_ENGINE_KIND}" == "docker" ]]; then
+    arm_build=(
+        "${CONTAINER_ENGINE}" buildx build
+        --platform linux/arm64
+        --target receiver-artifacts
+        --load
+        -f deploy/Dockerfile
+        -t "${ARM64_ARTIFACT_TAG}" .
+    )
+else
+    arm_build=(
+        "${CONTAINER_ENGINE}" build
+        --format docker
+        --layers=false
+        --platform linux/arm64
+        --target receiver-artifacts
+        -f deploy/Dockerfile
+        -t "${ARM64_ARTIFACT_TAG}" .
+    )
+fi
+"${arm_build[@]}" || fail "ARM64 receiver builder stage failed"
 
-    "${CONTAINER_ENGINE}" create \
-        --name "${ARM64_ARTIFACT_CONTAINER}" "${ARM64_ARTIFACT_TAG}" >/dev/null
-    receiver_artifact="$(mktemp)"
-    if "${CONTAINER_ENGINE}" cp \
-           "${ARM64_ARTIFACT_CONTAINER}:/omt-receiver" "${receiver_artifact}" &&
-       [[ -s "${receiver_artifact}" ]]; then
-        pass "ARM64 builder produced the native receiver artifact"
-    else
-        fail "ARM64 builder artifacts are missing"
-    fi
-    if python3 - "${receiver_artifact}" <<'PY'
+arm64_artifact_image_size="$("${CONTAINER_ENGINE}" image inspect \
+    --format '{{ .Size }}' "${ARM64_ARTIFACT_TAG}")"
+if [[ "${arm64_artifact_image_size}" =~ ^[0-9]+$ ]] &&
+   (( arm64_artifact_image_size <= MAX_ARM64_ARTIFACT_IMAGE_BYTES )); then
+    pass "ARM64 artifact image remains at or below 64 MiB (${arm64_artifact_image_size} bytes)"
+else
+    fail "ARM64 artifact image exceeds the 64 MiB size budget (${arm64_artifact_image_size} bytes)"
+fi
+
+"${CONTAINER_ENGINE}" create \
+    --name "${ARM64_ARTIFACT_CONTAINER}" "${ARM64_ARTIFACT_TAG}" >/dev/null
+receiver_artifact="$(mktemp)"
+if "${CONTAINER_ENGINE}" cp \
+       "${ARM64_ARTIFACT_CONTAINER}:/omt-receiver" "${receiver_artifact}" &&
+   [[ -s "${receiver_artifact}" ]]; then
+    pass "ARM64 builder produced the native receiver artifact"
+else
+    fail "ARM64 builder artifacts are missing"
+fi
+if python3 - "${receiver_artifact}" <<'PY'
 import struct
 import sys
 
@@ -220,18 +225,12 @@ for path in sys.argv[1:]:
     if byte_order is None or struct.unpack(f"{byte_order}H", header[18:20])[0] != 183:
         raise SystemExit(f"{path} is not an AArch64 artifact")
 PY
-    then
-        pass "ARM64 builder artifacts are AArch64 ELF64 files"
-    else
-        fail "ARM64 builder artifacts have the wrong architecture"
-    fi
-    rm -f "${receiver_artifact}"
-elif [[ "${REQUIRE_ARM64_BUILD:-0}" == "1" ]]; then
-    fail "ARM64 emulation is required but unavailable"
+then
+    pass "ARM64 builder artifacts are AArch64 ELF64 files"
 else
-    printf '%bSKIP%b: ARM64 builder check requires registered emulation\n' \
-        "${YELLOW}" "${NC}"
+    fail "ARM64 builder artifacts have the wrong architecture"
 fi
+rm -f "${receiver_artifact}"
 
 echo "==========================================="
 echo -e "${GREEN}All native OMT image build tests passed!${NC}"

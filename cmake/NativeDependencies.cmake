@@ -16,6 +16,19 @@ set(OMT_LIBSSH2_URL
 set(OMT_LIBSSH2_SHA256
     "d9ec76cbe34db98eec3539fe2c899d26b0c837cb3eb466a56b0f109cabf658f7")
 
+# Present a fetched dependency's headers to our targets as system headers, so
+# consumers keep -Werror without inheriting upstream warnings.
+function(omt_mark_includes_system target)
+    if(NOT TARGET ${target})
+        return()
+    endif()
+    get_target_property(include_directories ${target} INTERFACE_INCLUDE_DIRECTORIES)
+    if(include_directories)
+        set_property(TARGET ${target} APPEND
+            PROPERTY INTERFACE_SYSTEM_INCLUDE_DIRECTORIES ${include_directories})
+    endif()
+endfunction()
+
 function(omt_fetch_deployer_dependencies)
     set(CMAKE_EXPORT_NO_PACKAGE_REGISTRY ON)
     set(SDL_SHARED OFF CACHE BOOL "" FORCE)
@@ -90,9 +103,14 @@ function(omt_fetch_deployer_dependencies)
         "${imgui_SOURCE_DIR}/imgui_widgets.cpp"
         "${imgui_SOURCE_DIR}/backends/imgui_impl_sdl3.cpp"
         "${imgui_SOURCE_DIR}/backends/imgui_impl_sdlrenderer3.cpp")
-    target_include_directories(omt_imgui PUBLIC
+    # SYSTEM: the deployer compiles with -Werror and a strict warning set that
+    # describes our code, not upstream's. Without this, a vendored header's
+    # style decides whether a locked dependency version builds at all.
+    target_include_directories(omt_imgui SYSTEM PUBLIC
         "${imgui_SOURCE_DIR}"
         "${imgui_SOURCE_DIR}/backends")
     target_link_libraries(omt_imgui PUBLIC SDL3::SDL3-static)
+    omt_mark_includes_system(SDL3-static)
+    omt_mark_includes_system(libssh2_static)
     set(OMT_IMGUI_LICENSE "${imgui_SOURCE_DIR}/LICENSE.txt" PARENT_SCOPE)
 endfunction()

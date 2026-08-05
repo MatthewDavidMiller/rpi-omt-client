@@ -129,22 +129,32 @@ def test_bounded_read_reports_open_read_and_postread_races(tmp_path: Path, monke
     assert safe_io.read_bytes(target, 10).status is safe_io.ReadStatus.MISSING
 
 
-def test_unexpected_os_errors_are_reported_as_io_errors(tmp_path: Path):
+def test_unexpected_os_errors_are_reported_as_io_errors(tmp_path: Path, monkeypatch):
     """ELOOP/ENOTDIR mean "unsafe" and ENOENT means "missing", but anything else
-    -- a permission or type error -- must still fail closed rather than raise."""
+    -- a permission or type error -- must still fail closed rather than raise.
+
+    The denial is injected rather than staged with `chmod 000`, because root
+    bypasses file permissions: a mode-based version of this test asserts nothing
+    whenever the suite runs as root, which is exactly where it would run in a
+    container.
+    """
     directory = tmp_path / "directory"
     directory.mkdir()
     unreadable = tmp_path / "unreadable"
     unreadable.write_bytes(b"secret")
-    os.chmod(unreadable, 0o000)
-    try:
-        result = safe_io.read_bytes(unreadable, 10)
-        if os.geteuid() == 0:
-            pytest.skip("root bypasses the permission check")
-        assert result.status is safe_io.ReadStatus.IO_ERROR
-        assert "unable to read file" in result.detail
-    finally:
-        os.chmod(unreadable, 0o600)
+
+    original_open = os.open
+
+    def denied(path, flags, *arguments, **keywords):
+        if os.fspath(path) == str(unreadable):
+            raise PermissionError(errno.EACCES, "permission denied", str(unreadable))
+        return original_open(path, flags, *arguments, **keywords)
+
+    monkeypatch.setattr(os, "open", denied)
+    result = safe_io.read_bytes(unreadable, 10)
+    assert result.status is safe_io.ReadStatus.IO_ERROR
+    assert "unable to read file" in result.detail
+    monkeypatch.undo()
 
     nested = safe_io.read_bytes(unreadable / "child", 10)
     assert nested.status is safe_io.ReadStatus.UNSAFE

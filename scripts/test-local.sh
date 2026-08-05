@@ -105,6 +105,10 @@ if [[ "${QUICK_MODE}" == "true" ]]; then
     run_test "Deployer Core" "${PROJECT_ROOT}/scripts/check-deployer.sh"
 else
     run_test "Deployer Core and GUI publish" "${PROJECT_ROOT}/scripts/check-deployer.sh" --publish
+    # Both published deployer packages come off this one Linux workstation, so
+    # the Windows package is built and header-verified in the same gate that
+    # builds the host one.
+    run_test "Windows Deployer Cross Build" "${PROJECT_ROOT}/scripts/build-windows-deployer.sh"
 fi
 
 # ─── Python Unit Tests ────────────────────────────────────────
@@ -135,9 +139,9 @@ echo "=== Alpine Userland Integration ==="
 "${PROJECT_ROOT}/scripts/check-deployer.sh" --integration-only
 echo -e "${GREEN}PASSED${NC}: Alpine userland integration"
 echo ""
-if [[ "${FULL_MODE}" == "true" ]]; then
-    export REQUIRE_ARM64_BUILD=1
-fi
+# Builds the appliance's own ARM64 receiver stage as well as the amd64 image.
+# The gate itself requires registered emulation in every mode; there is no
+# argument or variable here that can reduce what it checks.
 run_test "Container Image Build" "${PROJECT_ROOT}/tests/integration/test_docker_build.sh"
 
 if [[ "${FULL_MODE}" == "true" ]]; then
