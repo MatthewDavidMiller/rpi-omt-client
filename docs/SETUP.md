@@ -59,6 +59,17 @@ container status/logs or restarts it. Wi-Fi updates the running
 `wpa_supplicant` through its control socket and stores a derived WPA PSK rather
 than sending the plaintext passphrase to a command line.
 
+The application locates its own files rather than relying on the working
+directory it happens to inherit from a shell or a desktop shortcut. Project
+root is preselected by searching upward from the working directory and then
+from the executable for the tree holding `deploy/manifest-v3.txt`, and About
+reads `LICENSE` and `THIRD_PARTY_NOTICES.txt` from the package that ships them
+-- the executable's directory, the package directory above it, or
+`share/rpi-omt-deployer` -- before falling back to the project root. Fonts,
+spacing, and the initial window follow the display's content scale, so the
+window opens at the same apparent size on a scaled 4K desktop as on a 1366x768
+panel and rescales when dragged to a display with a different scale.
+
 ## CLI deployment
 
 ```bash

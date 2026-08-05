@@ -50,6 +50,14 @@ struct WifiSettings {
 [[nodiscard]] std::vector<std::string> validate(const Options& options,
                                                 bool require_project = true);
 [[nodiscard]] std::string shell_quote(std::string_view value);
+[[nodiscard]] std::vector<std::filesystem::path> resource_roots(
+    const std::filesystem::path& executable_directory,
+    const std::filesystem::path& working_directory);
+[[nodiscard]] std::filesystem::path locate_resource(
+    const std::vector<std::filesystem::path>& roots, std::string_view name);
+[[nodiscard]] std::filesystem::path discover_project_root(
+    const std::filesystem::path& executable_directory,
+    const std::filesystem::path& working_directory);
 [[nodiscard]] std::vector<std::string> load_manifest(const std::filesystem::path& path);
 [[nodiscard]] std::string random_token(std::size_t byte_count);
 void secure_clear(std::string& value) noexcept;

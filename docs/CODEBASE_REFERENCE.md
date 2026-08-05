@@ -81,7 +81,7 @@ are POST and CSRF protected.
 | HDMI boot-configuration rules | `deploy/lib/hdmi-config.sh` |
 | Deployment contract | `deploy/manifest-v3.txt`, `deploy/transaction.sh` |
 | CLI deployment | `scripts/deploy.sh` |
-| Native deployer validation and models | `src/native/deployer/core.cpp`, `src/native/deployer/core.hpp` |
+| Native deployer validation, models, and resource lookup | `src/native/deployer/core.cpp`, `src/native/deployer/core.hpp` |
 | Secure local process and SSH boundaries | `src/native/deployer/process.cpp`, `src/native/deployer/ssh_client.cpp` |
 | Deployment/Wi-Fi operations | `src/native/deployer/deployment.cpp` |
 | SDL3/ImGui presentation and About UI | `src/native/deployer/ui_main.cpp` |

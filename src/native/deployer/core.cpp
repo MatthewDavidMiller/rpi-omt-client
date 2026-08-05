@@ -67,6 +67,17 @@ bool contains_control(const std::string_view value) noexcept {
     return std::ranges::any_of(value, [](const unsigned char c) { return c < 0x20U || c == 0x7FU; });
 }
 
+/// Normalize a directory path and drop any trailing separator.
+///
+/// A trailing separator leaves an empty filename component, so `parent_path()`
+/// returns the directory itself rather than its parent. `SDL_GetBasePath()`
+/// always ends in one, which would otherwise make the package directory and
+/// the executable directory the same place.
+std::filesystem::path directory_of(const std::filesystem::path& path) {
+    auto normal = path.lexically_normal();
+    return normal.has_filename() ? normal : normal.parent_path();
+}
+
 bool valid_manifest_name(std::string_view name) noexcept {
     if (name.empty() || name.size() > 240 || name.front() == '/' || name.back() == '/' ||
         name.find("//") != std::string_view::npos || !ascii_token(name, "._-/")) {
@@ -215,6 +226,78 @@ std::string shell_quote(const std::string_view value) {
     }
     result += '\'';
     return result;
+}
+
+// A published package is `<package>/bin/<executable>` with `LICENSE` and
+// `THIRD_PARTY_NOTICES.txt` beside the `bin` directory, so the executable's own
+// location -- not the process working directory, which is whatever the shell or
+// desktop shortcut happened to set -- is what locates shipped resources.
+std::vector<std::filesystem::path> resource_roots(
+    const std::filesystem::path& executable_directory,
+    const std::filesystem::path& working_directory) {
+    std::vector<std::filesystem::path> roots;
+    const auto add = [&roots](const std::filesystem::path& candidate) {
+        if (candidate.empty()) {
+            return;
+        }
+        if (std::ranges::find(roots, candidate) == roots.end()) {
+            roots.push_back(candidate);
+        }
+    };
+    const auto executable = directory_of(executable_directory);
+    add(executable);
+    if (!executable.empty()) {
+        const auto package = executable.parent_path();
+        add(package);
+        if (!package.empty()) {
+            add(package / "share" / "rpi-omt-deployer");
+        }
+    }
+    add(directory_of(working_directory));
+    return roots;
+}
+
+std::filesystem::path locate_resource(const std::vector<std::filesystem::path>& roots,
+                                      const std::string_view name) {
+    if (name.empty() || name.find('/') != std::string_view::npos ||
+        name.find('\\') != std::string_view::npos || name == "." || name == "..") {
+        return {};
+    }
+    for (const auto& root : roots) {
+        std::error_code error;
+        auto candidate = root / name;
+        if (std::filesystem::is_regular_file(candidate, error)) {
+            return candidate;
+        }
+    }
+    return {};
+}
+
+// The deployer reads a source tree, so it needs one even when it was started
+// from an installed package or a desktop shortcut. The v3 manifest is the file
+// every deployment already requires, which makes it the marker for the tree.
+std::filesystem::path discover_project_root(const std::filesystem::path& executable_directory,
+                                            const std::filesystem::path& working_directory) {
+    constexpr int max_ascent = 8;
+    for (const auto& start : {working_directory, executable_directory}) {
+        auto directory = directory_of(start);
+        if (directory.empty()) {
+            continue;
+        }
+        for (int level = 0; level <= max_ascent; ++level) {
+            std::error_code error;
+            if (std::filesystem::is_regular_file(directory / "deploy" / "manifest-v3.txt", error)) {
+                return directory;
+            }
+            const auto parent = directory.parent_path();
+            if (parent.empty() || parent == directory) {
+                break;
+            }
+            directory = parent;
+        }
+    }
+    const auto fallback = directory_of(working_directory);
+    return fallback.empty() ? directory_of(executable_directory) : fallback;
 }
 
 std::vector<std::string> load_manifest(const std::filesystem::path& path) {
