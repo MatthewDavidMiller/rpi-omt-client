@@ -42,7 +42,6 @@ struct WifiSettings {
     ~WifiSettings() noexcept;
 };
 
-[[nodiscard]] bool contains_control(std::string_view value) noexcept;
 [[nodiscard]] bool valid_host(std::string_view value) noexcept;
 [[nodiscard]] bool valid_username(std::string_view value) noexcept;
 [[nodiscard]] bool valid_remote_directory(std::string_view value) noexcept;

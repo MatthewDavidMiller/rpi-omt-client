@@ -221,6 +221,24 @@ std::optional<Endpoint> endpoint_from_xml(std::string_view xml)
     return Endpoint{parsed.host, parsed.port};
 }
 
+bool avahi_bus_available()
+{
+    std::string path = bus_socket_path();
+    if (path.empty()) {
+        return false;
+    }
+    int fd = ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    if (fd < 0) {
+        return false;
+    }
+    sockaddr_un address{};
+    address.sun_family = AF_UNIX;
+    std::memcpy(address.sun_path, path.c_str(), path.size() + 1u);
+    bool connected = ::connect(fd, reinterpret_cast<const sockaddr*>(&address), sizeof(address)) == 0;
+    (void)::close(fd);
+    return connected;
+}
+
 std::optional<std::string> configured_server()
 {
     const char* storage = std::getenv("OMT_STORAGE_PATH");
@@ -337,24 +355,6 @@ std::vector<Source> discover_server_sources(std::string_view target, std::chrono
 }
 
 } // namespace
-
-bool avahi_bus_available()
-{
-    std::string path = bus_socket_path();
-    if (path.empty()) {
-        return false;
-    }
-    int fd = ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
-    if (fd < 0) {
-        return false;
-    }
-    sockaddr_un address{};
-    address.sun_family = AF_UNIX;
-    std::memcpy(address.sun_path, path.c_str(), path.size() + 1u);
-    bool connected = ::connect(fd, reinterpret_cast<const sockaddr*>(&address), sizeof(address)) == 0;
-    (void)::close(fd);
-    return connected;
-}
 
 bool discovery_transport_available()
 {

@@ -18,6 +18,16 @@ namespace omt::native {
 std::optional<Connector> find_connector(std::string_view preference);
 bool connector_is_connected(const Connector& connector);
 
+/// Why a frame did or did not reach the display.
+///
+/// `unsupported_format` is the one recoverable outcome: the stream is being
+/// received correctly but this display cannot show it, so the caller reports it
+/// and keeps the session. Anything else is a failure of the output itself and
+/// ends the session. Classifying this here, rather than by searching `error()`
+/// for words like "mode" or "format", keeps a genuine `drmModeSetCrtc` failure
+/// -- whose message also contains "mode" -- from being retried once per frame.
+enum class PresentOutcome { presented, unsupported_format, failed };
+
 class DrmOutput final {
 public:
     explicit DrmOutput(const Connector& connector);
@@ -27,7 +37,7 @@ public:
 
     [[nodiscard]] bool ready() const { return fd_ >= 0; }
     [[nodiscard]] const std::string& error() const { return error_; }
-    bool present(Frame& frame);
+    [[nodiscard]] PresentOutcome present(Frame& frame);
 
 private:
     struct Buffer {
@@ -38,7 +48,7 @@ private:
         std::uint8_t* mapping{};
     };
 
-    bool configure(const omt_video_header& header);
+    PresentOutcome configure(const omt_video_header& header);
     bool create_buffer(Buffer& buffer);
     void destroy_buffer(Buffer& buffer);
     bool wait_for_flip();

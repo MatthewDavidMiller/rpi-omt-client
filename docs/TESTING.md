@@ -23,11 +23,12 @@ routes, diagnostics, and runtime adapters at a 98% branch-coverage floor.
 
 `make test-receiver` builds the receiver with Clang AddressSanitizer and
 UndefinedBehaviorSanitizer. It exercises shared target vectors, bounded wire
-parsing, CLI behavior, playback state/order, heartbeat publication, and atomic
-status replacement.
+parsing, CLI exit-status contracts, detail sanitization and JSON escaping,
+playback state/order, heartbeat publication, and atomic status replacement.
 
 `make test-deployer` builds the dependency-free C++ core with strict warnings
-and tests validation, quoting, SHA-256, secure tokens, and manifest v3. Full
+and tests validation, quoting, SHA-256, secure tokens, and manifest v3 path
+safety. Full
 mode also resolves hash-locked SDL3, Dear ImGui, and libssh2 archives and
 publishes the host-native GUI.
 

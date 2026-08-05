@@ -63,6 +63,10 @@ bool valid_utf8(const std::string_view value) noexcept {
     return true;
 }
 
+bool contains_control(const std::string_view value) noexcept {
+    return std::ranges::any_of(value, [](const unsigned char c) { return c < 0x20U || c == 0x7FU; });
+}
+
 bool valid_manifest_name(std::string_view name) noexcept {
     if (name.empty() || name.size() > 240 || name.front() == '/' || name.back() == '/' ||
         name.find("//") != std::string_view::npos || !ascii_token(name, "._-/")) {
@@ -89,10 +93,6 @@ bool valid_manifest_name(std::string_view name) noexcept {
 std::filesystem::path Options::tarball_path() const { return project_root / tarball_name; }
 std::filesystem::path Options::manifest_path() const {
     return project_root / "deploy" / "manifest-v3.txt";
-}
-
-bool contains_control(const std::string_view value) noexcept {
-    return std::ranges::any_of(value, [](const unsigned char c) { return c < 0x20U || c == 0x7FU; });
 }
 
 bool valid_host(const std::string_view value) noexcept {

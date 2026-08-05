@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: MIT
 #include "playback_status.hpp"
 
+#include "json_text.hpp"
+
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -21,34 +23,6 @@ namespace {
 constexpr auto heartbeat_interval = std::chrono::milliseconds(500);
 constexpr std::size_t detail_limit = 2048u;
 std::atomic_uint64_t stage_counter{};
-
-void append_json_string(std::string& output, std::string_view value)
-{
-    output.push_back('"');
-    constexpr char hex[] = "0123456789abcdef";
-    for (char raw : value) {
-        unsigned char ch = static_cast<unsigned char>(raw);
-        switch (ch) {
-        case '"': output += "\\\""; break;
-        case '\\': output += "\\\\"; break;
-        case '\b': output += "\\b"; break;
-        case '\f': output += "\\f"; break;
-        case '\n': output += "\\n"; break;
-        case '\r': output += "\\r"; break;
-        case '\t': output += "\\t"; break;
-        default:
-            if (ch < 0x20u) {
-                output += "\\u00";
-                output.push_back(hex[ch >> 4u]);
-                output.push_back(hex[ch & 0x0fu]);
-            } else {
-                output.push_back(static_cast<char>(ch));
-            }
-            break;
-        }
-    }
-    output.push_back('"');
-}
 
 std::string utc_timestamp()
 {
@@ -217,34 +191,32 @@ void PlaybackStatus::video_running(std::string_view detail, const Connector* con
     set_video("running", detail, connector);
 }
 
-void PlaybackStatus::audio_running(std::string_view detail, const Connector* connector)
+void PlaybackStatus::set_audio(
+    std::string_view state,
+    std::string_view detail,
+    const Connector* connector)
 {
     std::lock_guard lock(mutex_);
-    if (audio_state_ != "running" || audio_detail_ != detail) {
-        audio_state_ = "running";
+    if (audio_state_ != state || audio_detail_ != detail) {
+        audio_state_ = state;
         audio_detail_ = sanitize_status_detail(detail);
     }
     publish_locked(connector, false);
+}
+
+void PlaybackStatus::audio_running(std::string_view detail, const Connector* connector)
+{
+    set_audio("running", detail, connector);
 }
 
 void PlaybackStatus::audio_failed(std::string_view detail, const Connector* connector)
 {
-    std::lock_guard lock(mutex_);
-    if (audio_state_ != "failed" || audio_detail_ != detail) {
-        audio_state_ = "failed";
-        audio_detail_ = sanitize_status_detail(detail);
-    }
-    publish_locked(connector, false);
+    set_audio("failed", detail, connector);
 }
 
 void PlaybackStatus::audio_stopped(const Connector* connector)
 {
-    std::lock_guard lock(mutex_);
-    if (audio_state_ != "stopped" || !audio_detail_.empty()) {
-        audio_state_ = "stopped";
-        audio_detail_.clear();
-    }
-    publish_locked(connector, false);
+    set_audio("stopped", {}, connector);
 }
 
 void PlaybackStatus::heartbeat(const Connector* connector)

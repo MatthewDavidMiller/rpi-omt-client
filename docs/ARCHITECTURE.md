@@ -51,7 +51,15 @@ Playback supports either Pi HDMI connector. A missing, unreadable, or
 half-populated DRM tree reads as "no display connected", so the play loop
 reports `waiting-for-hdmi` and retries instead of exiting. Frames over
 1920×1080 or 60 fps are reported as `unsupported-format`. Interlaced input is
-presented progressively without deinterlacing. During playback, connector
+presented progressively without deinterlacing.
+
+The presenter returns a typed `PresentOutcome`, so the play loop distinguishes a
+stream this display cannot show — which keeps the session and reports
+`unsupported-format` — from a failure of the output itself, which ends the
+session and retries. The two are not inferred from the error text: a genuine
+`drmModeSetCrtc` failure also mentions "mode", and treating it as recoverable
+reconfigured the display, tearing down and reallocating three 1080p scanout
+buffers, once per decoded frame. During playback, connector
 hotplug state is sampled at a bounded 500 ms cadence instead of reopening two
 sysfs attributes for every decoded frame. Unchanged video/audio events reuse
 their status projection rather than allocating per frame; publication still

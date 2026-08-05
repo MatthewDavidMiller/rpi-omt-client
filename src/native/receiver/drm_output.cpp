@@ -77,10 +77,10 @@ std::optional<Connector> find_connector(std::string_view preference)
         if (error) {
             return std::nullopt;
         }
+        const std::string suffix = "-" + std::string(name);
         std::vector<std::filesystem::path> matches;
         for (const auto& entry : entries) {
             std::string filename = entry.path().filename().string();
-            std::string suffix = "-" + std::string(name);
             if (filename.starts_with("card") && filename.ends_with(suffix)) {
                 matches.push_back(entry.path());
             }
@@ -211,7 +211,7 @@ bool DrmOutput::create_buffer(Buffer& buffer)
     return true;
 }
 
-bool DrmOutput::configure(const omt_video_header& header)
+PresentOutcome DrmOutput::configure(const omt_video_header& header)
 {
     drmModeConnector* connector = drmModeGetConnector(fd_, connector_.connector_id);
     if (connector == nullptr || connector->connection != DRM_MODE_CONNECTED || connector->encoder_id == 0u) {
@@ -219,7 +219,7 @@ bool DrmOutput::configure(const omt_video_header& header)
         if (connector != nullptr) {
             drmModeFreeConnector(connector);
         }
-        return false;
+        return PresentOutcome::failed;
     }
     drmModeEncoder* encoder = drmModeGetEncoder(fd_, connector->encoder_id);
     if (encoder == nullptr || encoder->crtc_id == 0u) {
@@ -228,7 +228,7 @@ bool DrmOutput::configure(const omt_video_header& header)
             drmModeFreeEncoder(encoder);
         }
         drmModeFreeConnector(connector);
-        return false;
+        return PresentOutcome::failed;
     }
     double requested = static_cast<double>(header.frame_rate_n) / static_cast<double>(header.frame_rate_d);
     const drmModeModeInfo* selected = nullptr;
@@ -250,10 +250,13 @@ bool DrmOutput::configure(const omt_video_header& header)
         }
     }
     if (selected == nullptr) {
+        // The stream is fine; this display simply cannot show it. Reconfiguring
+        // is pointless until the source changes format, so report it as
+        // recoverable and leave the existing configuration alone.
         error_ = "Display has no mode for the OMT video format";
         drmModeFreeEncoder(encoder);
         drmModeFreeConnector(connector);
-        return false;
+        return PresentOutcome::unsupported_format;
     }
     for (Buffer& buffer : buffers_) {
         destroy_buffer(buffer);
@@ -268,7 +271,7 @@ bool DrmOutput::configure(const omt_video_header& header)
     drmModeFreeConnector(connector);
     for (Buffer& buffer : buffers_) {
         if (!create_buffer(buffer)) {
-            return false;
+            return PresentOutcome::failed;
         }
     }
     std::uint32_t connector_id = connector_.connector_id;
@@ -276,13 +279,13 @@ bool DrmOutput::configure(const omt_video_header& header)
             fd_, crtc_id_, buffers_[0].framebuffer, 0u, 0u,
             &connector_id, 1, &mode_) != 0) {
         error_ = std::string("Unable to set DRM mode: ") + std::strerror(errno);
-        return false;
+        return PresentOutcome::failed;
     }
     VMX_SIZE dimensions{header.width, header.height};
     codec_ = VMX_Create(dimensions, VMX_PROFILE_OMT_SQ, static_cast<VMX_COLORSPACE>(header.color_space));
     if (codec_ == nullptr) {
         error_ = "Unable to create VMX decoder";
-        return false;
+        return PresentOutcome::failed;
     }
     width_ = header.width;
     height_ = header.height;
@@ -291,7 +294,7 @@ bool DrmOutput::configure(const omt_video_header& header)
     color_space_ = header.color_space;
     front_ = 0u;
     configured_ = true;
-    return true;
+    return PresentOutcome::presented;
 }
 
 void DrmOutput::page_flip(int, unsigned int, unsigned int, unsigned int, void* data)
@@ -328,49 +331,52 @@ bool DrmOutput::wait_for_flip()
     return true;
 }
 
-bool DrmOutput::present(Frame& frame)
+PresentOutcome DrmOutput::present(Frame& frame)
 {
     if (frame.header.type != OMT_FRAME_VIDEO || frame.video.codec != OMT_CODEC_VMX1) {
+        // A well-formed stream this build cannot decode. Dropping the session
+        // would only reconnect to the same encoder, so treat it as recoverable.
         error_ = "Unsupported video frame";
-        return false;
+        return PresentOutcome::unsupported_format;
     }
     if (!configured_ || width_ != frame.video.width || height_ != frame.video.height ||
         frame_rate_n_ != frame.video.frame_rate_n || frame_rate_d_ != frame.video.frame_rate_d ||
         color_space_ != frame.video.color_space) {
-        if (!configure(frame.video)) {
-            return false;
+        const PresentOutcome configured = configure(frame.video);
+        if (configured != PresentOutcome::presented) {
+            return configured;
         }
     }
     std::size_t next = (front_ + 1u) % buffers_.size();
     std::size_t payload_offset = OMT_WIRE_VIDEO_HEADER_SIZE;
     if (frame.payload.size() < payload_offset + frame.header.metadata_length) {
         error_ = "Truncated VMX frame";
-        return false;
+        return PresentOutcome::failed;
     }
     std::size_t compressed_length = frame.payload.size() - payload_offset - frame.header.metadata_length;
     if (compressed_length > static_cast<std::size_t>(INT32_MAX)) {
         error_ = "VMX frame is too large";
-        return false;
+        return PresentOutcome::failed;
     }
     VMX_ERR loaded = VMX_LoadFrom(
         codec_, frame.payload.data() + payload_offset, static_cast<int>(compressed_length));
     if (loaded != VMX_ERR_OK ||
         VMX_DecodeBGRX(codec_, buffers_[next].mapping, static_cast<int>(buffers_[next].pitch)) != VMX_ERR_OK) {
         error_ = "VMX decoder rejected the frame";
-        return false;
+        return PresentOutcome::failed;
     }
     flip_complete_ = false;
     if (drmModePageFlip(
             fd_, crtc_id_, buffers_[next].framebuffer,
             DRM_MODE_PAGE_FLIP_EVENT, this) != 0) {
         error_ = std::string("Unable to queue DRM page flip: ") + std::strerror(errno);
-        return false;
+        return PresentOutcome::failed;
     }
     if (!wait_for_flip()) {
-        return false;
+        return PresentOutcome::failed;
     }
     front_ = next;
-    return true;
+    return PresentOutcome::presented;
 }
 
 } // namespace omt::native

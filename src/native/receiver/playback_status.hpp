@@ -29,6 +29,7 @@ public:
 
 private:
     void set_video(std::string_view state, std::string_view detail, const Connector* connector);
+    void set_audio(std::string_view state, std::string_view detail, const Connector* connector);
     void publish_locked(const Connector* connector, bool force);
 
     std::mutex mutex_;

@@ -59,11 +59,16 @@ case "${1:-}" in
         ;;
 esac
 
+# run_test LABEL COMMAND [ARG...]
+#
+# Every gate reports through here so the run's output names which suites
+# actually executed. A gate invoked directly would still abort the run under
+# `set -e`, but silently -- indistinguishable from one that was skipped.
 run_test() {
     local label="$1"
-    local script="$2"
+    shift
     echo "=== ${label} ==="
-    if "${script}"; then
+    if "$@"; then
         echo -e "${GREEN}PASSED${NC}: ${label}"
     else
         echo -e "${RED}FAILED${NC}: ${label}"
@@ -97,9 +102,9 @@ run_test "Receiver Core" "${PROJECT_ROOT}/tools/test-receiver.sh"
 
 # ─── Native Deployer Tests ───────────────────────────────────
 if [[ "${QUICK_MODE}" == "true" ]]; then
-    "${PROJECT_ROOT}/scripts/check-deployer.sh"
+    run_test "Deployer Core" "${PROJECT_ROOT}/scripts/check-deployer.sh"
 else
-    "${PROJECT_ROOT}/scripts/check-deployer.sh" --publish
+    run_test "Deployer Core and GUI publish" "${PROJECT_ROOT}/scripts/check-deployer.sh" --publish
 fi
 
 # ─── Python Unit Tests ────────────────────────────────────────

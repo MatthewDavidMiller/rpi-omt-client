@@ -4,12 +4,14 @@
 #include "alsa_output.hpp"
 #include "discovery.hpp"
 #include "drm_output.hpp"
+#include "json_text.hpp"
 #include "omt_channel.hpp"
 #include "playback_status.hpp"
 
 #include "omt/omt_wire.h"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <charconv>
 #include <chrono>
@@ -41,30 +43,19 @@ void signal_handler(int)
     running.store(false, std::memory_order_relaxed);
 }
 
-void json_string(FILE* output, std::string_view value)
+/// Write one complete JSON document to stdout, or report why it could not be.
+///
+/// The document is assembled in full and written once. Both callers are read by
+/// a strict JSON decoder in the Flask diagnostics service, so a half-written
+/// array reported as success would be indistinguishable from a receiver that
+/// genuinely found nothing.
+bool emit_json(const std::string& document)
 {
-    (void)std::fputc('"', output);
-    constexpr char hex[] = "0123456789abcdef";
-    for (char raw : value) {
-        unsigned char ch = static_cast<unsigned char>(raw);
-        switch (ch) {
-        case '"': (void)std::fputs("\\\"", output); break;
-        case '\\': (void)std::fputs("\\\\", output); break;
-        case '\b': (void)std::fputs("\\b", output); break;
-        case '\f': (void)std::fputs("\\f", output); break;
-        case '\n': (void)std::fputs("\\n", output); break;
-        case '\r': (void)std::fputs("\\r", output); break;
-        case '\t': (void)std::fputs("\\t", output); break;
-        default:
-            if (ch < 0x20u) {
-                (void)std::fprintf(output, "\\u00%c%c", hex[ch >> 4u], hex[ch & 0x0fu]);
-            } else {
-                (void)std::fputc(ch, output);
-            }
-            break;
-        }
+    if (std::fputs(document.c_str(), stdout) >= 0 && std::fflush(stdout) == 0) {
+        return true;
     }
-    (void)std::fputc('"', output);
+    (void)std::fputs("Unable to write the JSON result to standard output.\n", stderr);
+    return false;
 }
 
 struct Options {
@@ -199,19 +190,20 @@ int discover_command(const Options& options, std::string& error)
         return 2;
     }
     std::vector<Source> sources = discover_sources(std::chrono::milliseconds(*wait));
-    (void)std::fputc('[', stdout);
+    std::string document;
+    document.push_back('[');
     for (std::size_t index = 0u; index < sources.size(); ++index) {
         if (index != 0u) {
-            (void)std::fputc(',', stdout);
+            document.push_back(',');
         }
-        (void)std::fputs("{\"name\":", stdout);
-        json_string(stdout, sources[index].name);
-        (void)std::fputs(",\"target\":", stdout);
-        json_string(stdout, sources[index].name);
-        (void)std::fputs(",\"kind\":\"discovered\"}", stdout);
+        document += "{\"name\":";
+        append_json_string(document, sources[index].name);
+        document += ",\"target\":";
+        append_json_string(document, sources[index].name);
+        document += ",\"kind\":\"discovered\"}";
     }
-    (void)std::fputs("]\n", stdout);
-    return 0;
+    document += "]\n";
+    return emit_json(document) ? 0 : 1;
 }
 
 bool next_media_frame(
@@ -286,18 +278,21 @@ int probe_command(const Options& options, std::string& error)
             probe_error = channel_error.empty() ? "No OMT media was received." : channel_error;
         }
     }
-    (void)std::fputs("{\"ok\":", stdout);
-    (void)std::fputs(video || audio ? "true" : "false", stdout);
-    (void)std::fputs(",\"target\":", stdout);
-    json_string(stdout, *target);
-    (void)std::fprintf(
-        stdout,
+    std::array<char, 256> measurements{};
+    (void)std::snprintf(
+        measurements.data(), measurements.size(),
         ",\"video\":%s,\"audio\":%s,\"width\":%d,\"height\":%d,"
         "\"frame_rate\":%.8g,\"channels\":%d,\"sample_rate\":%d,\"error\":",
         video ? "true" : "false", audio ? "true" : "false", width, height,
         frame_rate, channels, sample_rate);
-    json_string(stdout, sanitize_status_detail(probe_error));
-    (void)std::fputs("}\n", stdout);
+    std::string document = video || audio ? "{\"ok\":true,\"target\":" : "{\"ok\":false,\"target\":";
+    append_json_string(document, *target);
+    document += measurements.data();
+    append_json_string(document, sanitize_status_detail(probe_error));
+    document += "}\n";
+    if (!emit_json(document)) {
+        return 1;
+    }
     return video || audio ? 0 : 3;
 }
 
@@ -448,13 +443,13 @@ bool run_session(
             continue;
         }
         last_frame = Clock::now();
-        if (!output.present(frame)) {
-            std::string detail = output.error();
-            if (detail.find("mode") != std::string::npos || detail.find("format") != std::string::npos) {
-                status.unsupported_format(detail, &connector);
-                continue;
-            }
-            error = detail;
+        const PresentOutcome outcome = output.present(frame);
+        if (outcome == PresentOutcome::unsupported_format) {
+            status.unsupported_format(output.error(), &connector);
+            continue;
+        }
+        if (outcome == PresentOutcome::failed) {
+            error = output.error();
             break;
         }
         bool interlaced = (frame.video.flags & 1u) != 0u;

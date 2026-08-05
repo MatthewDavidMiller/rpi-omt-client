@@ -7,6 +7,7 @@
 | Native receiver | `src/native/receiver/main.cpp` |
 | OMT wire transport and validation | `src/native/omt/omt_wire.c`, `src/native/omt/include/omt/omt_wire.h` |
 | Status projection and atomic publication | `src/native/receiver/playback_status.cpp` |
+| Shared JSON string escaping (status and CLI output) | `src/native/receiver/json_text.hpp` |
 | Discovery and bounded network channels | `src/native/receiver/discovery.cpp`, `src/native/receiver/omt_channel.cpp` |
 | DRM/ALSA playback | `src/native/receiver/drm_output.cpp`, `src/native/receiver/alsa_output.cpp` |
 | Audited VMX source | `third_party/omt/PROVENANCE.md`, `third_party/omt/libvmx` |
