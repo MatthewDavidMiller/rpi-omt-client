@@ -90,7 +90,7 @@ if [[ "${REMOVE_DIR}" =~ ^[Yy] ]]; then
         exit 1
     fi
     rm -rf "${INSTALL_DIR}"
-    echo "Removed ${INSTALL_DIR} and omt-config-v3. Older volumes were left untouched."
+    echo "Removed ${INSTALL_DIR} and omt-config-v3."
 fi
 
 echo "Docker log policy, zram, and Wi-Fi configuration were retained as safe host defaults."

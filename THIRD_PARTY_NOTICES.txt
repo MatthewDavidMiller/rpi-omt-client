@@ -183,13 +183,6 @@ in the shipped SBOM. Corresponding source and build recipes for copyleft
 packages are distributed in the release third-party-source bundle. See
 THIRD_PARTY_SOURCE.md.
 
-NO LEGACY NDI SOFTWARE
-----------------------
-
-The shipped OMT Client artifacts do not contain the NDI SDK, libndi,
-gst-plugin-ndi, or other NDI binaries. Consequently no NDI SDK license or
-trademark notice applies to these artifacts.
-
 GENERAL
 -------
 

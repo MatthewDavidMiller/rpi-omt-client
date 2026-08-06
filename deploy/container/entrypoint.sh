@@ -9,7 +9,6 @@ export OMT_RUNTIME_DIR="${OMT_RUNTIME_DIR:-${OMT_CONFIG_DIR}/run}"
 CONTROL_OMT_CMD="${CONTROL_OMT_CMD:-/usr/local/bin/control-omt.sh}"
 GUNICORN_CMD="${GUNICORN_CMD:-/opt/venv/bin/gunicorn}"
 WEB_PORT="${WEB_PORT:-5000}"
-LEGACY_RUN_DIR="${OMT_CONFIG_DIR}/run"
 
 mkdir -p "${OMT_CONFIG_DIR}" "${OMT_STORAGE_PATH}"
 
@@ -22,19 +21,6 @@ if [[ -L "${OMT_RUNTIME_DIR}" || ( -e "${OMT_RUNTIME_DIR}" && ! -d "${OMT_RUNTIM
 fi
 mkdir -p "${OMT_RUNTIME_DIR}"
 chmod 700 "${OMT_RUNTIME_DIR}"
-
-# Upgrades leave the pre-tmpfs runtime state behind on the persistent volume.
-# Every one of these files is per-boot state that nothing reads any more, so
-# clear them by name and remove the directory only if that emptied it.
-if [[ "${OMT_RUNTIME_DIR}" != "${LEGACY_RUN_DIR}" && -d "${LEGACY_RUN_DIR}" &&
-      ! -L "${LEGACY_RUN_DIR}" ]]; then
-    rm -f -- \
-        "${LEGACY_RUN_DIR}/control.lock" \
-        "${LEGACY_RUN_DIR}/omt.pid" \
-        "${LEGACY_RUN_DIR}/playback-status.json" \
-        "${LEGACY_RUN_DIR}/receiver.log"
-    rmdir -- "${LEGACY_RUN_DIR}" 2>/dev/null || true
-fi
 
 sync_replace() {
     local staged="$1" target="$2"

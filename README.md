@@ -48,8 +48,8 @@ make deploy HOST=admin@192.168.1.50
 The installer verifies the OS and board, installs Alpine's Pi kernel, firmware,
 DRM/ALSA tooling, Docker and OpenRC services, and applies appliance hardening
 and low-memory defaults. It prints the authoritative HTTPS URL and initial
-password instructions. An incompatible predecessor installation must be
-uninstalled first; this release does not migrate predecessor state.
+password instructions. It expects a clean Alpine installation and does not
+migrate state from any other installation.
 
 ## Operator UI
 

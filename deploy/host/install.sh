@@ -172,28 +172,6 @@ for required_file in "${required_files[@]}"; do
     }
 done
 
-legacy_paths=(
-    /etc/systemd/system/ndi-client.service
-    /etc/systemd/system/omt-client.service
-    /etc/ndi-client
-    /var/lib/ndi-client
-    /usr/local/libexec/ndi-client
-)
-for legacy_path in "${legacy_paths[@]}"; do
-    if [[ -e "${legacy_path}" || -L "${legacy_path}" ]]; then
-        echo "ERROR: An incompatible Raspberry Pi OS installation exists at ${legacy_path}." >&2
-        echo "Uninstall it first; Alpine-only releases do not migrate predecessor state." >&2
-        exit 1
-    fi
-done
-if command -v docker >/dev/null 2>&1 && {
-    docker container inspect ndi-client >/dev/null 2>&1 ||
-    docker volume inspect ndi-config >/dev/null 2>&1
-}; then
-    echo "ERROR: Legacy NDI Client Docker resources were detected." >&2
-    exit 1
-fi
-
 SAVED_HDMI_VIDEO_MODE=auto
 if [[ -f "${INSTALLER_CONFIG_FILE}" ]]; then
     mapfile -t installer_config_lines < "${INSTALLER_CONFIG_FILE}"

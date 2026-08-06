@@ -133,8 +133,8 @@ runtime_state="$("${CONTAINER_ENGINE}" exec "${CONTAINER_NAME}" /bin/sh -c '
     printf "%s %s %s\n" \
         "$(stat -c "%a:%U" "${OMT_RUNTIME_DIR}")" \
         "$(stat -f -c %T "${OMT_RUNTIME_DIR}")" \
-        "$([ -e /etc/omt/run ] && echo legacy-present || echo legacy-absent)"')"
-[[ "${runtime_state}" == "700:omt tmpfs legacy-absent" ]] ||
+        "$([ -e /etc/omt/run ] && echo config-run-present || echo config-run-absent)"')"
+[[ "${runtime_state}" == "700:omt tmpfs config-run-absent" ]] ||
     fail "per-boot state is not private on tmpfs: ${runtime_state}"
 pass "per-boot receiver state is a private tmpfs directory off the config volume"
 

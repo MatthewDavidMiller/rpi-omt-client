@@ -29,13 +29,6 @@ require 'tmpfs\|overlay\|squashfs\|ramfs' "diskless roots must be rejected"
 require 'persistent sys mode' "low-memory sys-mode policy must be explained"
 require 'command -v sshd' "installer must require a hardenable OpenSSH service"
 
-legacy_line="$(grep -n 'legacy_paths=(' "${INSTALL}" | cut -d: -f1)"
-mutation_line="$(grep -n '^apk update' "${INSTALL}" | cut -d: -f1)"
-(( legacy_line < mutation_line )) || {
-    echo "FAIL: incompatible predecessor preflight must precede mutation" >&2
-    exit 1
-}
-
 require 'apk add --no-cache' "dependencies must come from apk"
 require 'linux-rpi' "Pi-patched Alpine kernel must be installed"
 require 'linux-firmware-brcm' "Pi firmware must be installed"
@@ -88,8 +81,7 @@ require 'usercfg\.txt' "Alpine boot customization must use usercfg.txt"
 require 'host_hdmi_config_txt' "KMS configuration must use tested rules"
 require 'host_hdmi_cmdline_line' "forced connector mode must use tested rules"
 require 'OMT_CONTAINER_MEMORY_LIMIT=256m' "low-RAM container cap must be explicit"
-require 'STABLE_VOLUME="omt-config-v3"' "native generation uses a fresh persistent volume"
-forbid 'STABLE_VOLUME="omt-config"' "legacy volume must remain untouched"
+require 'STABLE_VOLUME="omt-config-v3"' "the persistent volume name must be fixed"
 require 'chmod 0600.*HOST_REBOOT_REQUEST_FILE' "reboot request must be mode 0600"
 require 'chmod 0640.*HOST_REBOOT_RESULT_FILE' "reboot result must be mode 0640"
 

@@ -114,8 +114,8 @@ THIRD_PARTY_SOURCE.md
 ## Installer behavior
 
 Run `sudo ./deploy/host/install.sh`. Before mutation it verifies Alpine 3.23,
-aarch64, the Pi 5 model, a persistent root filesystem, safe paths, the complete
-capsule, and absence of an incompatible predecessor.
+aarch64, the Pi 5 model, a persistent root filesystem, safe paths, and the
+complete capsule. It expects a clean Alpine installation.
 
 The installer then:
 
@@ -150,8 +150,7 @@ source or save a direct target such as `omt://192.168.1.60:6400`.
 
 Deploy a complete newer manifest-v3 capsule to the same directory. Persistent
 credentials, sessions, TLS material, and source state remain in
-`omt-config-v3`. The legacy `omt-config` volume is deliberately neither
-imported nor removed.
+`omt-config-v3`.
 
 Run `sudo ./deploy/host/uninstall.sh` to remove owned OpenRC services, host
 state, firewall rules, image, and optionally the volume/install directory. The

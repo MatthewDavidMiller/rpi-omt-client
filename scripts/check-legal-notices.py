@@ -67,9 +67,6 @@ def main() -> int:
     ):
         if required not in dockerfile:
             fail(f"Dockerfile does not retain required legal input: {required}")
-    for forbidden in ("gst-plugin-ndi", "libndi"):
-        if forbidden in dockerfile:
-            fail(f"Dockerfile still references legacy software: {forbidden}")
 
     dependency_lock = (ROOT / "cmake/NativeDependencies.cmake").read_text(encoding="utf-8")
     for required in ("SDL3-3.4.8", "v4.13.3", "libssh2-1.11.1", "URL_HASH", "SHA256"):

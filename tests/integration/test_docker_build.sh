@@ -130,7 +130,7 @@ checks=(
     "! find /usr/lib -name 'libstdc++.so*' -print -quit | grep -q ."
     "/opt/venv/bin/python -c 'import json; p=\"/app/legal/runtime-sbom.cdx.json\"; d=json.load(open(p, encoding=\"utf-8\")); assert d[\"bomFormat\"] == \"CycloneDX\"; assert d[\"specVersion\"] == \"1.6\"; assert d[\"metadata\"][\"component\"][\"version\"] == \"vtest\"; assert d[\"metadata\"][\"component\"][\"licenses\"] == [{\"license\": {\"id\": \"MIT\"}}]; names={x[\"name\"] for x in d[\"components\"]}; assert {\"libomtnet-derived-native-transport\", \"libvmx\", \"omtplayer-derived-native-playback\"} <= names'"
     "test -s /app/runtime-sha256.manifest && sha256sum --check /app/runtime-sha256.manifest >/dev/null"
-    "! command -v gst-launch-1.0 >/dev/null 2>&1 && ! find / -name 'libgstndi*' -print -quit 2>/dev/null | grep -q ."
+    "! command -v gst-launch-1.0 >/dev/null 2>&1"
     "test \"\$HOME\" = /etc/omt && test \"\$(id -un)\" = omt"
 )
 labels=(
@@ -153,7 +153,7 @@ labels=(
     "runtime image contains no C++ standard library"
     "runtime CycloneDX SBOM identifies native OMT components"
     "runtime SHA-256 manifest verifies"
-    "retired GStreamer/NDI runtime is absent"
+    "retired GStreamer runtime is absent"
     "runtime identity and HOME are fixed"
 )
 
