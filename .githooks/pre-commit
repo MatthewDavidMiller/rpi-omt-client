@@ -6,6 +6,11 @@ set -euo pipefail
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 cd "${REPO_ROOT}"
 
+# Git exports the in-progress commit's index and directory to its hooks. Tests
+# that build throwaway repositories inherit them and resolve this repository's
+# index against the throwaway object store, so drop them before the gate runs.
+unset GIT_INDEX_FILE GIT_DIR GIT_WORK_TREE GIT_PREFIX
+
 echo "=== Pre-commit checks ==="
 
 # scripts/test-local.sh owns the shared syntax, lint, unit, Docker-build, and
