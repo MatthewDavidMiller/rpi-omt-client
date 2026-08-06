@@ -7,10 +7,10 @@ set(OMT_SDL3_URL
     "https://github.com/libsdl-org/SDL/releases/download/release-3.4.8/SDL3-3.4.8.tar.gz")
 set(OMT_SDL3_SHA256
     "e9fff7467fb60f037e6708da18b25560649e4c63edc2a69bb871b960d9cbfbba")
-set(OMT_IMGUI_URL
-    "https://github.com/ocornut/imgui/archive/refs/tags/v1.92.8.tar.gz")
-set(OMT_IMGUI_SHA256
-    "fecb33d33930e12ff53a34064e9d3a06c8f7c3e04408f14cd36c80e3faac863b")
+set(OMT_NUKLEAR_URL
+    "https://github.com/Immediate-Mode-UI/Nuklear/archive/refs/tags/v4.13.3.tar.gz")
+set(OMT_NUKLEAR_SHA256
+    "834bf30974a294e996f7b1222aa59f1eb4ee259bd8d7d7967e8a2fb213d82dde")
 set(OMT_LIBSSH2_URL
     "https://libssh2.org/download/libssh2-1.11.1.tar.gz")
 set(OMT_LIBSSH2_SHA256
@@ -31,6 +31,9 @@ endfunction()
 
 function(omt_fetch_deployer_dependencies)
     set(CMAKE_EXPORT_NO_PACKAGE_REGISTRY ON)
+    if(POLICY CMP0169)
+        cmake_policy(SET CMP0169 OLD)
+    endif()
     set(SDL_SHARED OFF CACHE BOOL "" FORCE)
     set(SDL_STATIC ON CACHE BOOL "" FORCE)
     set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)
@@ -63,7 +66,80 @@ function(omt_fetch_deployer_dependencies)
         URL "${OMT_SDL3_URL}"
         URL_HASH "SHA256=${OMT_SDL3_SHA256}"
         DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
-    FetchContent_MakeAvailable(sdl3)
+    FetchContent_GetProperties(sdl3)
+    if(NOT sdl3_POPULATED)
+        FetchContent_Populate(sdl3)
+    endif()
+
+    # SDL is a C API, but its source archive carries optional platform C++
+    # backends. The deployer does not use GameInput, GDK, N-Gage, HID test GUI,
+    # or Xbox renderers. Strip those translation units before SDL is added and
+    # compile the Windows GameInput no-support shim as C. The archive is pinned,
+    # so these exact edits fail closed when upstream layout changes.
+    set(sdl_cmake "${sdl3_SOURCE_DIR}/CMakeLists.txt")
+    file(READ "${sdl_cmake}" sdl_cmake_text)
+    if(WIN32)
+        set(gameinput_cpp
+            "${sdl3_SOURCE_DIR}/src/video/windows/SDL_windowsgameinput.cpp")
+        set(gameinput_c
+            "${sdl3_SOURCE_DIR}/src/video/windows/SDL_windowsgameinput.c")
+        if(EXISTS "${gameinput_cpp}")
+            file(RENAME "${gameinput_cpp}" "${gameinput_c}")
+        elseif(NOT EXISTS "${gameinput_c}")
+            file(WRITE "${gameinput_c}" [=[
+/* C-only no-support shim for the deployer's unused Windows GameInput path. */
+#include "SDL_internal.h"
+#include "SDL_windowsvideo.h"
+bool WIN_InitGameInput(SDL_VideoDevice *device)
+{
+    (void)device;
+    return SDL_Unsupported();
+}
+bool WIN_UpdateGameInputEnabled(SDL_VideoDevice *device)
+{
+    (void)device;
+    return SDL_Unsupported();
+}
+void WIN_UpdateGameInput(SDL_VideoDevice *device)
+{
+    (void)device;
+}
+void WIN_QuitGameInput(SDL_VideoDevice *device)
+{
+    (void)device;
+}
+]=])
+        endif()
+        string(REPLACE
+            "elseif(WINDOWS)\n  enable_language(CXX)\n"
+            "elseif(WINDOWS)\n"
+            sdl_cmake_text "${sdl_cmake_text}")
+        string(REPLACE
+            "  check_c_source_compiles(\"\n    #include <stdbool.h>\n    #define COBJMACROS\n    #include <gameinput.h>\n    int main(int argc, char **argv) { return 0; }\" HAVE_GAMEINPUT_H\n  )\n"
+            "  set(HAVE_GAMEINPUT_H 0)\n"
+            sdl_cmake_text "${sdl_cmake_text}")
+        string(REPLACE
+            "    \"\${SDL3_SOURCE_DIR}/src/core/windows/*.cpp\"\n"
+            ""
+            sdl_cmake_text "${sdl_cmake_text}")
+        string(REPLACE
+            "      \"\${SDL3_SOURCE_DIR}/src/video/windows/*.cpp\"\n"
+            ""
+            sdl_cmake_text "${sdl_cmake_text}")
+    endif()
+    file(GLOB_RECURSE sdl_cpp_sources
+        "${sdl3_SOURCE_DIR}/*.cc"
+        "${sdl3_SOURCE_DIR}/*.cpp"
+        "${sdl3_SOURCE_DIR}/*.cxx"
+        "${sdl3_SOURCE_DIR}/*.c++"
+        "${sdl3_SOURCE_DIR}/*.hpp"
+        "${sdl3_SOURCE_DIR}/*.hh"
+        "${sdl3_SOURCE_DIR}/*.hxx")
+    if(sdl_cpp_sources)
+        file(REMOVE ${sdl_cpp_sources})
+    endif()
+    file(WRITE "${sdl_cmake}" "${sdl_cmake_text}")
+    add_subdirectory("${sdl3_SOURCE_DIR}" "${sdl3_BINARY_DIR}")
 
     set(BUILD_STATIC_LIBS ON CACHE BOOL "" FORCE)
     set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
@@ -81,36 +157,45 @@ function(omt_fetch_deployer_dependencies)
         URL_HASH "SHA256=${OMT_LIBSSH2_SHA256}"
         DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
     FetchContent_MakeAvailable(libssh2)
+    file(GLOB_RECURSE libssh2_cpp_sources
+        "${libssh2_SOURCE_DIR}/*.cc"
+        "${libssh2_SOURCE_DIR}/*.cpp"
+        "${libssh2_SOURCE_DIR}/*.cxx"
+        "${libssh2_SOURCE_DIR}/*.c++"
+        "${libssh2_SOURCE_DIR}/*.hpp"
+        "${libssh2_SOURCE_DIR}/*.hh"
+        "${libssh2_SOURCE_DIR}/*.hxx")
+    if(libssh2_cpp_sources)
+        file(REMOVE ${libssh2_cpp_sources})
+    endif()
     if(UNIX AND TARGET libssh2_static)
         target_compile_definitions(libssh2_static PRIVATE _DEFAULT_SOURCE)
     endif()
 
-    FetchContent_Declare(imgui
-        URL "${OMT_IMGUI_URL}"
-        URL_HASH "SHA256=${OMT_IMGUI_SHA256}"
+    FetchContent_Declare(nuklear
+        URL "${OMT_NUKLEAR_URL}"
+        URL_HASH "SHA256=${OMT_NUKLEAR_SHA256}"
         DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
-    if(POLICY CMP0169)
-        cmake_policy(SET CMP0169 OLD)
+    FetchContent_GetProperties(nuklear)
+    if(NOT nuklear_POPULATED)
+        FetchContent_Populate(nuklear)
     endif()
-    FetchContent_GetProperties(imgui)
-    if(NOT imgui_POPULATED)
-        FetchContent_Populate(imgui)
+    file(GLOB_RECURSE nuklear_cpp_sources
+        "${nuklear_SOURCE_DIR}/*.cc"
+        "${nuklear_SOURCE_DIR}/*.cpp"
+        "${nuklear_SOURCE_DIR}/*.cxx"
+        "${nuklear_SOURCE_DIR}/*.c++"
+        "${nuklear_SOURCE_DIR}/*.hpp"
+        "${nuklear_SOURCE_DIR}/*.hh"
+        "${nuklear_SOURCE_DIR}/*.hxx")
+    if(nuklear_cpp_sources)
+        file(REMOVE ${nuklear_cpp_sources})
     endif()
-    add_library(omt_imgui STATIC
-        "${imgui_SOURCE_DIR}/imgui.cpp"
-        "${imgui_SOURCE_DIR}/imgui_draw.cpp"
-        "${imgui_SOURCE_DIR}/imgui_tables.cpp"
-        "${imgui_SOURCE_DIR}/imgui_widgets.cpp"
-        "${imgui_SOURCE_DIR}/backends/imgui_impl_sdl3.cpp"
-        "${imgui_SOURCE_DIR}/backends/imgui_impl_sdlrenderer3.cpp")
-    # SYSTEM: the deployer compiles with -Werror and a strict warning set that
-    # describes our code, not upstream's. Without this, a vendored header's
-    # style decides whether a locked dependency version builds at all.
-    target_include_directories(omt_imgui SYSTEM PUBLIC
-        "${imgui_SOURCE_DIR}"
-        "${imgui_SOURCE_DIR}/backends")
-    target_link_libraries(omt_imgui PUBLIC SDL3::SDL3-static)
+    add_library(omt_nuklear INTERFACE)
+    target_include_directories(omt_nuklear SYSTEM INTERFACE
+        "${nuklear_SOURCE_DIR}"
+        "${nuklear_SOURCE_DIR}/demo/sdl3_renderer")
     omt_mark_includes_system(SDL3-static)
     omt_mark_includes_system(libssh2_static)
-    set(OMT_IMGUI_LICENSE "${imgui_SOURCE_DIR}/LICENSE.txt" PARENT_SCOPE)
+    set(OMT_NUKLEAR_LICENSE "${nuklear_SOURCE_DIR}/LICENSE" PARENT_SCOPE)
 endfunction()

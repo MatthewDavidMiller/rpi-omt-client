@@ -1,6 +1,6 @@
 #!/bin/bash
 # Build and test the native deployer. --publish also resolves the hash-locked
-# SDL3, Dear ImGui, and libssh2 source archives and stages a runnable package.
+# SDL3, Nuklear, and libssh2 source archives and stages a runnable package.
 
 set -euo pipefail
 
@@ -12,7 +12,7 @@ if [[ $# -gt 1 || ( -n "${MODE}" && "${MODE}" != "--publish" && "${MODE}" != "--
     exit 2
 fi
 
-for tool in clang clang++ cmake ninja; do
+for tool in clang cmake ninja; do
     command -v "${tool}" >/dev/null 2>&1 || {
         echo "ERROR: ${tool} is required. Run: make install" >&2
         exit 1
@@ -36,14 +36,13 @@ configure_args=(
     -G Ninja
     -DCMAKE_BUILD_TYPE="${BUILD_TYPE}"
     -DCMAKE_C_COMPILER=clang
-    -DCMAKE_CXX_COMPILER=clang++
     -DOMT_CLIENT_VERSION="${VERSION}"
     -DOMT_BUILD_RECEIVER=OFF
     -DOMT_BUILD_DEPLOYER=ON
     -DOMT_DEPLOYER_GUI="${GUI}"
     -DOMT_BUILD_TESTS=ON
 )
-for dependency in SDL3 IMGUI LIBSSH2; do
+for dependency in SDL3 NUKLEAR LIBSSH2; do
     mirror_name="RPI_OMT_${dependency}_SOURCE_DIR"
     mirror_value="${!mirror_name:-}"
     if [[ -n "${mirror_value}" ]]; then

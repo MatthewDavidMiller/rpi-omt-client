@@ -51,10 +51,10 @@ SDL 3.4.8
   License: zlib
   Source: https://github.com/libsdl-org/SDL/releases/tag/release-3.4.8
 
-Dear ImGui 1.92.8
-  Copyright (c) 2014-2026 Omar Cornut
-  License: MIT (the MIT text is reproduced above)
-  Source: https://github.com/ocornut/imgui/releases/tag/v1.92.8
+Nuklear 4.13.3
+  Copyright (c) 2015-2026 Micha Mettke and contributors
+  License: Public Domain or MIT (the MIT text is reproduced above)
+  Source: https://github.com/Immediate-Mode-UI/Nuklear/releases/tag/v4.13.3
 
 libssh2 1.11.1
   Copyright (c) libssh2 contributors
@@ -119,7 +119,7 @@ mingw-w64 runtime (headers, CRT, winpthreads)
     as COPYING.MinGW-w64-runtime.txt.
   Source: https://www.mingw-w64.org/
 
-GCC runtime libraries (libgcc, libstdc++)
+GCC runtime library (libgcc)
   Copyright (C) Free Software Foundation, Inc.
   License: GPL-3.0-or-later WITH GCC-exception-3.1. The GCC Runtime Library
     Exception permits distribution of the compiled result under this project's
@@ -173,7 +173,7 @@ ALPINE LINUX RUNTIME
 
 The runtime is based on Alpine Linux 3.23.5 and includes dynamically linked
 runtime packages such as musl, BusyBox, libdrm, ALSA lib, Avahi libraries,
-OpenSSL, ICU, Python, libgcc, libstdc++, zlib, bash, coreutils, and util-linux.
+OpenSSL, ICU, Python, libgcc, zlib, bash, coreutils, and util-linux.
 Each package remains governed by the license recorded in its Alpine package
 metadata. These include MIT/BSD/Apache-style licenses and copyleft licenses
 including GPL and LGPL.

@@ -10,15 +10,13 @@ set(CMAKE_SYSTEM_PROCESSOR x86_64)
 set(OMT_MINGW_TRIPLE "x86_64-w64-mingw32")
 
 find_program(OMT_MINGW_C_COMPILER "${OMT_MINGW_TRIPLE}-gcc")
-find_program(OMT_MINGW_CXX_COMPILER "${OMT_MINGW_TRIPLE}-g++")
 find_program(OMT_MINGW_RC_COMPILER "${OMT_MINGW_TRIPLE}-windres")
-if(NOT OMT_MINGW_C_COMPILER OR NOT OMT_MINGW_CXX_COMPILER)
+if(NOT OMT_MINGW_C_COMPILER)
     message(FATAL_ERROR
         "The ${OMT_MINGW_TRIPLE} cross toolchain is missing. Run: make install")
 endif()
 
 set(CMAKE_C_COMPILER "${OMT_MINGW_C_COMPILER}")
-set(CMAKE_CXX_COMPILER "${OMT_MINGW_CXX_COMPILER}")
 find_program(OMT_MINGW_STRIP "${OMT_MINGW_TRIPLE}-strip")
 if(OMT_MINGW_STRIP)
     set(CMAKE_STRIP "${OMT_MINGW_STRIP}")
@@ -43,8 +41,8 @@ set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
 set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE ONLY)
 
 # The published .exe has to start on a stock Windows host with no runtime
-# installed alongside it, so every GCC and C++ support library is linked in.
-set(OMT_MINGW_STATIC_RUNTIME "-static -static-libgcc -static-libstdc++")
+# installed alongside it, so the GCC support library is linked statically.
+set(OMT_MINGW_STATIC_RUNTIME "-static -static-libgcc")
 foreach(link_kind EXE SHARED MODULE)
     set(CMAKE_${link_kind}_LINKER_FLAGS_INIT "${OMT_MINGW_STATIC_RUNTIME}")
 endforeach()

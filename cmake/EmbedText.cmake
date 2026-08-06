@@ -1,4 +1,4 @@
-# Compile text files into a C++ translation unit.
+# Compile text files into a C17 translation unit.
 #
 # The deployer ships as a single executable that operators copy wherever they
 # like, so its legal texts cannot be files it has to find again at run time:
@@ -7,7 +7,7 @@
 # independent of source encoding, embedded quotes, and raw-string delimiters.
 #
 # Usage:
-#   cmake -DOMT_EMBED_OUTPUT=<file.cpp> -DOMT_EMBED_INPUTS=<a;b>
+#   cmake -DOMT_EMBED_OUTPUT=<file.c> -DOMT_EMBED_INPUTS=<a;b>
 #         -P cmake/EmbedText.cmake
 
 if(NOT DEFINED OMT_EMBED_OUTPUT OR NOT DEFINED OMT_EMBED_INPUTS)
@@ -41,10 +41,10 @@ foreach(input IN LISTS OMT_EMBED_INPUTS)
     # supported compiler accepts and remains readable in a build log.
     string(REGEX REPLACE "(${row_pattern})" "\\1\n    " bytes "${bytes}")
 
-    string(APPEND arrays "constexpr unsigned char document_${index}[] = {\n    ${bytes}\n};\n")
+    string(APPEND arrays "static const unsigned char document_${index}[] = {\n    ${bytes}\n};\n")
     string(APPEND table
-        "        {\"${name}\", text_of(document_${index}, sizeof(document_${index}))},\n")
+        "    {\"${name}\", (const char *)document_${index}, sizeof(document_${index})},\n")
     math(EXPR index "${index} + 1")
 endforeach()
 
-configure_file("${CMAKE_CURRENT_LIST_DIR}/EmbedText.cpp.in" "${OMT_EMBED_OUTPUT}" @ONLY)
+configure_file("${CMAKE_CURRENT_LIST_DIR}/EmbedText.c.in" "${OMT_EMBED_OUTPUT}" @ONLY)

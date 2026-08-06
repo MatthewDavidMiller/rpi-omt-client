@@ -32,8 +32,8 @@ Documentation can be found at: https://www.openmediatransport.org/docs/
 Binaries with Library files are available in the Releases section of the libomtnet repo.
 These are available for Windows and MacOS and are the recommended way to get started.
 
-### C/C++
-Include vmxcodec.h, reference libvmx.lib and you're ready to go.
+### C17
+Include `vmxcodec.h` and link the repository-built `vmx_codec` target.
 
 ## Compiling
 

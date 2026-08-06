@@ -13,7 +13,7 @@ build or release source tree.
 
 The deployer source inputs are pinned by URL and SHA-256 in
 `cmake/NativeDependencies.cmake`. Release source bundles must include the
-corresponding SDL3, Dear ImGui, and libssh2 archives.
+corresponding SDL3, Nuklear, and libssh2 archives.
 
 Do not publish or distribute a release when `scripts/check-legal-notices.py`
 reports a missing license, notice, source record, or dependency.

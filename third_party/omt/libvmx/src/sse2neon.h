@@ -117,11 +117,7 @@
 #endif
 
 /* C language does not allow initializing a variable with a function call. */
-#ifdef __cplusplus
-#define _sse2neon_const static const
-#else
 #define _sse2neon_const const
-#endif
 
 #include <fenv.h>
 #include <stdint.h>
@@ -155,10 +151,6 @@ FORCE_INLINE int64_t sse2neon_recast_f64_s64(double val)
 #if SSE2NEON_INCLUDE_WINDOWS_H
 #include <processthreadsapi.h>
 #include <windows.h>
-#endif
-
-#if !defined(__cplusplus)
-#error SSE2NEON only supports C++ compilation with this compiler
 #endif
 
 #ifdef SSE2NEON_ALLOC_DEFINED

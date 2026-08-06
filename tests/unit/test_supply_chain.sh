@@ -64,6 +64,7 @@ assert_absent "${PROJECT_ROOT}/third_party/omt/libomtnet" "C# OMT transport snap
 assert_absent "${PROJECT_ROOT}/third_party/omt/omtplayer" "C# playback snapshot is absent"
 assert_absent "${PROJECT_ROOT}/global.json" ".NET SDK lock is absent"
 if find "${PROJECT_ROOT}" -path "${PROJECT_ROOT}/.build" -prune -o \
+       -path "${PROJECT_ROOT}/build" -prune -o \
        -path "${PROJECT_ROOT}/.git" -prune -o \
        \( -name '*.cs' -o -name '*.csproj' -o -name '*.sln' -o -name '*.slnx' -o -name '*.axaml' \) \
        -print -quit | grep -q .; then
@@ -71,6 +72,36 @@ if find "${PROJECT_ROOT}" -path "${PROJECT_ROOT}/.build" -prune -o \
 else
     pass "Repository contains no C#/.NET project source"
 fi
+if find "${PROJECT_ROOT}" -path "${PROJECT_ROOT}/.build" -prune -o \
+       -path "${PROJECT_ROOT}/build" -prune -o \
+       -path "${PROJECT_ROOT}/.git" -prune -o \
+       \( -name '*.cpp' -o -name '*.hpp' -o -name '*.cc' -o -name '*.cxx' \
+          -o -name '*.c++' -o -name '*.hh' -o -name '*.hxx' \) \
+       -print -quit | grep -q .; then
+    fail "Repository contains no C++ source"
+else
+    pass "Repository contains no C++ source"
+fi
+cxx_pattern='LANGUAGES[[:space:]].*CXX|CMAKE_CXX|clang\+\+|(^|[^[:alnum:]_])g\+\+|libstdc\+\+|static-libstdc\+\+'
+cxx_build_refs="$(grep -rInE "${cxx_pattern}" \
+    "${PROJECT_ROOT}/CMakeLists.txt" "${PROJECT_ROOT}/cmake" \
+    "${PROJECT_ROOT}/scripts" "${PROJECT_ROOT}/tools" \
+    --include='CMakeLists.txt' --include='*.cmake' --include='*.sh' \
+    --exclude-dir=.build || true)"
+# grep applies --include to explicitly named files too, so the Dockerfile needs
+# its own pass or it is silently skipped by the filters above. The runtime stage
+# deletes libstdc++, so a bare removal path is exempt; the assertion below keeps
+# that exemption from being used to install the runtime back in.
+cxx_build_refs+="$(grep -InE "${cxx_pattern}" "${PROJECT_ROOT}/deploy/Dockerfile" \
+    | grep -vE ':[[:space:]]*/usr/lib/libstdc\+\+\.so\*[[:space:]]*\\?$' || true)"
+if [[ -z "${cxx_build_refs}" ]]; then
+    pass "Native builds cannot invoke a C++ toolchain or runtime"
+else
+    printf '%s\n' "${cxx_build_refs}" >&2
+    fail "Native builds cannot invoke a C++ toolchain or runtime"
+fi
+assert_contains "${PROJECT_ROOT}/deploy/Dockerfile" '^[[:space:]]*/usr/lib/libstdc\+\+\.so\*[[:space:]]*\\?$' \
+    "Runtime image deletes the C++ standard library"
 
 assert_executable "${PRE_COMMIT_HOOK}" "Pre-commit hook is executable"
 assert_executable "${CHECK_DEPLOYER}" "Native deployer gate is executable"
@@ -87,7 +118,7 @@ assert_ignored ".build/native/probe" "Native build output is ignored"
 assert_ignored "tests/.venv/pyvenv.cfg" "Python test environment is ignored"
 
 assert_literal "${PROJECT_ROOT}/CMakeLists.txt" 'set(CMAKE_C_STANDARD 17)' "C17 is required"
-assert_literal "${PROJECT_ROOT}/CMakeLists.txt" 'set(CMAKE_CXX_STANDARD 20)' "C++20 is required"
+assert_literal "${PROJECT_ROOT}/CMakeLists.txt" 'LANGUAGES C)' "Only the C language is enabled"
 assert_literal "${PROJECT_ROOT}/CMakeLists.txt" '-Werror' "Native warnings fail the build"
 assert_literal "${PROJECT_ROOT}/CMakeLists.txt" '_FORTIFY_SOURCE=3' "Release builds enable Fortify"
 assert_literal "${PROJECT_ROOT}/CMakeLists.txt" '-fstack-protector-strong' "Release builds protect stacks"
@@ -97,17 +128,17 @@ assert_literal "${PROJECT_ROOT}/tools/test-receiver.sh" 'OMT_ENABLE_SANITIZERS=O
 dependencies="${PROJECT_ROOT}/cmake/NativeDependencies.cmake"
 for digest in \
     e9fff7467fb60f037e6708da18b25560649e4c63edc2a69bb871b960d9cbfbba \
-    fecb33d33930e12ff53a34064e9d3a06c8f7c3e04408f14cd36c80e3faac863b \
+    834bf30974a294e996f7b1222aa59f1eb4ee259bd8d7d7967e8a2fb213d82dde \
     d9ec76cbe34db98eec3539fe2c899d26b0c837cb3eb466a56b0f109cabf658f7; do
     assert_literal "${dependencies}" "${digest}" "Native source archive is SHA-256 locked"
 done
 assert_literal "${dependencies}" 'URL_HASH "SHA256=' "CMake enforces archive hashes"
-assert_literal "${PROJECT_ROOT}/src/native/deployer/ssh_client.cpp" 'known_hosts' "Deployer uses strict known-host verification"
-assert_literal "${PROJECT_ROOT}/src/native/deployer/core.cpp" 'getrandom' "Linux deployer uses the OS CSPRNG"
-assert_literal "${PROJECT_ROOT}/src/native/deployer/core.cpp" 'BCryptGenRandom' "Windows deployer uses the OS CSPRNG"
-assert_literal "${PROJECT_ROOT}/src/native/deployer/ssh_client.cpp" 'max_remote_output' "SSH output is bounded"
+assert_literal "${PROJECT_ROOT}/src/native/deployer/ssh_client.c" 'known_hosts' "Deployer uses strict known-host verification"
+assert_literal "${PROJECT_ROOT}/src/native/deployer/core.c" 'getrandom' "Linux deployer uses the OS CSPRNG"
+assert_literal "${PROJECT_ROOT}/src/native/deployer/core.c" 'BCryptGenRandom' "Windows deployer uses the OS CSPRNG"
+assert_literal "${PROJECT_ROOT}/src/native/deployer/deployer.h" 'OMT_DEPLOYER_OUTPUT_LIMIT (4U * 1024U * 1024U)' "SSH output is bounded"
 assert_literal "${PROJECT_ROOT}/src/native/omt/include/omt/omt_wire.h" 'OMT_WIRE_VIDEO_MAX_SIZE' "OMT video payloads are bounded"
-assert_literal "${PROJECT_ROOT}/third_party/omt/libvmx/src/thread_tasks.h" '512U * 1024U' "VMX worker stacks are bounded"
+assert_literal "${PROJECT_ROOT}/third_party/omt/libvmx/src/thread_tasks.c" '512U * 1024U' "VMX worker stacks are bounded"
 
 assert_contains "${PROJECT_ROOT}/Makefile" '^test-deployer:' "Make exposes test-deployer"
 assert_contains "${PROJECT_ROOT}/Makefile" '^build-deployer:' "Make exposes build-deployer"
@@ -120,7 +151,7 @@ assert_literal "${PROJECT_ROOT}/deploy/Dockerfile" 'runtime-sbom.cdx.json' "Cont
 assert_literal "${PROJECT_ROOT}/deploy/compose.yml" 'mem_limit: "${OMT_CONTAINER_MEMORY_LIMIT:-256m}"' "Runtime memory defaults to a 256 MiB cap"
 assert_literal "${PROJECT_ROOT}/deploy/compose.yml" 'pids_limit: 64' "Runtime process count is bounded"
 assert_literal "${PROJECT_ROOT}/deploy/manifest-v3.txt" 'version=3' "Native deployment manifest is versioned"
-assert_literal "${PROJECT_ROOT}/src/native/deployer/deployment.cpp" 'tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0' "Deployer pins its privileged emulator image"
+assert_literal "${PROJECT_ROOT}/src/native/deployer/deployment.c" 'tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0' "Deployer pins its privileged emulator image"
 assert_literal "${PROJECT_ROOT}/scripts/security-scan.sh" '--skip-files vars.yml' "Security scan does not inspect sensitive vars.yml"
 assert_executable "${PROJECT_ROOT}/scripts/install-arm64-emulation.sh" "ARM64 emulation bootstrap is executable"
 assert_literal "${PROJECT_ROOT}/scripts/install-arm64-emulation.sh" 'docker.io/tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0' "ARM64 bootstrap pins its emulator image"
@@ -138,11 +169,11 @@ assert_literal "${PROJECT_ROOT}/scripts/build-windows-deployer.sh" \
 assert_literal "${PROJECT_ROOT}/cmake/toolchains/windows-x86_64-mingw.cmake" \
     'set(CMAKE_SYSTEM_NAME Windows)' "Cross toolchain targets Windows"
 assert_literal "${PROJECT_ROOT}/cmake/toolchains/windows-x86_64-mingw.cmake" \
-    '-static -static-libgcc -static-libstdc++' "Windows deployer links its runtime statically"
+    '-static -static-libgcc' "Windows deployer links its runtime statically"
 assert_literal "${PROJECT_ROOT}/CMakeLists.txt" \
     '-Wl,--dynamicbase;-Wl,--nxcompat;-Wl,--high-entropy-va' "Windows release links are hardened"
 assert_literal "${PROJECT_ROOT}/scripts/install-dev-deps.sh" \
-    'x86_64-w64-mingw32-g++' "Install provisions the Windows cross toolchain"
+    'x86_64-w64-mingw32-gcc' "Install provisions the Windows C cross toolchain"
 assert_executable "${PROJECT_ROOT}/scripts/install-trivy.sh" "Trivy bootstrap is executable"
 assert_literal "${PROJECT_ROOT}/scripts/install-dev-deps.sh" \
     'install-trivy.sh' "Install provisions the security scanner"

@@ -1,6 +1,6 @@
 # Testing
 
-Bootstrap Python tooling, the native C/C++ toolchain, the mingw-w64 Windows
+Bootstrap Python tooling, the native C17 toolchain, the mingw-w64 Windows
 cross toolchain, Hadolint, Trivy, and ARM64 container emulation once:
 
 ```bash
@@ -46,16 +46,24 @@ routes, diagnostics, and runtime adapters at a 98% branch-coverage floor.
 UndefinedBehaviorSanitizer. It exercises shared target vectors, bounded wire
 parsing, CLI exit-status contracts, detail sanitization and JSON escaping,
 playback state/order, heartbeat publication, and atomic status replacement.
+It also runs deterministic VMX encode/decode checks across repeated
+multithreaded lifecycles and malformed or truncated streams.
 
-`make test-deployer` builds the dependency-free C++ core with strict warnings
+`make test-deployer` builds the dependency-free C core with strict warnings
 and tests validation, quoting, SHA-256, secure tokens, and manifest v3 path
 safety. Full
-mode also resolves hash-locked SDL3, Dear ImGui, and libssh2 archives and
+mode also resolves hash-locked SDL3, Nuklear, and libssh2 archives and
 publishes the host-native GUI.
+
+The supply-chain gate rejects C++ source extensions and C++ compiler/runtime
+invocations. Dependency preparation removes unused C++ translation units from
+the pinned deployer archives before compilation. Container integration checks
+that no C++ standard-library payload ships and that Python's decimal fallback
+remains functional.
 
 Restricted or offline builders may point the publish gate and the Windows cross
 build at trusted, previously verified source trees with
-`RPI_OMT_SDL3_SOURCE_DIR`, `RPI_OMT_IMGUI_SOURCE_DIR`, and
+`RPI_OMT_SDL3_SOURCE_DIR`, `RPI_OMT_NUKLEAR_SOURCE_DIR`, and
 `RPI_OMT_LIBSSH2_SOURCE_DIR`. Otherwise CMake downloads the pinned archives and
 verifies their SHA-256 locks before use.
 
@@ -103,7 +111,7 @@ physical tier must state the skipped Pi-specific checks.
 
 `tests/schema/omt-target-vectors.json` and
 `tests/schema/playback-status-vectors.json` are consumed by Python and the
-native C/C++ tests.
+native C tests.
 Update both implementations and their vectors together when a shared contract
 changes. Playback status heartbeat must remain well below the smallest accepted
 staleness threshold.

@@ -6,7 +6,7 @@ C17 wire transport and the audited `libvmx` decoder.
 ```text
 OMT network
   └─ C17 discovery/receive transport
-       └─ omt-receiver (C++20)
+       └─ omt-receiver (C17)
             ├─ dependency-free parsing/status core
             ├─ VMX decoder (libvmx)
             ├─ DRM/KMS HDMI presenter
@@ -28,8 +28,8 @@ unprivileged container
 
 ## Receiver
 
-`src/native/receiver` builds against the audited VMX source snapshot in
-`third_party/omt`. The C transport in `src/native/omt` and the C++ receiver own
+`src/native/receiver` builds against the audited C17 VMX port in
+`third_party/omt`. The C transport, C VMX decoder, and C receiver own
 typed CLI parsing, shared target
 validation, format policy, sanitization, synchronized status projection, and
 HDMI connector selection over the DRM sysfs tree.
@@ -81,6 +81,11 @@ report carrying that nonce. Raw capture is never started unless selected for
 that download. Avahi proxy state, diagnostics, and host actions use separate
 least-privilege bind mounts.
 
+The shipped image contains no C++ standard library. Alpine's optional compiled
+Python decimal accelerator is removed with its `mpdecimal`/`libstdc++` payload;
+Python's standard pure-Python decimal implementation remains available and is
+checked during the image build.
+
 `host-reboot.sh` is installed root-owned. It accepts only a four-line
 versioned reboot record from the pre-created mode-0600 request file. It checks
 ownership, type, stable inode, age, future skew, replay, and cooldown; writes a
@@ -119,16 +124,21 @@ journals with their installed helpers, promote the v3 set, and only then invoke
 
 ## Operator deployment applications
 
-The same C++20 deployer sources build for the operator's own machine and for
+The same C17 deployer sources build for the operator's own machine and for
 Windows x86-64. A Linux workstation publishes both: `scripts/check-deployer.sh
 --publish` stages the host package, and `scripts/build-windows-deployer.sh`
 cross-compiles the Windows package with mingw-w64 through
-`cmake/toolchains/windows-x86_64-mingw.cmake`. Both link SDL3, Dear ImGui, and
+`cmake/toolchains/windows-x86_64-mingw.cmake`. Both link SDL3, Nuklear, and
 libssh2 statically from the same hash-locked archives, so the two packages
 never diverge in dependency version. The cross build cannot execute what it
 produces, so `scripts/verify-windows-deployer.sh` reads the shipping contract
 out of the PE headers instead. Neither application is part of the appliance
 image; the capsule they upload is built by the hermetic Dockerfile.
+
+The dependency preparation step removes unused C++ examples and platform
+backends before adding the dependencies to the build. Windows GameInput is not
+used by the deployer and is replaced with a C no-support shim, keeping Linux
+and Windows builds C-only.
 
 ## Trust and legal surfaces
 

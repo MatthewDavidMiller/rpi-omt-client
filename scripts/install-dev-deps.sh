@@ -48,12 +48,12 @@ install_windows_cross_toolchain() {
             ;;
         fedora)
             sudo dnf install -y --setopt=install_weak_deps=False \
-                mingw64-gcc mingw64-gcc-c++ mingw64-winpthreads-static
+                mingw64-gcc mingw64-winpthreads-static
             ;;
         rocky|almalinux|rhel|centos)
             # The mingw packages live in CRB, which is not enabled everywhere.
             sudo dnf install -y --enablerepo=crb \
-                mingw64-gcc mingw64-gcc-c++ mingw64-winpthreads-static
+                mingw64-gcc mingw64-winpthreads-static
             ;;
         arch)
             install_pacman_packages mingw-w64-gcc
@@ -68,7 +68,7 @@ install_windows_cross_toolchain() {
                  [[ " ${OS_LIKE} " == *" rhel "* ]] || \
                  [[ " ${OS_LIKE} " == *" centos "* ]]; then
                 sudo dnf install -y --enablerepo=crb \
-                    mingw64-gcc mingw64-gcc-c++ mingw64-winpthreads-static
+                    mingw64-gcc mingw64-winpthreads-static
             else
                 echo -e "${YELLOW}WARN${NC}: Unknown OS. Install the x86_64-w64-mingw32 toolchain manually."
             fi
@@ -81,18 +81,18 @@ echo "Detected OS: ${OS}${OS_LIKE:+ (${OS_LIKE})}"
 
 case "${OS}" in
     ubuntu|debian)
-        install_apt_packages alsa-utils clang cmake curl g++ libasound2-dev \
+        install_apt_packages alsa-utils clang cmake curl gcc libasound2-dev \
             libavahi-client-dev libdrm-dev libssl-dev libx11-dev ninja-build openssh-client pkg-config \
             podman python3-venv shellcheck tar xz-utils
         ;;
     fedora)
         sudo dnf install -y --setopt=install_weak_deps=False \
-            alsa-lib-devel avahi-devel clang cmake curl gcc-c++ libdrm-devel libX11-devel openssl-devel \
+            alsa-lib-devel avahi-devel clang cmake curl gcc libdrm-devel libX11-devel openssl-devel \
             ninja-build openssh-clients pkgconf-pkg-config podman python3 \
             ShellCheck tar xz
         ;;
     rocky|almalinux|rhel|centos)
-        install_dnf_packages alsa-lib-devel avahi-devel clang cmake curl gcc-c++ \
+        install_dnf_packages alsa-lib-devel avahi-devel clang cmake curl gcc \
             libdrm-devel libX11-devel ninja-build openssh-clients openssl-devel pkgconf-pkg-config podman \
             python3 ShellCheck tar xz
         ;;
@@ -105,13 +105,13 @@ case "${OS}" in
         ;;
     *)
         if [[ " ${OS_LIKE} " == *" debian "* ]]; then
-            install_apt_packages alsa-utils clang cmake curl g++ libasound2-dev \
+            install_apt_packages alsa-utils clang cmake curl gcc libasound2-dev \
                 libavahi-client-dev libdrm-dev libssl-dev libx11-dev ninja-build openssh-client pkg-config \
                 podman python3-venv shellcheck tar xz-utils
         elif [[ " ${OS_LIKE} " == *" fedora "* ]] || \
              [[ " ${OS_LIKE} " == *" rhel "* ]] || \
              [[ " ${OS_LIKE} " == *" centos "* ]]; then
-            install_dnf_packages alsa-lib-devel avahi-devel clang cmake curl gcc-c++ \
+            install_dnf_packages alsa-lib-devel avahi-devel clang cmake curl gcc \
                 libdrm-devel libX11-devel ninja-build openssh-clients openssl-devel pkgconf-pkg-config \
                 podman python3 ShellCheck tar xz
         else
@@ -137,7 +137,7 @@ if ! command -v hadolint >/dev/null 2>&1; then
     esac
 fi
 
-if ! command -v x86_64-w64-mingw32-g++ >/dev/null 2>&1; then
+if ! command -v x86_64-w64-mingw32-gcc >/dev/null 2>&1; then
     install_windows_cross_toolchain
 fi
 
@@ -166,7 +166,7 @@ summary_tools=(clang cmake curl ninja pkg-config python3 sha512sum shellcheck ta
 if [[ "$(uname -s)" == "Linux" ]]; then
     # Podman or Docker runs the image gates; the mingw toolchain cross-builds
     # the Windows deployer that ships alongside the Linux one.
-    summary_tools+=(podman x86_64-w64-mingw32-gcc x86_64-w64-mingw32-g++ x86_64-w64-mingw32-objdump)
+    summary_tools+=(podman x86_64-w64-mingw32-gcc x86_64-w64-mingw32-objdump)
 fi
 missing_tools=()
 for tool in "${summary_tools[@]}"; do
@@ -179,7 +179,7 @@ for tool in "${summary_tools[@]}"; do
 done
 
 echo -e "  yamllint: ${GREEN}managed by tests/.venv${NC}"
-echo -e "  Native toolchain: ${GREEN}C17/C++20 with CMake and Ninja${NC}"
+echo -e "  Native toolchain: ${GREEN}C17 with CMake and Ninja${NC}"
 
 # Every gate runs on every commit, so a workstation missing a tool has to say
 # so here rather than at the commit that cannot complete.

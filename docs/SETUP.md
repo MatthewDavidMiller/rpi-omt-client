@@ -37,7 +37,7 @@ make build-windows-deployer
 That target cross-compiles with mingw-w64 through
 `cmake/toolchains/windows-x86_64-mingw.cmake` and stages
 `.build/deployer-publish-windows/bin/rpi-omt-deployer.exe` with the license,
-notices, and CycloneDX SBOM. SDL3, Dear ImGui, and libssh2 link statically, so
+notices, and CycloneDX SBOM. SDL3, Nuklear, and libssh2 link statically, so
 the executable runs on a stock Windows host with no redistributable installed;
 `scripts/verify-windows-deployer.sh` fails the build if that stops being true
 or if ASLR, DEP, or high-entropy address randomization is missing.
@@ -45,7 +45,7 @@ or if ASLR, DEP, or high-entropy address randomization is missing.
 gate tooling.
 
 Building on Windows itself still works: run the commands from a Bash
-environment (Git Bash or MSYS2) with GNU Make, CMake, Ninja, Clang/Clang++,
+environment (Git Bash or MSYS2) with GNU Make, CMake, Ninja, Clang,
 Python 3, and Docker Desktop's Linux engine on `PATH`. Either path uses WinSock
 and Windows CNG and emits `rpi-omt-deployer.exe`; the appliance build itself
 still runs entirely in the pinned Linux containers.

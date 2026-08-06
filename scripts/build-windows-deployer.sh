@@ -12,7 +12,7 @@ if [[ $# -gt 0 ]]; then
 fi
 
 MINGW_TRIPLE="x86_64-w64-mingw32"
-for tool in cmake ninja "${MINGW_TRIPLE}-gcc" "${MINGW_TRIPLE}-g++" "${MINGW_TRIPLE}-objdump"; do
+for tool in cmake ninja "${MINGW_TRIPLE}-gcc" "${MINGW_TRIPLE}-objdump"; do
     command -v "${tool}" >/dev/null 2>&1 || {
         echo "ERROR: ${tool} is required for the Windows cross build. Run: make install" >&2
         exit 1
@@ -39,7 +39,7 @@ configure_args=(
 )
 # Offline or restricted builders may point the locked dependencies at trusted
 # source trees they have already verified, exactly as the host build does.
-for dependency in SDL3 IMGUI LIBSSH2; do
+for dependency in SDL3 NUKLEAR LIBSSH2; do
     mirror_name="RPI_OMT_${dependency}_SOURCE_DIR"
     mirror_value="${!mirror_name:-}"
     if [[ -n "${mirror_value}" ]]; then
@@ -69,7 +69,7 @@ cp "${PROJECT_ROOT}/LICENSE" "${PROJECT_ROOT}/THIRD_PARTY_NOTICES.txt" "${STAGE_
 
 # The compiler runtime is linked into the .exe rather than supplied by the
 # operating system, so the inventory has to name the toolchain that produced it.
-gcc_version="$("${MINGW_TRIPLE}-g++" -dumpversion)"
+gcc_version="$("${MINGW_TRIPLE}-gcc" -dumpversion)"
 mingw_runtime_version="$(
     printf '#include <_mingw_mac.h>\n__MINGW64_VERSION_STR\n' |
         "${MINGW_TRIPLE}-gcc" -E -P -xc - | tail -n 1 | tr -d '" '

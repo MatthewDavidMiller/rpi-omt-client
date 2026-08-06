@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Raspberry Pi OMT Client — receives Open Media Transport video/audio streams on a Raspberry Pi 5 and outputs them to HDMI. Uses a bounded C17/C++20 receiver with direct DRM/KMS video and ALSA audio. Managed via Docker; includes a Flask web UI for source selection and a portable native deployer.
+Raspberry Pi OMT Client — receives Open Media Transport video/audio streams on a Raspberry Pi 5 and outputs them to HDMI. Uses a bounded C17 receiver with direct DRM/KMS video and ALSA audio. Managed via Docker; includes a Flask web UI for source selection and a portable native deployer.
 
 **Target:** Raspberry Pi 5 running Alpine Linux 3.23 aarch64 in persistent sys mode. Raspberry Pi OS and Alpine diskless mode are unsupported.
 

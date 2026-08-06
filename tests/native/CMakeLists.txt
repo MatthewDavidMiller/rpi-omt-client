@@ -28,8 +28,10 @@ endif()
 
 if(UNIX)
     add_executable(test_playback_status
-        test_playback_status.cpp
-        ${PROJECT_SOURCE_DIR}/src/native/receiver/playback_status.cpp
+        test_playback_status.c
+        ${PROJECT_SOURCE_DIR}/src/native/receiver/playback_status.c
+        ${PROJECT_SOURCE_DIR}/src/native/receiver/json_text.c
+        ${PROJECT_SOURCE_DIR}/src/native/receiver/native_types.c
     )
     target_include_directories(test_playback_status PRIVATE ${PROJECT_SOURCE_DIR}/src/native/receiver)
     target_link_libraries(test_playback_status PRIVATE omt_wire omt_warnings omt_sanitizers pthread)
@@ -37,8 +39,10 @@ if(UNIX)
     add_test(NAME native-playback-status COMMAND test_playback_status)
 
     add_executable(test_status_projection_probe
-        status_projection_probe.cpp
-        ${PROJECT_SOURCE_DIR}/src/native/receiver/playback_status.cpp)
+        status_projection_probe.c
+        ${PROJECT_SOURCE_DIR}/src/native/receiver/playback_status.c
+        ${PROJECT_SOURCE_DIR}/src/native/receiver/json_text.c
+        ${PROJECT_SOURCE_DIR}/src/native/receiver/native_types.c)
     target_include_directories(test_status_projection_probe PRIVATE
         ${PROJECT_SOURCE_DIR}/src/native/receiver)
     target_link_libraries(test_status_projection_probe PRIVATE
@@ -49,6 +53,16 @@ if(UNIX)
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test_status_vectors.py
                 $<TARGET_FILE:test_status_projection_probe>
                 ${PROJECT_SOURCE_DIR}/tests/schema/playback-status-vectors.json)
+endif()
+
+if(TARGET vmx_codec)
+    add_executable(test_vmx_codec test_vmx_codec.c)
+    target_include_directories(test_vmx_codec PRIVATE
+        ${PROJECT_SOURCE_DIR}/third_party/omt/libvmx/src)
+    target_link_libraries(test_vmx_codec PRIVATE
+        vmx_codec omt_warnings omt_sanitizers m pthread)
+    omt_enable_test_assertions(test_vmx_codec)
+    add_test(NAME native-vmx-codec-contract COMMAND test_vmx_codec)
 endif()
 
 if(TARGET omt-receiver)
@@ -64,7 +78,7 @@ if(TARGET omt-receiver)
 endif()
 
 if(TARGET omt_deployer_core)
-    add_executable(test_deployer_core test_deployer_core.cpp)
+    add_executable(test_deployer_core test_deployer_core.c)
     target_link_libraries(test_deployer_core PRIVATE
         omt_deployer_core omt_deployer_legal omt_warnings omt_sanitizers)
     omt_enable_test_assertions(test_deployer_core)

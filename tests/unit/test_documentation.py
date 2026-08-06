@@ -43,10 +43,10 @@ def test_high_value_paths_are_documented():
         "src/omt_client/state_store.py",
         "deploy/container/runtime-lib.sh",
         "deploy/container/entrypoint.sh",
-        "src/native/receiver/main.cpp",
+        "src/native/receiver/main.c",
         "src/native/omt/omt_wire.c",
-        "src/native/deployer/core.cpp",
-        "src/native/deployer/deployment.cpp",
+        "src/native/deployer/core.c",
+        "src/native/deployer/deployment.c",
         "deploy/manifest-v3.txt",
         "deploy/transaction.sh",
     )

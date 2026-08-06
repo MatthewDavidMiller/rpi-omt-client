@@ -9,7 +9,7 @@ from pathlib import Path
 
 COMPONENTS = (
     ("SDL", "3.4.8", "pkg:github/libsdl-org/SDL@release-3.4.8"),
-    ("Dear ImGui", "1.92.8", "pkg:github/ocornut/imgui@v1.92.8"),
+    ("Nuklear", "4.13.3", "pkg:github/Immediate-Mode-UI/Nuklear@v4.13.3"),
     ("libssh2", "1.11.1", "pkg:generic/libssh2@1.11.1"),
 )
 
@@ -27,7 +27,7 @@ def main() -> int:
     if arguments.mingw_gcc_version:
         components.append(
             (
-                "GCC runtime libraries (libgcc, libstdc++)",
+                "GCC runtime library (libgcc)",
                 arguments.mingw_gcc_version,
                 f"pkg:generic/gcc@{arguments.mingw_gcc_version}",
             )

@@ -4,12 +4,12 @@
 
 | Area | Files |
 |---|---|
-| Native receiver | `src/native/receiver/main.cpp` |
+| Native receiver | `src/native/receiver/main.c` |
 | OMT wire transport and validation | `src/native/omt/omt_wire.c`, `src/native/omt/include/omt/omt_wire.h` |
-| Status projection and atomic publication | `src/native/receiver/playback_status.cpp` |
-| Shared JSON string escaping (status and CLI output) | `src/native/receiver/json_text.hpp` |
-| Discovery and bounded network channels | `src/native/receiver/discovery.cpp`, `src/native/receiver/omt_channel.cpp` |
-| DRM/ALSA playback | `src/native/receiver/drm_output.cpp`, `src/native/receiver/alsa_output.cpp` |
+| Status projection and atomic publication | `src/native/receiver/playback_status.c` |
+| Shared JSON string escaping (status and CLI output) | `src/native/receiver/json_text.h` |
+| Discovery and bounded network channels | `src/native/receiver/discovery.c`, `src/native/receiver/omt_channel.c` |
+| DRM/ALSA playback | `src/native/receiver/drm_output.c`, `src/native/receiver/alsa_output.c` |
 | Audited VMX source | `third_party/omt/PROVENANCE.md`, `third_party/omt/libvmx` |
 | Flask composition | `src/omt_client/factory.py`, `src/omt_client/wsgi.py` |
 | Service composition | `src/omt_client/services/composition.py` |
@@ -59,7 +59,7 @@ The native receiver is built with CMake, Ninja, Clang, and LLD in a
 digest-pinned Alpine builder stage. The compiler stays on amd64 and emits
 ARM64 against a minimal Alpine target sysroot. A `scratch` stage contains only
 the stripped native `omt-receiver`; the runtime supplies its small Alpine
-ALSA, Avahi, DRM, C/C++ runtime dependency set and copies the executable from that
+ALSA, Avahi, DRM, and C runtime dependency set and copies the executable from that
 stage, so neither the SDK nor build toolchain is part of the deployed image.
 
 Public routes are `/login`, `/logout`, `/`, `/sources/select`,
@@ -81,11 +81,11 @@ are POST and CSRF protected.
 | HDMI boot-configuration rules | `deploy/lib/hdmi-config.sh` |
 | Deployment contract | `deploy/manifest-v3.txt`, `deploy/transaction.sh` |
 | CLI deployment | `scripts/deploy.sh` |
-| Native deployer validation, models, and project-root discovery | `src/native/deployer/core.cpp`, `src/native/deployer/core.hpp` |
-| Legal texts compiled into the deployer | `cmake/EmbedText.cmake`, `cmake/EmbedText.cpp.in`, `src/native/deployer/legal_texts.hpp` |
-| Secure local process and SSH boundaries | `src/native/deployer/process.cpp`, `src/native/deployer/ssh_client.cpp` |
-| Deployment/Wi-Fi operations | `src/native/deployer/deployment.cpp` |
-| SDL3/ImGui presentation and About UI | `src/native/deployer/ui_main.cpp` |
+| Native deployer validation, models, and project-root discovery | `src/native/deployer/core.c`, `src/native/deployer/deployer.h` |
+| Legal texts compiled into the deployer | `cmake/EmbedText.cmake`, `cmake/EmbedText.c.in`, `src/native/deployer/deployer.h` |
+| Secure local process and SSH boundaries | `src/native/deployer/process.c`, `src/native/deployer/ssh_client.c` |
+| Deployment/Wi-Fi operations | `src/native/deployer/deployment.c` |
+| SDL3/Nuklear presentation and About UI | `src/native/deployer/ui_main.c` |
 | Hash-locked deployer dependencies | `cmake/NativeDependencies.cmake` |
 | Windows cross build and artifact contract | `scripts/build-windows-deployer.sh`, `scripts/verify-windows-deployer.sh`, `cmake/toolchains/windows-x86_64-mingw.cmake` |
 | Local toolchain provisioning | `scripts/install-dev-deps.sh`, `scripts/install-hadolint.sh`, `scripts/install-trivy.sh`, `scripts/install-arm64-emulation.sh` |

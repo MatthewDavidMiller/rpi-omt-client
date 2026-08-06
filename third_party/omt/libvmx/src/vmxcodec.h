@@ -24,25 +24,26 @@
 */
 
 #pragma once
-#include <cstdint>
-#include <cstring>
+#include <stdint.h>
+#include <string.h>
 #include "thread_tasks.h"
+#define VMX_ALIGNAS(value) _Alignas(value)
 #ifdef _MSC_VER
 #define VMX_API __declspec(dllexport)
 #else
-#define VMX_API extern "C" __attribute__((visibility("default")))
+#define VMX_API __attribute__((visibility("default")))
 #endif
-#if defined(_M_ARM64) | defined(__arm64) | defined(__aarch64__)
+#if defined(_M_ARM64) || defined(__arm64__) || defined(__aarch64__)
 #define ARM64
 #endif
-#if defined(_M_X64) | defined(__x86_64__)
+#if defined(_M_X64) || defined(__x86_64__)
 #define X64
 #define AVX2 //Include AVX2 in all Intel builds as these functions will be dynamically called only if instruction set available.
 #endif
 
-const int VMX_SLICE_HEIGHT = 16;
-const int VMX_QUALITY_COUNT = 25;
-const int VMX_MAX_PLANES = 4;
+#define VMX_SLICE_HEIGHT 16
+#define VMX_QUALITY_COUNT 25
+#define VMX_MAX_PLANES 4
 
 typedef unsigned long long buffer_t;
 typedef unsigned char       BYTE;
@@ -107,7 +108,7 @@ typedef enum {
 	VMX_IMAGE_PA16,
 } VMX_IMAGE_FORMAT;
 
-struct VMX_SLICE_DATA
+typedef struct VMX_SLICE_DATA
 {
 	unsigned char* Stream;
 	unsigned char* StreamPos;
@@ -118,9 +119,9 @@ struct VMX_SLICE_DATA
 	buffer_t Temp;
 	buffer_t TempRead;
 	VMX_SIZE Size[3];
-};
+} VMX_SLICE_DATA;
 
-struct VMX_SLICE_SET
+typedef struct VMX_SLICE_SET
 {
 	VMX_SLICE_DATA DC;
 	VMX_SLICE_DATA AC;
@@ -129,21 +130,21 @@ struct VMX_SLICE_SET
 	VMX_SIZE PixelSize; //Size in pixels of the slice, for copying from source image data. Due to alignment last slice will be only 8 pixels height for 1080 for example.
 	VMX_SIZE PixelSizeInterlaced; //Same as above but for second field alignment adjustment at the mid point.
 	int LowerField; //=1 when this is a lower field slice
-	alignas(64) short TempBlock[128];
-	alignas(64) short TempBlock2[128];
-	alignas(64) short TempBlock3[128];
-};
+	VMX_ALIGNAS(64) short TempBlock[128];
+	VMX_ALIGNAS(64) short TempBlock2[128];
+	VMX_ALIGNAS(64) short TempBlock3[128];
+} VMX_SLICE_SET;
 
-struct VMX_PLANE
+typedef struct VMX_PLANE
 {
 	int Index;
 	VMX_SIZE Size;
 	int Stride; //Double this when dealing with 16bit data
 	BYTE* Data;
 	BYTE* DataLowerPreview;
-};
+} VMX_PLANE;
 
-struct VMX_INSTANCE
+typedef struct VMX_INSTANCE
 {
 	int avx2;
 	VMX_FORMAT Format;
@@ -188,10 +189,10 @@ struct VMX_INSTANCE
 	int ImageStrideA;
 
 	VMX_IMAGE_FORMAT ImageFormat;
-};
+} VMX_INSTANCE;
 
-const int VMX_DECODE_MATRIX_COUNT = 64;
-const int VMX_ENCODE_MATRIX_COUNT = 192;
+#define VMX_DECODE_MATRIX_COUNT 64
+#define VMX_ENCODE_MATRIX_COUNT 192
 
 //Public exports
 

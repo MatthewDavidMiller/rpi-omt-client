@@ -1,5 +1,5 @@
 #!/bin/ash
-# Build the native C/C++ receiver from the stable amd64 compiler stage.
+# Build the native C17 receiver from the stable amd64 compiler stage.
 
 set -eu
 
@@ -16,7 +16,6 @@ case "${target_arch}" in
         cmake -S /src -B "${build_dir}" -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_C_COMPILER=clang \
-            -DCMAKE_CXX_COMPILER=clang++ \
             -DOMT_BUILD_RECEIVER=ON \
             -DOMT_BUILD_DEPLOYER=OFF \
             -DOMT_BUILD_TESTS=OFF \

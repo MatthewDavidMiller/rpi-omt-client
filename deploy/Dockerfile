@@ -16,7 +16,6 @@ RUN apk add --no-cache \
         avahi-dev \
         clang \
         cmake \
-        g++ \
         libdrm-dev \
         lld \
         linux-headers \
@@ -38,9 +37,10 @@ FROM --platform=$TARGETPLATFORM alpine:3.23.5@${ALPINE_DIGEST} AS receiver-sysro
 RUN apk add --no-cache \
         alsa-lib-dev \
         avahi-dev \
-        g++ \
+        gcc \
         libdrm-dev \
-        linux-headers
+        linux-headers \
+        musl-dev
 
 FROM receiver-builder-base AS receiver-builder-arm64
 COPY --from=receiver-sysroot /etc/os-release /opt/receiver-sysroot/etc/os-release
@@ -94,7 +94,6 @@ RUN apk add --no-cache \
         coreutils \
         libdrm \
         libgcc \
-        libstdc++ \
         openssl \
         python3 \
         util-linux \
@@ -103,7 +102,12 @@ RUN apk add --no-cache \
     && adduser -S -D -H -G omt -h /etc/omt -s /sbin/nologin omt \
     && mkdir -p /app/legal /etc/omt /run/omt \
     && chown omt:omt /etc/omt /run/omt \
-    && chmod 700 /run/omt
+    && chmod 700 /run/omt \
+    && rm -f \
+        /usr/lib/python3.12/lib-dynload/_decimal*.so \
+        /usr/lib/libmpdec.so* \
+        /usr/lib/libstdc++.so* \
+    && python3 -c 'import decimal; assert str(decimal.Decimal(1) / 7).startswith("0.142857")'
 
 COPY --from=python-builder /opt/venv /opt/venv
 COPY --from=receiver-artifacts /omt-receiver /usr/local/bin/omt-receiver

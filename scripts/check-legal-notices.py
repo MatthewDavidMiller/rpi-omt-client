@@ -34,19 +34,19 @@ def main() -> int:
     for package in sorted(python_packages()):
         if package not in notices:
             fail(f"Python runtime package is missing from notices: {package}")
-    for package in ("sdl 3.4.8", "dear imgui 1.92.8", "libssh2 1.11.1"):
+    for package in ("sdl 3.4.8", "nuklear 4.13.3", "libssh2 1.11.1"):
         if package not in notices:
             fail(f"Native deployer dependency is missing from notices: {package}")
     # The Windows cross build links these into the shipped .exe, so they are
     # redistributed even though no repository file carries their source.
-    for package in ("mingw-w64 runtime", "gcc runtime libraries", "gcc-exception-3.1"):
+    for package in ("mingw-w64 runtime", "gcc runtime library", "gcc-exception-3.1"):
         if package not in notices:
             fail(f"Windows deployer runtime is missing from notices: {package}")
 
     for path in (
         ROOT / "LICENSE",
         ROOT / "src/omt_client/templates/about.html",
-        ROOT / "src/native/deployer/ui_main.cpp",
+        ROOT / "src/native/deployer/ui_main.c",
     ):
         require_text(path, COPYRIGHT)
     require_text(ROOT / "LICENSE", "MIT License")
@@ -72,7 +72,7 @@ def main() -> int:
             fail(f"Dockerfile still references legacy software: {forbidden}")
 
     dependency_lock = (ROOT / "cmake/NativeDependencies.cmake").read_text(encoding="utf-8")
-    for required in ("SDL3-3.4.8", "v1.92.8", "libssh2-1.11.1", "URL_HASH", "SHA256"):
+    for required in ("SDL3-3.4.8", "v4.13.3", "libssh2-1.11.1", "URL_HASH", "SHA256"):
         if required not in dependency_lock:
             fail(f"Native dependency lock omits required input: {required}")
 
