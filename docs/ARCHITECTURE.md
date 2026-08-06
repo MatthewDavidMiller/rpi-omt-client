@@ -140,6 +140,19 @@ backends before adding the dependencies to the build. Windows GameInput is not
 used by the deployer and is replaced with a C no-support shim, keeping Linux
 and Windows builds C-only.
 
+`src/native/deployer/ui_main.c` lays the interface out in design units and
+draws it in device pixels. Every metric is multiplied by the window's SDL
+display scale, which already folds together the monitor's content scale and the
+window's pixel density, and the text is rebaked from a system face at the exact
+pixel height that scale asks for whenever it changes. Two breakpoints, measured
+in design units rather than pixels, decide whether the form and the activity log
+sit side by side and whether field captions sit beside or above their inputs, so
+the same window is usable from the 620x520 minimum through a 4K desktop at 200%
+scaling. The `omt_connection_validate`, `omt_options_validate`, and
+`omt_wifi_validate` entry points in `src/native/deployer/core.c` are the only
+source of truth for whether a tab's actions can run: the UI re-runs them a few
+times a second and disables the buttons they gate rather than restating any rule.
+
 ## Trust and legal surfaces
 
 `LICENSE` governs project-owned code. `THIRD_PARTY_NOTICES.txt` covers shipped
