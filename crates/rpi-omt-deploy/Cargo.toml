@@ -1,0 +1,21 @@
+[package]
+name = "rpi-omt-deploy"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+clap.workspace = true
+omt-deployer-core = { path = "../omt-deployer-core" }
+rpassword.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "rpi-omt-deploy"
+path = "src/main.rs"
+

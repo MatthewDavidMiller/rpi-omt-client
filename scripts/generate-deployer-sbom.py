@@ -5,25 +5,28 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
-COMPONENTS = (
-    ("SDL", "3.4.8", "pkg:github/libsdl-org/SDL@release-3.4.8"),
-    ("Nuklear", "4.13.3", "pkg:github/Immediate-Mode-UI/Nuklear@v4.13.3"),
-    ("libssh2", "1.11.1", "pkg:generic/libssh2@1.11.1"),
-)
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from cargo_lock import LockGraph  # noqa: E402
+
+# The published package contains both deployer binaries and nothing else.
+DEPLOYER_ROOTS = ["rpi-omt-deploy", "rpi-omt-deployer"]
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", required=True)
     parser.add_argument("--version", required=True)
+    parser.add_argument("--cargo-lock", required=True)
     # The Windows package statically links a compiler runtime the host package
     # gets from the operating system, so it inventories two extra components.
     parser.add_argument("--mingw-gcc-version")
     parser.add_argument("--mingw-runtime-version")
     arguments = parser.parse_args()
-    components = list(COMPONENTS)
+    components = LockGraph(arguments.cargo_lock).closure(DEPLOYER_ROOTS)
     if arguments.mingw_gcc_version:
         components.append(
             (

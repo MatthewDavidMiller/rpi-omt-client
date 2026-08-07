@@ -12,11 +12,23 @@ vars.yml
 # Build and test directories
 build/
 .build/
+/target/
 /vm-files/
 /.codex/
 **/bin/
 **/obj/
+# src/bin is where Cargo expects extra binaries, so exempt it from the
+# build-output rule above, which would otherwise drop Rust sources silently.
+!crates/**/src/bin/
 TestResults/
+
+# Rust profiling and coverage output
+*.rs.bk
+*.profraw
+*.profdata
+perf.data
+perf.data.old
+flamegraph.svg
 
 # Python
 __pycache__/

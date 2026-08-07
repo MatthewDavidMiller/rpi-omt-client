@@ -8,9 +8,16 @@ import importlib.metadata
 import json
 import re
 import subprocess
+import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from cargo_lock import LockGraph  # noqa: E402
+
 FIRST_PARTY_DISTRIBUTION = "rpi-omt-client"
+# The image ships the receiver binary alone; the deployer never enters it.
+RUNTIME_ROOTS = ["omt-receiver"]
 
 
 def command(*arguments: str) -> str:
@@ -96,40 +103,26 @@ def python_components() -> list[dict[str, object]]:
     return components
 
 
+def rust_components(path: str) -> list[dict[str, object]]:
+    return [
+        {
+            "type": "library",
+            "name": name,
+            "version": version,
+            "purl": purl,
+            "properties": [{"name": "runtime", "value": "Rust"}],
+        }
+        for name, version, purl in LockGraph(path).closure(RUNTIME_ROOTS)
+    ]
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", required=True)
     parser.add_argument("--version", default="unknown")
+    parser.add_argument("--cargo-lock", required=True)
     arguments = parser.parse_args()
-    components = alpine_components() + python_components()
-    components.extend(
-        [
-            {
-                "type": "library",
-                "name": "libomtnet-derived-native-transport",
-                "version": "1.0.0.17",
-                "licenses": [{"license": {"id": "MIT"}}],
-                "properties": [
-                    {
-                        "name": "source-revision",
-                        "value": "bda28477444e09a2c70952a042c8ff7bd55ee0ac",
-                    }
-                ],
-            },
-            {
-                "type": "library",
-                "name": "libvmx",
-                "version": "f73569c",
-                "licenses": [{"license": {"id": "MIT"}}],
-            },
-            {
-                "type": "library",
-                "name": "omtplayer-derived-native-playback",
-                "version": "c47397c",
-                "licenses": [{"license": {"id": "MIT"}}],
-            },
-        ]
-    )
+    components = alpine_components() + python_components() + rust_components(arguments.cargo_lock)
     document = {
         "bomFormat": "CycloneDX",
         "specVersion": "1.6",

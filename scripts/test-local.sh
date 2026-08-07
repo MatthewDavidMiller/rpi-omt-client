@@ -100,7 +100,7 @@ run_test "Supply Chain Guardrails" "${PROJECT_ROOT}/tests/unit/test_supply_chain
 run_test "Lint and syntax" "${PROJECT_ROOT}/scripts/lint.sh"
 run_test "Receiver Core" "${PROJECT_ROOT}/tools/test-receiver.sh"
 
-# ─── Native Deployer Tests ───────────────────────────────────
+# ─── Rust Deployer Tests ─────────────────────────────────────
 if [[ "${QUICK_MODE}" == "true" ]]; then
     run_test "Deployer Core" "${PROJECT_ROOT}/scripts/check-deployer.sh"
 else

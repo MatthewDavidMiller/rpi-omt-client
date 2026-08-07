@@ -1,7 +1,7 @@
 # Testing
 
-Bootstrap Python tooling, the native C17 toolchain, the mingw-w64 Windows
-cross toolchain, Hadolint, Trivy, and ARM64 container emulation once:
+Bootstrap Python tooling, Rust 1.97.1 with rustfmt/Clippy and the Windows GNU
+target, Hadolint, Trivy, and ARM64 container emulation once:
 
 ```bash
 make install
@@ -42,36 +42,38 @@ make test
 `make test-py` covers validation, state, persistent auth, CSRF/rate limits,
 routes, diagnostics, and runtime adapters at a 98% branch-coverage floor.
 
-`make test-receiver` builds the receiver with Clang AddressSanitizer and
-UndefinedBehaviorSanitizer. It exercises shared target vectors, bounded wire
-parsing, CLI exit-status contracts, detail sanitization and JSON escaping,
-playback state/order, heartbeat publication, and atomic status replacement.
-It also runs deterministic VMX encode/decode checks across repeated
-multithreaded lifecycles and malformed or truncated streams.
+`make test-receiver` builds and tests the Rust receiver crates. It exercises
+shared target vectors, bounded wire parsing, CLI exit-status contracts, detail
+sanitization and JSON escaping, playback state/order, heartbeat publication,
+and atomic status replacement. It drives a loopback discovery server for both
+the single-source contract and the multi-source announcement stream, covering
+withdrawal, re-announcement, sorting, and rejection of names or ports that fail
+the shared grammars.
 
-`make test-deployer` builds the dependency-free C core with strict warnings
-and tests validation, quoting, SHA-256, secure tokens, and manifest v3 path
-safety. Full
-mode also resolves hash-locked SDL3, Nuklear, and libssh2 archives and
-publishes the host-native GUI.
+VMX decoding is checked against `tests/vectors/vmx/`, conformance streams
+captured from the Open Media Transport reference decoder before its removal.
+Every stream must decode to the exact bytes the reference produced, in both
+UYVY and BGRX, at one, two, three, and eight workers, so a worker count can
+never change an output byte. The same suite covers repeated decode lifecycles,
+every truncation of a valid stream, and periodic bit flips through the payload,
+none of which may panic, read out of bounds, or allocate past the documented
+caps.
 
-The supply-chain gate rejects C++ source extensions and C++ compiler/runtime
-invocations. Dependency preparation removes unused C++ translation units from
-the pinned deployer archives before compilation. Container integration checks
-that no C++ standard-library payload ships and that Python's decimal fallback
-remains functional.
+`make test-deployer` builds the Rust core, CLI, and GUI and tests validation,
+quoting, SHA-256, secure tokens, Wi-Fi PSK vectors, bounded processes, and
+manifest-v3 path safety. Publish mode builds the egui GUI and CLI.
 
-Restricted or offline builders may point the publish gate and the Windows cross
-build at trusted, previously verified source trees with
-`RPI_OMT_SDL3_SOURCE_DIR`, `RPI_OMT_NUKLEAR_SOURCE_DIR`, and
-`RPI_OMT_LIBSSH2_SOURCE_DIR`. Otherwise CMake downloads the pinned archives and
-verifies their SHA-256 locks before use.
+The supply-chain gate rejects every tracked C/C++ source, Git Cargo dependency,
+or unlocked registry package. Container integration checks that no C++
+standard-library payload ships and that Python's decimal fallback remains
+functional.
 
-`make build-windows-deployer` cross-compiles the deployment application for
-Windows x86-64 with mingw-w64 and verifies the PE headers it cannot execute:
-64-bit GUI subsystem, ASLR, DEP, high-entropy address randomization, and no
-redistributable runtime imports. Every non-quick local run performs this cross
-build, so both published deployer packages come off the same commit.
+Restricted or offline builders use a trusted Cargo registry mirror populated
+with the exact checksums in `Cargo.lock`.
+
+`make build-windows-deployer` cross-compiles the deployment CLI and egui
+application for `x86_64-pc-windows-gnu`. Every non-quick local run performs
+this cross build, so both published packages come off the same commit.
 
 `make test-quick` runs every shell contract/behavior suite, receiver tests,
 deployer tests, lint, and Python tests without requiring a container image
@@ -111,7 +113,9 @@ physical tier must state the skipped Pi-specific checks.
 
 `tests/schema/omt-target-vectors.json` and
 `tests/schema/playback-status-vectors.json` are consumed by Python and the
-native C tests.
+Rust tests. `tests/vectors/vmx/vectors.json` indexes the VMX conformance
+streams and pins each expected image by SHA-256, which keeps the fixtures small
+while still asserting bit exactness.
 Update both implementations and their vectors together when a shared contract
 changes. Playback status heartbeat must remain well below the smallest accepted
 staleness threshold.

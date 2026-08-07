@@ -128,13 +128,13 @@ checks=(
     "/opt/venv/bin/python -c 'import flask, flask_limiter, flask_wtf, gunicorn'"
     "/opt/venv/bin/python -c 'import decimal; assert str(decimal.Decimal(1) / 7).startswith(\"0.142857\")'"
     "! find /usr/lib -name 'libstdc++.so*' -print -quit | grep -q ."
-    "/opt/venv/bin/python -c 'import json; p=\"/app/legal/runtime-sbom.cdx.json\"; d=json.load(open(p, encoding=\"utf-8\")); assert d[\"bomFormat\"] == \"CycloneDX\"; assert d[\"specVersion\"] == \"1.6\"; assert d[\"metadata\"][\"component\"][\"version\"] == \"vtest\"; assert d[\"metadata\"][\"component\"][\"licenses\"] == [{\"license\": {\"id\": \"MIT\"}}]; names={x[\"name\"] for x in d[\"components\"]}; assert {\"libomtnet-derived-native-transport\", \"libvmx\", \"omtplayer-derived-native-playback\"} <= names'"
+    "/opt/venv/bin/python -c 'import json; p=\"/app/legal/runtime-sbom.cdx.json\"; d=json.load(open(p, encoding=\"utf-8\")); assert d[\"bomFormat\"] == \"CycloneDX\"; assert d[\"specVersion\"] == \"1.6\"; assert d[\"metadata\"][\"component\"][\"version\"] == \"vtest\"; assert d[\"metadata\"][\"component\"][\"licenses\"] == [{\"license\": {\"id\": \"MIT\"}}]; names={x[\"name\"] for x in d[\"components\"]}; assert {\"serde\", \"serde_json\", \"unicode-normalization\"} <= names'"
     "test -s /app/runtime-sha256.manifest && sha256sum --check /app/runtime-sha256.manifest >/dev/null"
     "! command -v gst-launch-1.0 >/dev/null 2>&1"
     "test \"\$HOME\" = /etc/omt && test \"\$(id -un)\" = omt"
 )
 labels=(
-    "native OMT receiver is executable"
+    "Rust OMT receiver is executable"
     "OMT runtime scripts are executable"
     "Web views and static assets ship as package data"
     "application wheel is installed with metadata"
@@ -146,12 +146,12 @@ labels=(
     "project license and third-party notices are packaged"
     "installed Python package license files are appended"
     "project copyright is exact"
-    "native receiver reports the build version"
+    "Rust receiver reports the build version"
     "zero-source discovery returns JSON"
     "Python Web dependencies import"
     "Python decimal falls back without a C++ runtime"
     "runtime image contains no C++ standard library"
-    "runtime CycloneDX SBOM identifies native OMT components"
+    "runtime CycloneDX SBOM identifies Rust components"
     "runtime SHA-256 manifest verifies"
     "retired GStreamer runtime is absent"
     "runtime identity and HOME are fixed"
@@ -212,7 +212,7 @@ receiver_artifact="$(mktemp)"
 if "${CONTAINER_ENGINE}" cp \
        "${ARM64_ARTIFACT_CONTAINER}:/omt-receiver" "${receiver_artifact}" &&
    [[ -s "${receiver_artifact}" ]]; then
-    pass "ARM64 builder produced the native receiver artifact"
+    pass "ARM64 builder produced the Rust receiver artifact"
 else
     fail "ARM64 builder artifacts are missing"
 fi
@@ -237,4 +237,4 @@ fi
 rm -f "${receiver_artifact}"
 
 echo "==========================================="
-echo -e "${GREEN}All native OMT image build tests passed!${NC}"
+echo -e "${GREEN}All Rust OMT image build tests passed!${NC}"

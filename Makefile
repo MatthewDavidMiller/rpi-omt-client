@@ -36,8 +36,8 @@ help:
 	@echo "  test          Run all tests (unit + live container build)"
 	@echo "  test-quick    Run every unit suite, no container engine (~1m)"
 	@echo "  test-py       Run Python unit tests only (requires test-setup)"
-	@echo "  test-receiver Build and test the native receiver with sanitizers"
-	@echo "  test-deployer Build and test the native deployer"
+	@echo "  test-receiver Build and test the Rust receiver"
+	@echo "  test-deployer Build and test the Rust deployer"
 	@echo "  test-setup    Bootstrap Python test tooling"
 	@echo "  security-scan Run Trivy filesystem + image scans"
 	@echo "  clean         Remove build artifacts and stopped containers"
@@ -107,6 +107,7 @@ logs:
 # Lint
 lint:
 	./scripts/lint.sh
+	./scripts/check-no-c-sources.sh
 	python3 ./scripts/check-legal-notices.py
 
 # Run all tests (unit + live container build)
@@ -147,6 +148,7 @@ clean:
 	@echo "Cleaning build artifacts..."
 	rm -f $(ARM64_TARBALL)
 	rm -rf $(BUILD_METADATA_DIR)
+	rm -rf target
 	docker compose -f $(DEV_COMPOSE) down --remove-orphans 2>/dev/null || true
 	docker rmi $(IMAGE_NAME):dev 2>/dev/null || true
 	@echo "Clean complete"

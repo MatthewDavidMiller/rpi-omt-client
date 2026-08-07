@@ -1,7 +1,7 @@
 RASPBERRY PI OMT CLIENT -- THIRD-PARTY SOFTWARE NOTICES
 
 This file covers software included in the shipped Raspberry Pi OMT Client
-runtime image and native deployer. Build-only and test-only tools are not part
+runtime image and Rust deployers. Build-only and test-only tools are not part
 of the distributed programs and are not listed here.
 
 The project license does not replace any license below. Copyright and license
@@ -11,16 +11,16 @@ OPEN MEDIA TRANSPORT COMPONENTS
 --------------------------------
 
 Components:
-  native playback derived from omtplayer
-  native OMT transport derived from libomtnet 1.0.0.17
-  libvmx
+  Rust playback implementation derived from omtplayer
+  Rust OMT transport implementation derived from libomtnet 1.0.0.17
+  decode-only Rust VMX1 implementation derived from libvmx
 Copyright:
   Copyright (c) 2025 Open Media Transport Contributors
 License: MIT
 Sources and exact revisions:
   third_party/omt/PROVENANCE.md
-License text for the derived components is reproduced below. The vendored
-decoder retains its license at:
+License text for the derived components is reproduced below. The retained
+upstream license is at:
   third_party/omt/libvmx/LICENSE.txt
 
 MIT License
@@ -43,25 +43,20 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-NATIVE DEPLOYER
----------------
+RUST RUNTIME AND DEPLOYERS
+--------------------------
 
-SDL 3.4.8
-  Copyright (C) 1997-2026 Sam Lantinga <slouken@libsdl.org>
-  License: zlib
-  Source: https://github.com/libsdl-org/SDL/releases/tag/release-3.4.8
+The checksum-locked Rust graph is recorded in Cargo.lock and the published
+CycloneDX inventories. Principal shipped libraries include serde/serde_json,
+clap, unicode-normalization, zeroize, hmac, sha1, sha2, pbkdf2, getrandom,
+rpassword, egui, eframe, winit, glow, AccessKit, and their locked transitive
+dependencies. These are distributed under the permissive MIT, Apache-2.0,
+BSD-2-Clause, BSD-3-Clause, ISC, Unicode-3.0, Zlib, or compatible dual-license
+terms accepted by deny.toml. The MIT text appears above; the Zlib and
+BSD-3-Clause texts appear below. Apache-2.0 components retain their complete
+license metadata in the Cargo packages identified by checksum in the SBOM.
 
-Nuklear 4.13.3
-  Copyright (c) 2015-2026 Micha Mettke and contributors
-  License: Public Domain or MIT (the MIT text is reproduced above)
-  Source: https://github.com/Immediate-Mode-UI/Nuklear/releases/tag/v4.13.3
-
-libssh2 1.11.1
-  Copyright (c) libssh2 contributors
-  License: BSD-3-Clause
-  Source: https://libssh2.org/download/libssh2-1.11.1.tar.gz
-
-SDL zlib license:
+Zlib license:
 
 This software is provided 'as-is', without any express or implied warranty.
 In no event will the authors be held liable for any damages arising from the
@@ -79,7 +74,7 @@ freely, subject to the following restrictions:
    misrepresented as being the original software.
 3. This notice may not be removed or altered from any source distribution.
 
-libssh2 BSD-3-Clause license:
+BSD-3-Clause license:
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:

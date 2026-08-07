@@ -18,7 +18,7 @@ keep OpenSSH reachable, enable the v3.23 `community` repository, and fully
 update the machine before deployment. Ethernet is strongly recommended for the
 first install. The installer applies its own current package update as well.
 
-## Native deployment GUI
+## Rust deployment applications
 
 Build the deployer for the current Linux or Windows host:
 
@@ -34,20 +34,16 @@ machine:
 make build-windows-deployer
 ```
 
-That target cross-compiles with mingw-w64 through
-`cmake/toolchains/windows-x86_64-mingw.cmake` and stages
-`.build/deployer-publish-windows/bin/rpi-omt-deployer.exe` with the license,
-notices, and CycloneDX SBOM. SDL3, Nuklear, and libssh2 link statically, so
-the executable runs on a stock Windows host with no redistributable installed;
-`scripts/verify-windows-deployer.sh` fails the build if that stops being true
-or if ASLR, DEP, or high-entropy address randomization is missing.
+That target cross-compiles with Rust's `x86_64-pc-windows-gnu` target and
+stages both `rpi-omt-deploy.exe` and `rpi-omt-deployer.exe` with the license,
+notices, and CycloneDX SBOM.
 `make install` provisions the cross toolchain along with the rest of the local
 gate tooling.
 
 Building on Windows itself still works: run the commands from a Bash
-environment (Git Bash or MSYS2) with GNU Make, CMake, Ninja, Clang,
-Python 3, and Docker Desktop's Linux engine on `PATH`. Either path uses WinSock
-and Windows CNG and emits `rpi-omt-deployer.exe`; the appliance build itself
+environment (Git Bash or MSYS2) with GNU Make and Rust 1.97.1,
+Python 3, and Docker Desktop's Linux engine on `PATH`. Either path emits the
+CLI and egui executables; the appliance build itself
 still runs entirely in the pinned Linux containers.
 
 Run `.build/deployer-publish/bin/rpi-omt-deployer` (or the `.exe` produced on
@@ -60,7 +56,7 @@ container status/logs or restarts it. Wi-Fi updates the running
 than sending the plaintext passphrase to a command line.
 
 About shows `LICENSE` and `THIRD_PARTY_NOTICES.txt` from inside the executable:
-`cmake/EmbedText.cmake` compiles both texts in, so the page cannot go blank
+`include_str!` compiles both texts in, so the page cannot go blank
 because the binary was copied somewhere without them. The published packages
 still carry the files as well, for anyone reading the package rather than
 running it.

@@ -1,7 +1,7 @@
 {
   "comment": [
-    "Shared contract between the C status producer and the Python status consumer.",
-    "Producer: src/native/receiver/playback_status.c",
+    "Shared contract between the Rust status producer and the Python status consumer.",
+    "Producer: crates/omt-receiver-core/src/lib.rs",
     "Consumer: src/omt_client/playback_status.py",
     "Python requires set(document) == fields exactly, so a field added on only one",
     "side would make every status record unparseable and pin the dashboard to",

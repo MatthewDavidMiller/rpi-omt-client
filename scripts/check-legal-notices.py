@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import re
 import sys
+import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -34,19 +35,25 @@ def main() -> int:
     for package in sorted(python_packages()):
         if package not in notices:
             fail(f"Python runtime package is missing from notices: {package}")
-    for package in ("sdl 3.4.8", "nuklear 4.13.3", "libssh2 1.11.1"):
+    for package in (
+        "serde/serde_json",
+        "clap",
+        "unicode-normalization",
+        "zeroize",
+        "egui",
+        "eframe",
+    ):
         if package not in notices:
             fail(f"Native deployer dependency is missing from notices: {package}")
-    # The Windows cross build links these into the shipped .exe, so they are
-    # redistributed even though no repository file carries their source.
-    for package in ("mingw-w64 runtime", "gcc runtime library", "gcc-exception-3.1"):
-        if package not in notices:
-            fail(f"Windows deployer runtime is missing from notices: {package}")
+    lock = tomllib.loads((ROOT / "Cargo.lock").read_text(encoding="utf-8"))
+    registry_packages = [package for package in lock["package"] if "source" in package]
+    if not registry_packages or any("checksum" not in package for package in registry_packages):
+        fail("Cargo registry graph is not completely checksum locked")
 
     for path in (
         ROOT / "LICENSE",
         ROOT / "src/omt_client/templates/about.html",
-        ROOT / "src/native/deployer/ui_main.c",
+        ROOT / "crates/rpi-omt-deployer/src/main.rs",
     ):
         require_text(path, COPYRIGHT)
     require_text(ROOT / "LICENSE", "MIT License")
@@ -59,7 +66,7 @@ def main() -> int:
 
     dockerfile = (ROOT / "deploy/Dockerfile").read_text(encoding="utf-8").lower()
     for required in (
-        "third_party/omt",
+        "cargo.lock",
         "third_party_notices.txt",
         "generate-runtime-sbom.py",
         "runtime-sbom.cdx.json",
@@ -67,11 +74,6 @@ def main() -> int:
     ):
         if required not in dockerfile:
             fail(f"Dockerfile does not retain required legal input: {required}")
-
-    dependency_lock = (ROOT / "cmake/NativeDependencies.cmake").read_text(encoding="utf-8")
-    for required in ("SDL3-3.4.8", "v4.13.3", "libssh2-1.11.1", "URL_HASH", "SHA256"):
-        if required not in dependency_lock:
-            fail(f"Native dependency lock omits required input: {required}")
 
     manifest = (ROOT / "deploy/manifest-v3.txt").read_text(encoding="ascii").splitlines()[1:]
     required_artifacts = {
@@ -85,7 +87,7 @@ def main() -> int:
 
     print(
         f"Legal notice check passed: {len(python_packages())} Python and "
-        "3 native deployer runtime packages covered."
+        f"{len(registry_packages)} checksum-locked Rust packages covered."
     )
     return 0
 

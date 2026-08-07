@@ -4,13 +4,22 @@
 
 | Area | Files |
 |---|---|
-| Native receiver | `src/native/receiver/main.c` |
-| OMT wire transport and validation | `src/native/omt/omt_wire.c`, `src/native/omt/include/omt/omt_wire.h` |
-| Status projection and atomic publication | `src/native/receiver/playback_status.c` |
-| Shared JSON string escaping (status and CLI output) | `src/native/receiver/json_text.h` |
-| Discovery and bounded network channels | `src/native/receiver/discovery.c`, `src/native/receiver/omt_channel.c` |
-| DRM/ALSA playback | `src/native/receiver/drm_output.c`, `src/native/receiver/alsa_output.c` |
-| Audited VMX source | `third_party/omt/PROVENANCE.md`, `third_party/omt/libvmx` |
+| Receiver CLI and command dispatch | `crates/omt-receiver/src/main.rs`, `crates/omt-receiver/src/cli.rs` |
+| OMT TCP channel, subscription, and bounded frame reads | `crates/omt-receiver/src/channel.rs` |
+| Source discovery (central server, then Avahi over D-Bus) | `crates/omt-receiver/src/discovery.rs`, `crates/omt-receiver/src/mdns.rs` |
+| Bounded XML reads for settings and announcements | `crates/omt-receiver/src/xml.rs` |
+| HDMI connector selection and hotplug checks | `crates/omt-receiver/src/connector.rs` |
+| Direct KMS scanout and mode selection | `crates/omt-receiver/src/video.rs` |
+| HDMI audio through ALSA | `crates/omt-receiver/src/audio.rs` |
+| Playback supervisor, retry, and audio worker | `crates/omt-receiver/src/play.rs` |
+| OMT wire transport and validation | `crates/omt-protocol/src/lib.rs` |
+| Status projection, traits, and atomic publication | `crates/omt-receiver-core/src/lib.rs` |
+| Decode-only VMX1 implementation | `crates/vmx-decoder/` |
+| VMX bitstream and colour conversion | `crates/vmx-decoder/src/bitstream.rs`, `crates/vmx-decoder/src/convert.rs` |
+| Inverse DCT: portable definition, AArch64 NEON kernel, and the choice between them | `crates/vmx-decoder/src/idct/scalar.rs`, `crates/vmx-decoder/src/idct/neon.rs`, `crates/vmx-decoder/src/idct/mod.rs` |
+| VMX conformance vectors captured from the reference decoder | `tests/vectors/vmx/` |
+| Per-artifact SBOM closures from `Cargo.lock` | `scripts/cargo_lock.py` |
+| OMT provenance | `third_party/omt/PROVENANCE.md`, `third_party/omt/libvmx/LICENSE.txt` |
 | Flask composition | `src/omt_client/factory.py`, `src/omt_client/wsgi.py` |
 | Service composition | `src/omt_client/services/composition.py` |
 | Typed service protocols | `src/omt_client/services/protocols.py` |
@@ -55,12 +64,10 @@ check still spans the application code after the move. The first-party wheel is
 excluded from the third-party notice sweep and from the SBOM's PyPI components;
 `tests/integration/test_docker_build.sh` asserts all of this.
 
-The native receiver is built with CMake, Ninja, Clang, and LLD in a
-digest-pinned Alpine builder stage. The compiler stays on amd64 and emits
-ARM64 against a minimal Alpine target sysroot. A `scratch` stage contains only
-the stripped native `omt-receiver`; the runtime supplies its small Alpine
-ALSA, Avahi, DRM, and C runtime dependency set and copies the executable from that
-stage, so neither the SDK nor build toolchain is part of the deployed image.
+The receiver is built with checksum-locked Cargo dependencies and Rust 1.97.1
+in a digest-pinned Alpine builder stage. A `scratch` stage contains only the
+stripped `omt-receiver`, so neither the SDK nor build toolchain is part of the
+deployed image.
 
 Public routes are `/login`, `/logout`, `/`, `/sources/select`,
 `/sources/refresh`, `/playback/restart`, `/playback/clear`,
@@ -81,13 +88,11 @@ are POST and CSRF protected.
 | HDMI boot-configuration rules | `deploy/lib/hdmi-config.sh` |
 | Deployment contract | `deploy/manifest-v3.txt`, `deploy/transaction.sh` |
 | CLI deployment | `scripts/deploy.sh` |
-| Native deployer validation, models, and project-root discovery | `src/native/deployer/core.c`, `src/native/deployer/deployer.h` |
-| Legal texts compiled into the deployer | `cmake/EmbedText.cmake`, `cmake/EmbedText.c.in`, `src/native/deployer/deployer.h` |
-| Secure local process and SSH boundaries | `src/native/deployer/process.c`, `src/native/deployer/ssh_client.c` |
-| Deployment/Wi-Fi operations | `src/native/deployer/deployment.c` |
-| SDL3/Nuklear presentation and About UI | `src/native/deployer/ui_main.c` |
-| Hash-locked deployer dependencies | `cmake/NativeDependencies.cmake` |
-| Windows cross build and artifact contract | `scripts/build-windows-deployer.sh`, `scripts/verify-windows-deployer.sh`, `cmake/toolchains/windows-x86_64-mingw.cmake` |
+| Deployer validation, fixed actions, and processes | `crates/omt-deployer-core/src/lib.rs` |
+| Secure command-line deployer | `crates/rpi-omt-deploy/src/main.rs` |
+| egui desktop deployer and embedded legal texts | `crates/rpi-omt-deployer/` |
+| Hash-locked Rust dependencies | `Cargo.lock`, `deny.toml`, `supply-chain/config.toml` |
+| Windows cross build | `scripts/build-windows-deployer.sh` |
 | Local toolchain provisioning | `scripts/install-dev-deps.sh`, `scripts/install-hadolint.sh`, `scripts/install-trivy.sh`, `scripts/install-arm64-emulation.sh` |
 
 ## Legal and release

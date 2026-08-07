@@ -1,0 +1,24 @@
+[package]
+name = "rpi-omt-deployer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[features]
+default = []
+desktop = ["dep:eframe", "dep:egui"]
+
+[dependencies]
+eframe = { workspace = true, optional = true }
+egui = { workspace = true, optional = true }
+omt-deployer-core = { path = "../omt-deployer-core" }
+zeroize.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "rpi-omt-deployer"
+path = "src/main.rs"
+

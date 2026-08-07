@@ -1,12 +1,12 @@
 # Architecture
 
-The appliance is a clean, bounded native OMT implementation built around its
-C17 wire transport and the audited `libvmx` decoder.
+The appliance is a clean, bounded Rust OMT implementation built around a Rust
+2024 workspace and a decode-only VMX1 port.
 
 ```text
 OMT network
-  └─ C17 discovery/receive transport
-       └─ omt-receiver (C17)
+  └─ Rust discovery/receive transport
+       └─ omt-receiver (Rust)
             ├─ dependency-free parsing/status core
             ├─ VMX decoder (libvmx)
             ├─ DRM/KMS HDMI presenter
@@ -28,8 +28,8 @@ unprivileged container
 
 ## Receiver
 
-`src/native/receiver` builds against the audited C17 VMX port in
-`third_party/omt`. The C transport, C VMX decoder, and C receiver own
+`crates/omt-receiver` composes Linux adapters around the audited, decode-only
+`vmx-decoder` crate. `omt-protocol`, `vmx-decoder`, and `omt-receiver-core` own
 typed CLI parsing, shared target
 validation, format policy, sanitization, synchronized status projection, and
 HDMI connector selection over the DRM sysfs tree.
@@ -37,9 +37,8 @@ HDMI connector selection over the DRM sysfs tree.
 owns receive, DRM, ALSA, hotplug, retry, and status publication. Discovered
 names are NFC, have no control characters, and are at most 63 UTF-8 bytes.
 Direct targets must be exact `omt://host:port` URIs. The validation path uses
-no locale-dependent or unbounded parsing; the native receiver conservatively
-rejects decomposed combining-mark source names to preserve the Web layer's NFC
-contract without carrying a large Unicode runtime.
+no locale-dependent or unbounded parsing and enforces the Web layer's NFC
+contract with Unicode normalization.
 
 The runtime is capped at 256 MiB and 64 processes. At 1080p it uses three DRM
 scanout buffers, bounded network frames, and two VMX workers with 512 KiB
@@ -81,7 +80,7 @@ report carrying that nonce. Raw capture is never started unless selected for
 that download. Avahi proxy state, diagnostics, and host actions use separate
 least-privilege bind mounts.
 
-The shipped image contains no C++ standard library. Alpine's optional compiled
+The shipped image contains no C/C++ toolchain or C++ standard library. Alpine's optional compiled
 Python decimal accelerator is removed with its `mpdecimal`/`libstdc++` payload;
 Python's standard pure-Python decimal implementation remains available and is
 checked during the image build.
@@ -124,43 +123,25 @@ journals with their installed helpers, promote the v3 set, and only then invoke
 
 ## Operator deployment applications
 
-The same C17 deployer sources build for the operator's own machine and for
+The same Rust deployer workspace builds for the operator's own machine and for
 Windows x86-64. A Linux workstation publishes both: `scripts/check-deployer.sh
 --publish` stages the host package, and `scripts/build-windows-deployer.sh`
-cross-compiles the Windows package with mingw-w64 through
-`cmake/toolchains/windows-x86_64-mingw.cmake`. Both link SDL3, Nuklear, and
-libssh2 statically from the same hash-locked archives, so the two packages
-never diverge in dependency version. The cross build cannot execute what it
-produces, so `scripts/verify-windows-deployer.sh` reads the shipping contract
-out of the PE headers instead. Neither application is part of the appliance
-image; the capsule they upload is built by the hermetic Dockerfile.
-
-The dependency preparation step removes unused C++ examples and platform
-backends before adding the dependencies to the build. Windows GameInput is not
-used by the deployer and is replaced with a C no-support shim, keeping Linux
-and Windows builds C-only.
-
-`src/native/deployer/ui_main.c` lays the interface out in design units and
-draws it in device pixels. Every metric is multiplied by the window's SDL
-display scale, which already folds together the monitor's content scale and the
-window's pixel density, and the text is rebaked from a system face at the exact
-pixel height that scale asks for whenever it changes. Two breakpoints, measured
-in design units rather than pixels, decide whether the form and the activity log
-sit side by side and whether field captions sit beside or above their inputs, so
-the same window is usable from the 620x520 minimum through a 4K desktop at 200%
-scaling. The `omt_connection_validate`, `omt_options_validate`, and
-`omt_wifi_validate` entry points in `src/native/deployer/core.c` are the only
-source of truth for whether a tab's actions can run: the UI re-runs them a few
-times a second and disables the buttons they gate rather than restating any rule.
+cross-compiles the Windows packages. Both consume the same `Cargo.lock`;
+registry packages are checksum locked and Git dependencies are denied.
+`rpi-omt-deploy` provides human and JSON-lines CLI surfaces, while
+`rpi-omt-deployer` presents responsive egui Connection, Deploy, Manage, Wi-Fi,
+Activity, and About views. Both reuse validators and typed management actions
+from `omt-deployer-core`; secrets are zeroized and never accepted through
+arguments or environment variables.
 
 ## Trust and legal surfaces
 
 `LICENSE` governs project-owned code. `THIRD_PARTY_NOTICES.txt` covers shipped
-runtime dependencies. The Web and native deployer About pages display those
+runtime dependencies. The Web and Rust deployer About pages display those
 texts and their build version; the deployer compiles them into its executable
-through `cmake/EmbedText.cmake` rather than reading files beside it, so a
+with `include_str!` rather than reading files beside it, so a
 relocated binary still states its terms. The container and deployer publishers generate
-CycloneDX inventories from their native dependency locks.
+CycloneDX inventories from `Cargo.lock` and the Python lock.
 
 The host is Alpine Linux 3.23 aarch64 in persistent sys mode. The installer
 rejects other distributions, other Pi generations, and RAM-backed diskless

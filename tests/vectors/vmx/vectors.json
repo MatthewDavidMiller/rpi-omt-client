@@ -1,0 +1,117 @@
+{
+  "schema": 1,
+  "source": "Generated from the Open Media Transport VMX reference decoder at commit f066284, before its removal. See third_party/omt/PROVENANCE.md.",
+  "profile": "VMX_PROFILE_OMT_SQ",
+  "vectors": [
+    {
+      "label": "gradient-16x16-601",
+      "width": 16,
+      "height": 16,
+      "color_space": 601,
+      "stream": "gradient-16x16-601.vmx",
+      "compressed_bytes": 45,
+      "uyvy_sha256": "a4cc11557dc44c802585aea436ac873688b82508151aeb1ceaa87b2a5b02ddff",
+      "bgrx_sha256": "046632442c77825dcfe40d4d0d9f0fac58af96883b62474b827b0fb9f9bcf0b6"
+    },
+    {
+      "label": "gradient-64x32-709",
+      "width": 64,
+      "height": 32,
+      "color_space": 709,
+      "stream": "gradient-64x32-709.vmx",
+      "compressed_bytes": 237,
+      "uyvy_sha256": "38ae63bfa4877958ae17d17f7642afa5bf4e62ed8389b33f66ec1de001cedc74",
+      "bgrx_sha256": "d448963b8359f37974512d4c02449171ee85c82dc760d7985ac24b0092ca2f17"
+    },
+    {
+      "label": "flat-64x32-709",
+      "width": 64,
+      "height": 32,
+      "color_space": 709,
+      "stream": "flat-64x32-709.vmx",
+      "compressed_bytes": 67,
+      "uyvy_sha256": "4422623aa4776253a8eb558faa9f960ecf3d538ae212d1016d07f9199235db4c",
+      "bgrx_sha256": "7d6c284faa9c1a2cfe47ed8dbd009bdfe109fbde7ea902bb58b5f49f24291e32"
+    },
+    {
+      "label": "noise-64x32-709",
+      "width": 64,
+      "height": 32,
+      "color_space": 709,
+      "stream": "noise-64x32-709.vmx",
+      "compressed_bytes": 1994,
+      "uyvy_sha256": "44fdcb2896f7f01f98bb2b98f076d2564359c8fa3dbd949c02839765dd4ab93d",
+      "bgrx_sha256": "fa939fab090cad63dee5c8f83ab61f58d18aa0b7bc5c7df83c0604555af9dd42"
+    },
+    {
+      "label": "edges-64x32-601",
+      "width": 64,
+      "height": 32,
+      "color_space": 601,
+      "stream": "edges-64x32-601.vmx",
+      "compressed_bytes": 613,
+      "uyvy_sha256": "4fe279c8aca2e81eed14b5b9a28c7e41f8f759a8d915d61984d3a87cfae1f080",
+      "bgrx_sha256": "937083d43f70b4b2546afc4ccaf274fbb77cfd9ace0768fbc3b442bebde81cd1"
+    },
+    {
+      "label": "gradient-128x80-601",
+      "width": 128,
+      "height": 80,
+      "color_space": 601,
+      "stream": "gradient-128x80-601.vmx",
+      "compressed_bytes": 1101,
+      "uyvy_sha256": "61d0431a68ffbf8bc57905e96d7a800633b64fa90377e525b8371d0bbd373da7",
+      "bgrx_sha256": "b863b4c6f9fc86883335bb7ae91791fbd20f810ea8215af82d17e77c0037033a"
+    },
+    {
+      "label": "noise-128x80-709",
+      "width": 128,
+      "height": 80,
+      "color_space": 709,
+      "stream": "noise-128x80-709.vmx",
+      "compressed_bytes": 9962,
+      "uyvy_sha256": "8a05435b0b8cd611076b8f023d5f529e00439c13786be4bc527df76216ef8bcb",
+      "bgrx_sha256": "56f8eeed4d3fc5bf15245b385de19a523e9791909408146164dcf17071d19159"
+    },
+    {
+      "label": "edges-320x176-709",
+      "width": 320,
+      "height": 176,
+      "color_space": 709,
+      "stream": "edges-320x176-709.vmx",
+      "compressed_bytes": 16021,
+      "uyvy_sha256": "c2d64af7641a73a86fba0aeafac301842335ef3dfd1d2f5d261633d3c85b7bd2",
+      "bgrx_sha256": "5bdbb9c13cd9ac35dc82545258d903ec78f83ed758dac1d45f636db3261631fe"
+    },
+    {
+      "label": "gradient-720x480-601",
+      "width": 720,
+      "height": 480,
+      "color_space": 601,
+      "stream": "gradient-720x480-601.vmx",
+      "compressed_bytes": 38805,
+      "uyvy_sha256": "d1a1a5aff3134f471c7e94791570d4e2b8ece8ec1236f11dfd44febd77da74a2",
+      "bgrx_sha256": "dbb142e920a7aa7d2eac58c41a7df16fc712588e00f1236179faedb6603bcec2"
+    },
+    {
+      "label": "gradient-1920x1080-709",
+      "width": 1920,
+      "height": 1080,
+      "color_space": 709,
+      "stream": "gradient-1920x1080-709.vmx",
+      "compressed_bytes": 268382,
+      "uyvy_sha256": "297dc2c5b90b761714bb9e4c9c97a522fad28d782dfd999103586bafc5a8c305",
+      "bgrx_sha256": "c0c8512ef050a97ad90dfd39998d36e9498f3705133d9f078cf23ce08fa66da4"
+    },
+    {
+      "label": "flat-1920x1080-709",
+      "width": 1920,
+      "height": 1080,
+      "color_space": 709,
+      "stream": "flat-1920x1080-709.vmx",
+      "compressed_bytes": 18297,
+      "uyvy_sha256": "ad7cd464b0a5f6f82b527a6a9261937e5805a6ccb08c2507ae5fe6ce04abab80",
+      "bgrx_sha256": "d48ea05a69c9ac1de868c07175dbad385d01149c17631a60ef4ea710f5bf7c6d"
+    }
+  ]
+}

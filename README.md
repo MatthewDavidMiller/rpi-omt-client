@@ -2,7 +2,7 @@
 
 Raspberry Pi OMT Client receives Open Media Transport (OMT) video and audio on
 a Raspberry Pi 5 and presents it directly on HDMI. It combines a bounded
-C17 OMT receiver, direct DRM/KMS video output, ALSA audio, a hardened
+Rust 2024 OMT receiver, direct DRM/KMS video output, ALSA audio, a hardened
 Flask Web GUI, and a portable native deployment GUI.
 
 The only supported appliance host is a Raspberry Pi 5 running Alpine Linux
@@ -24,7 +24,7 @@ make build-windows-deployer
 ```
 
 The ARM64 build creates `omt-client-arm64.tar.gz`. The deployer build stages a
-host-native SDL3/Nuklear C application and CycloneDX SBOM in
+host-native egui application, CLI, and CycloneDX SBOM in
 `.build/deployer-publish/`. On Linux, `make build-windows-deployer`
 cross-compiles the same application for Windows x86-64 with mingw-w64 into
 `.build/deployer-publish-windows/`. Linux and Windows hosts build the same

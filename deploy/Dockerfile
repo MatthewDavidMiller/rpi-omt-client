@@ -1,61 +1,29 @@
 ARG ALPINE_DIGEST=sha256:fd791d74b68913cbb027c6546007b3f0d3bc45125f797758156952bc2d6daf40
+ARG RUST_DIGEST=sha256:c4a364ddbf684fe038e6fa6a4f25b30c8dc85247423e0e660676ece0d17be4a2
 ARG TARGETARCH
 
-# Keep the compiler on amd64 and emit Alpine/musl ARM64 code against a bounded
-# target sysroot. No target executable is run during compilation, so the same
-# build works through Linux Docker/Podman and Windows Docker Desktop.
-# hadolint ignore=DL3029
-FROM --platform=linux/amd64 alpine:3.23.5@${ALPINE_DIGEST} AS receiver-builder-base
+# Build with the exact stable compiler required by rust-toolchain.toml. The
+# official image digest is a multi-architecture manifest, so each output is
+# compiled against its native musl target without a cross-linker ambiguity.
+# hadolint ignore=DL3029,DL3006
+FROM --platform=$TARGETPLATFORM rust:1.97.1-alpine3.23@${RUST_DIGEST} AS receiver-builder
 
 SHELL ["/bin/ash", "-eo", "pipefail", "-c"]
 
 ARG RPI_OMT_CLIENT_VERSION=unknown
 
-RUN apk add --no-cache \
-        alsa-lib-dev \
-        avahi-dev \
-        clang \
-        cmake \
-        libdrm-dev \
-        lld \
-        linux-headers \
-        llvm \
-        ninja \
-        pkgconf
+RUN apk add --no-cache alsa-lib-dev musl-dev pkgconf
 
 WORKDIR /src
-COPY CMakeLists.txt CMakePresets.json ./
-COPY cmake/ cmake/
-COPY src/native/ src/native/
-COPY third_party/omt/libvmx/ third_party/omt/libvmx/
-COPY scripts/build-native-receiver.sh /usr/local/bin/build-native-receiver
-
-FROM receiver-builder-base AS receiver-builder-amd64
-RUN build-native-receiver amd64
-
-FROM --platform=$TARGETPLATFORM alpine:3.23.5@${ALPINE_DIGEST} AS receiver-sysroot
-RUN apk add --no-cache \
-        alsa-lib-dev \
-        avahi-dev \
-        gcc \
-        libdrm-dev \
-        linux-headers \
-        musl-dev
-
-FROM receiver-builder-base AS receiver-builder-arm64
-COPY --from=receiver-sysroot /etc/os-release /opt/receiver-sysroot/etc/os-release
-COPY --from=receiver-sysroot /lib/ /opt/receiver-sysroot/lib/
-COPY --from=receiver-sysroot /usr/include/ /opt/receiver-sysroot/usr/include/
-COPY --from=receiver-sysroot /usr/lib/ /opt/receiver-sysroot/usr/lib/
-RUN build-native-receiver arm64 /opt/receiver-sysroot
-
-# The value selects one of the two repository-defined stages above, not an
-# untagged external image.
-# hadolint ignore=DL3006
-FROM receiver-builder-${TARGETARCH} AS receiver-builder
+COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
+COPY .cargo/ .cargo/
+COPY crates/ crates/
+ENV RPI_OMT_CLIENT_VERSION=${RPI_OMT_CLIENT_VERSION}
+RUN cargo build --locked --release -p omt-receiver \
+    && install -Dm755 target/release/omt-receiver /out/receiver/omt-receiver
 
 # Keep the testable/exportable ARM64 target limited to shipped artifacts. The
-# Compiler, source, and CMake intermediates never enter this image.
+# Compiler, source, and Cargo intermediates never enter this image.
 FROM scratch AS receiver-artifacts
 COPY --from=receiver-builder /out/receiver/omt-receiver /omt-receiver
 
@@ -89,11 +57,8 @@ ARG RPI_OMT_CLIENT_VERSION=unknown
 
 RUN apk add --no-cache \
         alsa-lib \
-        avahi-libs \
         bash \
         coreutils \
-        libdrm \
-        libgcc \
         openssl \
         python3 \
         util-linux \
@@ -113,7 +78,10 @@ COPY --from=python-builder /opt/venv /opt/venv
 COPY --from=receiver-artifacts /omt-receiver /usr/local/bin/omt-receiver
 COPY deploy/container/ /usr/local/bin/
 COPY LICENSE THIRD_PARTY_NOTICES.txt /app/legal/
-COPY scripts/generate-runtime-sbom.py /tmp/generate-runtime-sbom.py
+COPY Cargo.lock /tmp/Cargo.lock
+# The generator imports cargo_lock to resolve the receiver's dependency
+# closure, so both modules have to reach the image.
+COPY scripts/generate-runtime-sbom.py scripts/cargo_lock.py /tmp/
 
 RUN chmod 0755 \
         /usr/local/bin/omt-receiver \
@@ -133,8 +101,9 @@ RUN chmod 0755 \
     } >> /app/legal/THIRD_PARTY_NOTICES.txt \
     && /opt/venv/bin/python /tmp/generate-runtime-sbom.py \
         --output /app/legal/runtime-sbom.cdx.json \
+        --cargo-lock /tmp/Cargo.lock \
         --version "${RPI_OMT_CLIENT_VERSION}" \
-    && rm /tmp/generate-runtime-sbom.py \
+    && rm /tmp/generate-runtime-sbom.py /tmp/cargo_lock.py /tmp/Cargo.lock \
     && printf '%s\n' "${RPI_OMT_CLIENT_VERSION}" > /app/RPI_OMT_CLIENT_VERSION \
     && { \
         find /app -type f ! -name runtime-sha256.manifest -print0; \

@@ -34,7 +34,7 @@ touch \
     "${FIXTURE}/.yamllint.yml" \
     "${FIXTURE}/src/omt_client/__init__.py"
 
-for command_name in shellcheck hadolint; do
+for command_name in cargo shellcheck hadolint; do
     cat > "${FIXTURE}/fake-bin/${command_name}" <<'EOF'
 #!/bin/bash
 exit 0

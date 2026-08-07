@@ -1,0 +1,22 @@
+[build]
+rustflags = ["-Dwarnings"]
+
+# Rust links musl targets fully static by default, but Alpine ships alsa-lib as
+# a shared library only: there is no libasound.a to link against, so a static
+# build of the receiver cannot resolve -lasound at all. Link musl dynamically
+# instead. The runtime image already installs alsa-lib, and dynamic linking is
+# the right answer for an LGPL library regardless of the packaging.
+#
+# A target section replaces `build.rustflags` rather than extending it, so
+# -Dwarnings is repeated here deliberately.
+[target.aarch64-unknown-linux-musl]
+rustflags = ["-Dwarnings", "-Ctarget-feature=-crt-static"]
+
+[target.x86_64-unknown-linux-musl]
+rustflags = ["-Dwarnings", "-Ctarget-feature=-crt-static"]
+
+[net]
+retry = 2
+
+[registries.crates-io]
+protocol = "sparse"

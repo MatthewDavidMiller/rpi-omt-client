@@ -6,7 +6,7 @@ This file provides guidance to Codex and other coding agents working in this rep
 
 Raspberry Pi OMT Client receives OMT video/audio streams on a Raspberry Pi 5 and outputs them to HDMI. The system uses:
 
-- A multi-stage Docker build for the C17 OMT receiver and C17 `libvmx` port
+- A multi-stage Docker build for the Rust 2024 OMT receiver and VMX1 decoder
 - A Flask web UI for authentication and OMT source selection
 - Direct DRM/KMS video and ALSA audio playback inside the container
 
@@ -102,8 +102,9 @@ narrowing what runs.
 - `src/omt_client/state_store.py`: bounded state and atomic OMT target persistence
 - `src/omt_client/templates/` and `src/omt_client/static/`: web UI
 - `src/omt_client_preview/`: dev-only in-memory fakes; deliberately outside the shipped package
-- `src/native/omt/` and `src/native/receiver/`: bounded wire parsing, validation, playback, and status
-- `src/native/deployer/`: portable SDL3/Nuklear C deployment application and dependency-free core
+- `crates/omt-protocol/`, `crates/vmx-decoder/`, and `crates/omt-receiver-core/`: bounded wire parsing, decoding, playback, and status
+- `crates/omt-receiver/`: Linux receiver adapters and the `omt-receiver` binary
+- `crates/omt-deployer-core/`, `crates/rpi-omt-deploy/`, and `crates/rpi-omt-deployer/`: shared deployment core, CLI, and egui desktop application
 - `deploy/container/runtime-lib.sh`: shared shell validation, bounded reads, and process identity
 - `deploy/container/entrypoint.sh`: container bootstrap, secret/cert generation, gunicorn startup
 - `deploy/container/start-omt.sh`: validated native OMT receiver launcher

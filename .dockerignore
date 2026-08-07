@@ -3,8 +3,8 @@ docs/
 tests/
 pi-gen/
 scripts/*
-!scripts/build-native-receiver.sh
 !scripts/generate-runtime-sbom.py
+!scripts/cargo_lock.py
 docker/
 *.md
 *.log

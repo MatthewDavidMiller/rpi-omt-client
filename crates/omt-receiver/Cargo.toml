@@ -1,0 +1,27 @@
+[package]
+name = "omt-receiver"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+alsa.workspace = true
+async-io.workspace = true
+drm.workspace = true
+futures-lite.workspace = true
+omt-protocol = { path = "../omt-protocol" }
+omt-receiver-core = { path = "../omt-receiver-core" }
+quick-xml.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+signal-hook.workspace = true
+vmx-decoder = { path = "../vmx-decoder" }
+zbus.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "omt-receiver"
+path = "src/main.rs"

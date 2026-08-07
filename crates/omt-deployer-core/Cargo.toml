@@ -1,0 +1,19 @@
+[package]
+name = "omt-deployer-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+getrandom.workspace = true
+hmac.workspace = true
+pbkdf2.workspace = true
+serde.workspace = true
+sha1.workspace = true
+sha2.workspace = true
+zeroize.workspace = true
+
+[lints]
+workspace = true
+

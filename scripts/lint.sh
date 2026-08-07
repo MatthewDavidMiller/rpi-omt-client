@@ -35,6 +35,14 @@ PYTHON_VENV="${PROJECT_ROOT}/tests/.venv"
 
 cd "${PROJECT_ROOT}"
 
+if command -v cargo >/dev/null 2>&1; then
+    echo "Running rustfmt and strict Clippy..."
+    cargo fmt --all -- --check
+    cargo clippy --workspace --all-targets --locked -- -D warnings
+else
+    missing_tool "cargo"
+fi
+
 mapfile -d '' -t SHELL_SCRIPTS < <(
     find "${PROJECT_ROOT}" \
         -path "${PROJECT_ROOT}/.git" -prune -o \
