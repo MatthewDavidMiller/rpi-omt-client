@@ -17,9 +17,10 @@ Raspberry Pi OMT Client — receives Open Media Transport video/audio streams on
 | `README.md` | Quick start and links |
 | `docs/SETUP.md` | Install, upgrade, uninstall, and first access |
 | `docs/OPERATIONS.md` | Dashboard, network settings, diagnostics, and troubleshooting |
-| `docs/ARCHITECTURE.md` | Build, deploy, and runtime architecture with diagrams |
+| `docs/ARCHITECTURE.md` | Runtime architecture and receiver/container boundaries |
 | `docs/CONFIGURATION.md` | All build args, environment variables, volume paths, HDMI config |
-| `docs/CODEBASE_REFERENCE.md` | File map and task-to-file index |
+| `docs/CODEBASE_REFERENCE.md` | File map and responsibility index |
+| `docs/DIAGNOSTICS_BUNDLE.md` | Support-bundle ZIP contract |
 | `docs/TESTING.md` | Testing, linters, git hooks |
 
 ## Essential Commands
@@ -36,7 +37,7 @@ make build-deployer            # host-native package
 make build-windows-deployer    # Windows x86-64 cross build (Linux host)
 
 # Deploy to Pi
-make deploy HOST=pi@<ip>   # scp + docker load + docker compose up
+make deploy HOST=pi@<ip>   # promote capsule + run deploy/host/install.sh
 
 # On the Pi
 sudo ./deploy/host/install.sh  # Hardening, firmware, Docker, HDMI, OpenRC
@@ -57,11 +58,11 @@ pytest case fails the run. Repair the workstation with `make install`.
 
 ## Architecture
 
-See `docs/ARCHITECTURE.md` for the complete build flow, deploy flow, and runtime stack diagrams.
+See `docs/ARCHITECTURE.md` for the runtime stack and container/host boundaries.
 
 ## Key Files
 
-See `docs/CODEBASE_REFERENCE.md` for the responsibility map and task entry points.
+See `docs/CODEBASE_REFERENCE.md` for the responsibility map.
 
 ## Git
 

@@ -1,15 +1,22 @@
 #!/bin/bash
 # Verify a cross-compiled Windows deployer binary against the shipping contract.
-# Usage: ./scripts/verify-windows-deployer.sh <path-to-exe>
+# Usage: ./scripts/verify-windows-deployer.sh [--console] <path-to-exe>
 #
 # The Linux build host cannot run the artifact it produces, so the properties an
-# operator depends on -- a 64-bit GUI binary, hardened, and self-contained on a
-# stock Windows install -- are read out of the PE headers instead.
+# operator depends on -- a 64-bit PE image, hardened, and self-contained on a
+# stock Windows install -- are read out of the PE headers instead. The GUI
+# deployer must declare the Windows GUI subsystem; pass --console for the CLI.
 
 set -euo pipefail
 
+EXPECT_GUI=1
+if [[ "${1:-}" == "--console" ]]; then
+    EXPECT_GUI=0
+    shift
+fi
+
 if [[ $# -ne 1 ]]; then
-    echo "Usage: $0 <path-to-exe>" >&2
+    echo "Usage: $0 [--console] <path-to-exe>" >&2
     exit 2
 fi
 
@@ -42,10 +49,18 @@ fi
 
 headers="$("${OBJDUMP}" -p "${EXECUTABLE}")"
 
-if grep -q 'Subsystem.*(Windows GUI)' <<< "${headers}"; then
-    pass "artifact is a GUI subsystem binary, so it opens no console window"
+if ((EXPECT_GUI)); then
+    if grep -q 'Subsystem.*(Windows GUI)' <<< "${headers}"; then
+        pass "artifact is a GUI subsystem binary, so it opens no console window"
+    else
+        fail "artifact does not declare the Windows GUI subsystem"
+    fi
 else
-    fail "artifact does not declare the Windows GUI subsystem"
+    if grep -q 'Subsystem.*(Windows CUI)' <<< "${headers}"; then
+        pass "artifact is a console subsystem binary"
+    else
+        fail "artifact does not declare the Windows console subsystem"
+    fi
 fi
 
 characteristics="$(awk '/^DllCharacteristics/ { print $2; exit }' <<< "${headers}")"

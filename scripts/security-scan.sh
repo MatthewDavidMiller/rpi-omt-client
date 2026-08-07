@@ -42,8 +42,6 @@ echo "=== Trivy filesystem scan ==="
     --skip-dirs output \
     --skip-dirs work \
     --skip-dirs env \
-    --skip-dirs vm-files \
-    --skip-dirs pi-gen \
     --skip-dirs .codex \
     --skip-files vars.yml \
     --skip-files .env \

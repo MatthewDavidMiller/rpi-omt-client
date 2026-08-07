@@ -29,10 +29,10 @@ unprivileged container
 ## Receiver
 
 `crates/omt-receiver` composes Linux adapters around the audited, decode-only
-`vmx-decoder` crate. `omt-protocol`, `vmx-decoder`, and `omt-receiver-core` own
-typed CLI parsing, shared target
-validation, format policy, sanitization, synchronized status projection, and
-HDMI connector selection over the DRM sysfs tree.
+`vmx-decoder` crate. `omt-protocol` owns wire transport and shared target
+validation; `omt-receiver-core` owns format policy, sanitization, and
+synchronized status projection; `omt-receiver` owns typed CLI parsing and HDMI
+connector selection over the DRM sysfs tree.
 `discover` emits bounded JSON, `probe` checks a direct OMT target, and `play`
 owns receive, DRM, ALSA, hotplug, retry, and status publication. Discovered
 names are NFC, have no control characters, and are at most 63 UTF-8 bytes.

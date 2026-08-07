@@ -390,32 +390,6 @@ fn spawn_reader(mut input: impl Read + Send + 'static, tx: mpsc::Sender<Vec<u8>>
     });
 }
 
-/// Thin adapter contract consumed by higher-level operations.
-pub trait Remote: Send {
-    fn run(
-        &mut self,
-        command: &str,
-        stdin: &str,
-        cancellation: &AtomicBool,
-    ) -> io::Result<RemoteResult>;
-    fn upload(&mut self, local: &Path, remote: &str, cancellation: &AtomicBool) -> io::Result<()>;
-}
-
-impl Remote for SshSession {
-    fn run(
-        &mut self,
-        command: &str,
-        stdin: &str,
-        cancellation: &AtomicBool,
-    ) -> io::Result<RemoteResult> {
-        Self::run(self, command, stdin, cancellation)
-    }
-
-    fn upload(&mut self, local: &Path, remote: &str, cancellation: &AtomicBool) -> io::Result<()> {
-        Self::upload(self, local, remote, cancellation)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

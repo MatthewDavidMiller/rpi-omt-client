@@ -32,11 +32,7 @@ Documentation can be found at: https://www.openmediatransport.org/docs/
 Binaries with Library files are available in the Releases section of the libomtnet repo.
 These are available for Windows and MacOS and are the recommended way to get started.
 
-### C17
-Include `vmxcodec.h` and link the repository-built `vmx_codec` target.
+## In this repository
 
-## Compiling
-
-This repository builds the required decoder sources through its root CMake
-project. Use the documented native receiver or deployer build commands rather
-than invoking the upstream project files directly.
+This tree retains only the upstream MIT license text for provenance. The decode-only
+VMX1 implementation used by the OMT receiver lives in `crates/vmx-decoder/`.

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 @dataclass(frozen=True)
@@ -69,4 +69,3 @@ class DiagnosticResult:
 
     title: str
     command: CommandResult
-    notes: tuple[str, ...] = field(default_factory=tuple)

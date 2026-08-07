@@ -71,7 +71,7 @@ make lint
 
 # Deploy
 make deploy HOST=pi@<ip>
-sudo ./install.sh   # on the Pi, from the deployed capsule
+sudo ./deploy/host/install.sh   # on the Pi, from the deployed capsule
 ```
 
 ## Validation Expectations

@@ -16,6 +16,8 @@ install -Dm755 "target/${TARGET}/release/rpi-omt-deployer.exe" "${STAGE}/bin/rpi
 install -Dm644 LICENSE "${STAGE}/LICENSE"
 install -Dm644 THIRD_PARTY_NOTICES.txt "${STAGE}/THIRD_PARTY_NOTICES.txt"
 python3 scripts/generate-deployer-sbom.py --cargo-lock Cargo.lock --output "${STAGE}/deployer-sbom.cdx.json" --version "${VERSION}"
+"${PROJECT_ROOT}/scripts/verify-windows-deployer.sh" --console "${STAGE}/bin/rpi-omt-deploy.exe"
+"${PROJECT_ROOT}/scripts/verify-windows-deployer.sh" "${STAGE}/bin/rpi-omt-deployer.exe"
 rm -rf "${PUBLISH}"
 mv "${STAGE}" "${PUBLISH}"
 echo "Published Windows Rust deployer package: ${PUBLISH}"

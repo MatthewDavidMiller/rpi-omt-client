@@ -9,7 +9,6 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 pub const HEARTBEAT: Duration = Duration::from_millis(500);
 pub const DETAIL_LIMIT: usize = 2048;
-pub const MAX_SOURCES: usize = 256;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]

@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Matthew David Miller
 // SPDX-License-Identifier: MIT
 #![forbid(unsafe_code)]
+#![cfg_attr(feature = "desktop", windows_subsystem = "windows")]
 
 #[cfg(feature = "desktop")]
 mod desktop {
