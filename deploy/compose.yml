@@ -40,9 +40,9 @@ services:
       - /var/lib/omt-client/host-actions:/host-actions
       # Per-boot receiver state. The receiver republishes playback status on
       # every change and then at a heartbeat, so keeping it on the SD-card-backed
-      # Persistent config volumes must never carry heartbeat writes to flash.
-      # It is all state that must not survive a restart anyway. Capped because a
-      # tmpfs is RAM; the lock, PID record, and status document total under 1 KB.
+      # config volume would put a permanent write load on flash for state that
+      # must not survive a restart anyway. Capped because a tmpfs is RAM; the
+      # lock, PID record, and status document total under 1 KB.
       - type: tmpfs
         target: /run/omt
         tmpfs:

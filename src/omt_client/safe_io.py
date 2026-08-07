@@ -49,6 +49,20 @@ def _snapshot(value: os.stat_result) -> tuple[int, int, int, int, int]:
     )
 
 
+def file_snapshot(path: str | os.PathLike[str]) -> tuple[int, int, int, int, int] | None:
+    """Return a path's identity and content fingerprint, or None if unreadable.
+
+    Same fields `read_bytes` compares across a read, so a caller polling for a
+    file to change can decide whether reading it again could tell it anything
+    new. An absent or unstattable path is None, which never compares equal to a
+    real snapshot -- an appearing file always reads.
+    """
+    try:
+        return _snapshot(os.lstat(os.fspath(path)))
+    except OSError:
+        return None
+
+
 def _os_error(exc: OSError, action: str) -> ReadResult:
     if exc.errno == errno.ENOENT:
         return ReadResult(ReadStatus.MISSING, detail="file does not exist")

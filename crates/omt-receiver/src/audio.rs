@@ -76,31 +76,13 @@ impl Output {
         let body = frame
             .media(AUDIO_HEADER_SIZE)
             .ok_or_else(|| "truncated OMT audio frame".to_owned())?;
-        let mut cursor = 0_usize;
-        for channel in 0..channels {
-            let active = u32::try_from(channel)
-                .ok()
-                .and_then(|index| 1_u32.checked_shl(index))
-                .is_some_and(|mask| header.active_channels & mask != 0);
-            for sample in 0..samples {
-                let value = if active {
-                    let end = cursor
-                        .checked_add(4)
-                        .ok_or_else(|| "truncated OMT audio frame".to_owned())?;
-                    let bytes: [u8; 4] = body
-                        .get(cursor..end)
-                        .and_then(|slice| slice.try_into().ok())
-                        .ok_or_else(|| "truncated OMT audio frame".to_owned())?;
-                    cursor = end;
-                    f32::from_le_bytes(bytes)
-                } else {
-                    0.0
-                };
-                if let Some(slot) = self.interleaved.get_mut(sample * channels + channel) {
-                    *slot = value;
-                }
-            }
-        }
+        interleave(
+            body,
+            header.active_channels,
+            samples,
+            channels,
+            &mut self.interleaved,
+        )?;
 
         self.play(samples, channels)
     }
@@ -178,6 +160,47 @@ impl Output {
     }
 }
 
+/// Expands one planar OMT body into the interleaved buffer ALSA is fed.
+///
+/// A channel the sender marked inactive is silence, and its samples are absent
+/// from the body rather than zero-filled in it, so the source cursor only
+/// advances for active channels. Getting that wrong does not fail: it plays the
+/// next channel's samples on this one.
+fn interleave(
+    body: &[u8],
+    active_channels: u32,
+    samples: usize,
+    channels: usize,
+    out: &mut [f32],
+) -> Result<(), String> {
+    let mut cursor = 0_usize;
+    for channel in 0..channels {
+        let active = u32::try_from(channel)
+            .ok()
+            .and_then(|index| 1_u32.checked_shl(index))
+            .is_some_and(|mask| active_channels & mask != 0);
+        for sample in 0..samples {
+            let value = if active {
+                let end = cursor
+                    .checked_add(4)
+                    .ok_or_else(|| "truncated OMT audio frame".to_owned())?;
+                let bytes: [u8; 4] = body
+                    .get(cursor..end)
+                    .and_then(|slice| slice.try_into().ok())
+                    .ok_or_else(|| "truncated OMT audio frame".to_owned())?;
+                cursor = end;
+                f32::from_le_bytes(bytes)
+            } else {
+                0.0
+            };
+            if let Some(slot) = out.get_mut(sample * channels + channel) {
+                *slot = value;
+            }
+        }
+    }
+    Ok(())
+}
+
 impl Default for Output {
     fn default() -> Self {
         Self::new()
@@ -187,5 +210,73 @@ impl Default for Output {
 impl Drop for Output {
     fn drop(&mut self) {
         self.close();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::interleave;
+
+    fn planar(values: &[f32]) -> Vec<u8> {
+        values.iter().flat_map(|v| v.to_le_bytes()).collect()
+    }
+
+    /// The interleaver copies samples, it does not compute them, so the
+    /// output is compared bit for bit rather than approximately.
+    fn bits<const N: usize>(values: [f32; N]) -> [u32; N] {
+        values.map(f32::to_bits)
+    }
+
+    #[test]
+    fn every_channel_is_interleaved_in_order() {
+        let body = planar(&[1.0, 2.0, 3.0, -1.0, -2.0, -3.0]);
+        let mut out = [0.0_f32; 6];
+        interleave(&body, 0b11, 3, 2, &mut out).unwrap_or_else(|error| panic!("{error}"));
+        assert_eq!(bits(out), bits([1.0, -1.0, 2.0, -2.0, 3.0, -3.0]));
+    }
+
+    #[test]
+    fn an_inactive_channel_is_silence_and_consumes_no_samples() {
+        // Only channel 1 is active, so the body holds its samples alone and
+        // channel 0 must not read them.
+        let body = planar(&[7.0, 8.0]);
+        let mut out = [-1.0_f32; 4];
+        interleave(&body, 0b10, 2, 2, &mut out).unwrap_or_else(|error| panic!("{error}"));
+        assert_eq!(bits(out), bits([0.0, 7.0, 0.0, 8.0]));
+
+        // The same body with the other channel active proves the cursor, not
+        // the channel index, is what selects the samples.
+        let mut out = [-1.0_f32; 4];
+        interleave(&body, 0b01, 2, 2, &mut out).unwrap_or_else(|error| panic!("{error}"));
+        assert_eq!(bits(out), bits([7.0, 0.0, 8.0, 0.0]));
+    }
+
+    #[test]
+    fn silence_needs_no_body_at_all() {
+        let mut out = [-1.0_f32; 4];
+        interleave(&[], 0, 2, 2, &mut out).unwrap_or_else(|error| panic!("{error}"));
+        assert_eq!(bits(out), bits([0.0; 4]));
+    }
+
+    #[test]
+    fn a_short_body_is_refused_rather_than_read_past() {
+        let body = planar(&[1.0, 2.0, 3.0]);
+        let mut out = [0.0_f32; 4];
+        assert!(interleave(&body, 0b11, 2, 2, &mut out).is_err());
+    }
+
+    /// Above 32 the shift has no bit to test, and a channel that cannot be
+    /// proven active is silence rather than a read at an unchecked offset.
+    #[test]
+    fn channels_past_the_mask_width_are_silent() {
+        let body = planar(&[1.0; 32]);
+        let mut out = [-1.0_f32; 33];
+        interleave(&body, u32::MAX, 1, 33, &mut out).unwrap_or_else(|error| panic!("{error}"));
+        assert_eq!(out[32].to_bits(), 0.0_f32.to_bits());
+        assert!(
+            out[..32]
+                .iter()
+                .all(|value| value.to_bits() == 1.0_f32.to_bits())
+        );
     }
 }

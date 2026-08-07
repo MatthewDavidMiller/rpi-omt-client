@@ -61,9 +61,18 @@ caps.
 
 `make test-deployer` builds the Rust core, CLI, and GUI and tests validation,
 quoting, SHA-256, secure tokens, Wi-Fi PSK vectors, bounded processes, and
-manifest-v3 path safety. Publish mode builds the egui GUI and CLI. The SSH
-adapter rejects missing `known_hosts` files and unknown or changed host keys;
-legacy SHA-1 host-key hashes and CBC ciphers are excluded from negotiation.
+manifest-v3 path safety. The egui application is built with its `desktop`
+feature for the test run as well as the publish build, so the view is compiled
+and linted rather than skipped, and the rules that enable its buttons are
+tested against the same core validators the buttons' actions use.
+
+`tests/native/test_deployer_cli.sh` then runs the built CLI: capsule
+validation, the exit-2 usage contract for missing arguments and rejected
+connections, the bounded `--secrets-stdin` channel, and the one-object-per-line
+`--json` surface. Nothing in it reaches the network -- every invocation is
+local or refused before a connection is opened. The SSH adapter rejects missing
+`known_hosts` files and unknown or changed host keys; legacy SHA-1 host-key
+hashes and CBC ciphers are excluded from negotiation.
 
 The supply-chain gate rejects every tracked C/C++ source, Git Cargo dependency,
 or unlocked registry package. `scripts/check-supply-chain.sh` also runs
@@ -112,11 +121,21 @@ aarch64 `sys` installation:
 Useful commands are in `docs/OPERATIONS.md`. Any release not completing this
 physical tier must state the skipped Pi-specific checks.
 
-## Shared cross-language vectors
+## Cross-file and cross-language contracts
+
+`tests/unit/test_cross_file_invariants.py` asserts the constants one file
+computes with and another supplies: the Gunicorn worker timeout the diagnostics
+bundle ceiling is derived from, the host diagnostics budget spelled out in
+`settings.py`, `install.sh`, and `host-diagnostics.sh`, and the HDMI connector
+names the container launcher, the receiver CLI, and the status contract must
+all accept.
 
 `tests/schema/omt-target-vectors.json` and
 `tests/schema/playback-status-vectors.json` are consumed by Python and the
-Rust tests. `tests/vectors/vmx/vectors.json` indexes the VMX conformance
+Rust tests. The target vectors also publish the forbidden source-name code
+points as ranges: the Python suite derives them from `unicodedata` and the
+receiver's compiled table is asserted against the published one, so neither
+validator can drift from the other or from a Unicode revision. `tests/vectors/vmx/vectors.json` indexes the VMX conformance
 streams and pins each expected image by SHA-256, which keeps the fixtures small
 while still asserting bit exactness.
 Update both implementations and their vectors together when a shared contract

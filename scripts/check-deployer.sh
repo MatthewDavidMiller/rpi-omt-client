@@ -3,13 +3,17 @@
 set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MODE="${1:-}"
-if [[ $# -gt 1 || ( -n "${MODE}" && "${MODE}" != "--publish" && "${MODE}" != "--integration-only" ) ]]; then echo "Usage: $0 [--publish|--integration-only]" >&2; exit 2; fi
+if [[ $# -gt 1 || ( -n "${MODE}" && "${MODE}" != "--publish" ) ]]; then echo "Usage: $0 [--publish]" >&2; exit 2; fi
 cd "${PROJECT_ROOT}"
 command -v cargo >/dev/null 2>&1 || { echo "ERROR: cargo is required. Run: make install" >&2; exit 1; }
 VERSION="${RPI_OMT_CLIENT_VERSION:-$("${PROJECT_ROOT}/scripts/detect-version.sh" "${PROJECT_ROOT}")}"
-RPI_OMT_CLIENT_VERSION="${VERSION}" cargo test --locked -p omt-deployer-core -p rpi-omt-deploy -p rpi-omt-deployer
-[[ "${MODE}" == "--integration-only" ]] && exit 0
+# The desktop feature is on for the test build too: without it the egui
+# application is not compiled at all, so `cargo test -p rpi-omt-deployer` would
+# report a pass over a crate it never built.
+RPI_OMT_CLIENT_VERSION="${VERSION}" cargo test --locked -p omt-deployer-core -p rpi-omt-deploy -p rpi-omt-deployer --features rpi-omt-deployer/desktop
 RPI_OMT_CLIENT_VERSION="${VERSION}" cargo build --locked --release -p rpi-omt-deploy -p rpi-omt-deployer --features rpi-omt-deployer/desktop
+# The CLI's own contract, against the binary that was just built.
+tests/native/test_deployer_cli.sh "${PROJECT_ROOT}/target/release/rpi-omt-deploy" "${PROJECT_ROOT}"
 if [[ "${MODE}" == "--publish" ]]; then
     STAGE="${PROJECT_ROOT}/.build/deployer-publish.stage"
     PUBLISH="${PROJECT_ROOT}/.build/deployer-publish"

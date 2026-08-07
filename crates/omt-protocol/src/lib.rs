@@ -347,11 +347,72 @@ pub fn parse_direct_target(value: &str) -> Result<DirectTarget, ProtocolError> {
     })
 }
 
+/// Every code point a source name may not contain, as sorted, non-overlapping
+/// inclusive ranges.
+///
+/// These are the Unicode general categories `Cc`, `Cf`, `Cs`, `Zl`, and `Zp`:
+/// control, format, surrogate, line separator, and paragraph separator. The Web
+/// layer takes the same authority from `unicodedata`, so the two sides have to
+/// agree on the whole set rather than on the handful of code points either
+/// happened to think of. The published form of this table, and the check that
+/// it still matches the Unicode data, live in
+/// `tests/schema/omt-target-vectors.json`; `shared_validation_vectors` below
+/// asserts this copy against it.
+/// The surrogate range the published table carries and this one cannot.
+pub const SURROGATE_RANGE: (u32, u32) = (0xD800, 0xDFFF);
+
+const FORBIDDEN_NAME_RANGES: [(char, char); 23] = [
+    ('\u{0}', '\u{1f}'),
+    ('\u{7f}', '\u{9f}'),
+    ('\u{ad}', '\u{ad}'),
+    ('\u{600}', '\u{605}'),
+    ('\u{61c}', '\u{61c}'),
+    ('\u{6dd}', '\u{6dd}'),
+    ('\u{70f}', '\u{70f}'),
+    ('\u{890}', '\u{891}'),
+    ('\u{8e2}', '\u{8e2}'),
+    ('\u{180e}', '\u{180e}'),
+    ('\u{200b}', '\u{200f}'),
+    ('\u{2028}', '\u{202e}'),
+    ('\u{2060}', '\u{2064}'),
+    ('\u{2066}', '\u{206f}'),
+    // U+D800-U+DFFF, the surrogates, cannot be a `char` or valid UTF-8, so the
+    // published table lists them and this one has nothing to match them with.
+    ('\u{feff}', '\u{feff}'),
+    ('\u{fff9}', '\u{fffb}'),
+    ('\u{110bd}', '\u{110bd}'),
+    ('\u{110cd}', '\u{110cd}'),
+    ('\u{13430}', '\u{1343f}'),
+    ('\u{1bca0}', '\u{1bca3}'),
+    ('\u{1d173}', '\u{1d17a}'),
+    ('\u{e0001}', '\u{e0001}'),
+    ('\u{e0020}', '\u{e007f}'),
+];
+
+fn is_forbidden_name_char(value: char) -> bool {
+    FORBIDDEN_NAME_RANGES
+        .binary_search_by(|(low, high)| {
+            if value < *low {
+                std::cmp::Ordering::Greater
+            } else if value > *high {
+                std::cmp::Ordering::Less
+            } else {
+                std::cmp::Ordering::Equal
+            }
+        })
+        .is_ok()
+}
+
 pub fn is_valid_source_name(value: &str) -> bool {
-    !value.is_empty() && value.len() <= SOURCE_NAME_MAX_BYTES && value.nfc().eq(value.chars())
-        && value.chars().all(|c| !c.is_control() && !matches!(c, '\u{200b}'..='\u{200f}' | '\u{2028}'..='\u{202e}' | '\u{2060}'..='\u{206f}' | '\u{feff}'))
+    !value.is_empty()
+        && value.len() <= SOURCE_NAME_MAX_BYTES
+        && value.nfc().eq(value.chars())
+        && !value.chars().any(is_forbidden_name_char)
         && value.chars().next().is_some_and(|c| !c.is_whitespace())
-        && value.chars().next_back().is_some_and(|c| !c.is_whitespace())
+        && value
+            .chars()
+            .next_back()
+            .is_some_and(|c| !c.is_whitespace())
 }
 
 pub fn is_valid_target(value: &str) -> bool {
@@ -392,15 +453,301 @@ mod tests {
         let h = parse_frame_header(&bytes).unwrap_or_else(|e| panic!("{e}"));
         assert_eq!(h.timestamp, 42);
     }
+
+    /// Widths on the wire are `u32`; the sizes they are built from are not.
+    fn wire(value: usize) -> u32 {
+        u32::try_from(value).unwrap_or_else(|error| panic!("{value}: {error}"))
+    }
+
+    fn frame(frame_type: FrameType, data_length: u32, metadata_length: u16) -> FrameHeader {
+        FrameHeader {
+            version: 1,
+            frame_type,
+            timestamp: 0,
+            metadata_length,
+            data_length,
+        }
+    }
+
+    fn video_bytes(header: &VideoHeader) -> [u8; VIDEO_HEADER_SIZE] {
+        let mut bytes = [0_u8; VIDEO_HEADER_SIZE];
+        for (offset, field) in [
+            header.codec.to_le_bytes(),
+            header.width.to_le_bytes(),
+            header.height.to_le_bytes(),
+            header.frame_rate_n.to_le_bytes(),
+            header.frame_rate_d.to_le_bytes(),
+            header.aspect_ratio.to_le_bytes(),
+            header.flags.to_le_bytes(),
+            header.color_space.to_le_bytes(),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            bytes[offset * 4..offset * 4 + 4].copy_from_slice(&field);
+        }
+        bytes
+    }
+
+    fn supported_video() -> VideoHeader {
+        VideoHeader {
+            codec: Codec::Vmx1 as i32,
+            width: 1920,
+            height: 1080,
+            frame_rate_n: 60,
+            frame_rate_d: 1,
+            aspect_ratio: 16.0 / 9.0,
+            flags: 0,
+            color_space: 709,
+        }
+    }
+
+    #[test]
+    fn video_headers_accept_only_the_appliance_format() {
+        let header = frame(FrameType::Video, wire(VIDEO_HEADER_SIZE), 0);
+        assert_eq!(
+            parse_video_header(&header, &video_bytes(&supported_video())),
+            Ok(supported_video())
+        );
+        // Interlaced input is presented progressively, so its flag is accepted.
+        let interlaced = VideoHeader {
+            flags: 1,
+            ..supported_video()
+        };
+        assert!(parse_video_header(&header, &video_bytes(&interlaced)).is_ok());
+
+        for (label, video) in [
+            (
+                "over the width ceiling",
+                VideoHeader {
+                    width: 1922,
+                    ..supported_video()
+                },
+            ),
+            (
+                "over the height ceiling",
+                VideoHeader {
+                    height: 1082,
+                    ..supported_video()
+                },
+            ),
+            (
+                "over 60 fps",
+                VideoHeader {
+                    frame_rate_n: 120,
+                    ..supported_video()
+                },
+            ),
+            (
+                "a zero frame-rate denominator",
+                VideoHeader {
+                    frame_rate_d: 0,
+                    ..supported_video()
+                },
+            ),
+            (
+                "a codec that is not VMX1",
+                VideoHeader {
+                    codec: Codec::Fpa1 as i32,
+                    ..supported_video()
+                },
+            ),
+            (
+                "an unknown colour space",
+                VideoHeader {
+                    color_space: 2020,
+                    ..supported_video()
+                },
+            ),
+            (
+                "a reserved flag",
+                VideoHeader {
+                    flags: 32,
+                    ..supported_video()
+                },
+            ),
+            (
+                "a non-finite aspect ratio",
+                VideoHeader {
+                    aspect_ratio: f32::NAN,
+                    ..supported_video()
+                },
+            ),
+        ] {
+            assert!(
+                parse_video_header(&header, &video_bytes(&video)).is_err(),
+                "{label} was accepted"
+            );
+        }
+        // A video header only ever reads a video frame, and never a short one.
+        assert!(
+            parse_video_header(
+                &frame(FrameType::Audio, wire(VIDEO_HEADER_SIZE), 0),
+                &video_bytes(&supported_video())
+            )
+            .is_err()
+        );
+        assert!(parse_video_header(&header, &[0_u8; VIDEO_HEADER_SIZE - 1]).is_err());
+    }
+
+    fn audio_bytes(codec: i32, rate: i32, samples: i32, channels: i32, active: u32) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        bytes.extend(codec.to_le_bytes());
+        bytes.extend(rate.to_le_bytes());
+        bytes.extend(samples.to_le_bytes());
+        bytes.extend(channels.to_le_bytes());
+        bytes.extend(active.to_le_bytes());
+        // The wire header is wider than the five fields the receiver reads.
+        bytes.resize(AUDIO_HEADER_SIZE, 0);
+        bytes
+    }
+
+    /// The declared payload length is what sizes the read, so its arithmetic is
+    /// the boundary between a bounded frame and an attacker-chosen allocation.
+    #[test]
+    fn audio_headers_bind_the_payload_to_the_active_channels() {
+        let samples = 480_i32;
+        let channels = 2_i32;
+        // One 32-bit sample per channel per frame, for the channels that are
+        // actually sent.
+        let compressed = 480 * 2 * 4_u32;
+        let data_length = wire(AUDIO_HEADER_SIZE) + compressed;
+        let header = frame(FrameType::Audio, data_length, 0);
+        let bytes = audio_bytes(Codec::Fpa1 as i32, 48_000, samples, channels, 0b11);
+        assert_eq!(
+            parse_audio_header(&header, &bytes).map(|value| value.channels),
+            Ok(channels)
+        );
+
+        // Half the channels are silent, so half the payload is not sent.
+        let one_active = audio_bytes(Codec::Fpa1 as i32, 48_000, samples, channels, 0b01);
+        assert!(parse_audio_header(&header, &one_active).is_err());
+        let halved = frame(
+            FrameType::Audio,
+            wire(AUDIO_HEADER_SIZE) + compressed / 2,
+            0,
+        );
+        assert!(parse_audio_header(&halved, &one_active).is_ok());
+
+        // Per-frame metadata is part of the declared payload.
+        let with_metadata = frame(FrameType::Audio, data_length + 16, 16);
+        assert!(parse_audio_header(&with_metadata, &bytes).is_ok());
+
+        // An active bit above the channel count would index past the payload.
+        assert!(
+            parse_audio_header(
+                &header,
+                &audio_bytes(Codec::Fpa1 as i32, 48_000, samples, channels, 0b111)
+            )
+            .is_err()
+        );
+        // 32 channels is the ceiling, where the mask uses every bit.
+        let full = 480 * 32 * 4_u32;
+        assert!(
+            parse_audio_header(
+                &frame(FrameType::Audio, wire(AUDIO_HEADER_SIZE) + full, 0),
+                &audio_bytes(Codec::Fpa1 as i32, 48_000, samples, 32, u32::MAX)
+            )
+            .is_ok()
+        );
+
+        for (label, bytes) in [
+            (
+                "a codec that is not FPA1",
+                audio_bytes(Codec::Vmx1 as i32, 48_000, samples, channels, 0b11),
+            ),
+            (
+                "a sample rate below the floor",
+                audio_bytes(Codec::Fpa1 as i32, 4000, samples, channels, 0b11),
+            ),
+            (
+                "a sample rate above the ceiling",
+                audio_bytes(Codec::Fpa1 as i32, 200_000, samples, channels, 0b11),
+            ),
+            (
+                "more than 32 channels",
+                audio_bytes(Codec::Fpa1 as i32, 48_000, samples, 33, 0b11),
+            ),
+            (
+                "no channels",
+                audio_bytes(Codec::Fpa1 as i32, 48_000, samples, 0, 0),
+            ),
+            (
+                "no samples",
+                audio_bytes(Codec::Fpa1 as i32, 48_000, 0, channels, 0b11),
+            ),
+            (
+                "a decoded size past the audio ceiling",
+                audio_bytes(Codec::Fpa1 as i32, 48_000, i32::MAX, channels, 0b11),
+            ),
+        ] {
+            assert!(
+                parse_audio_header(&header, &bytes).is_err(),
+                "{label} was accepted"
+            );
+        }
+    }
+
+    /// The fixed header decides how many bytes the channel will read next.
+    #[test]
+    fn frame_headers_bound_every_payload() {
+        let mut bytes = build_metadata("<x/>", 0).unwrap_or_default();
+        bytes[0] = 2;
+        assert_eq!(
+            parse_frame_header(&bytes),
+            Err(ProtocolError::Unsupported("OMT frame version"))
+        );
+        bytes[0] = 1;
+        bytes[1] = 3;
+        assert_eq!(
+            parse_frame_header(&bytes),
+            Err(ProtocolError::Unsupported("OMT frame type"))
+        );
+        assert_eq!(
+            parse_frame_header(&bytes[..HEADER_SIZE - 1]),
+            Err(ProtocolError::Truncated("OMT frame header"))
+        );
+
+        let mut header = [0_u8; HEADER_SIZE];
+        header[0] = 1;
+        header[1] = FrameType::Video as u8;
+        // A video frame shorter than its own extended header.
+        header[12..16].copy_from_slice(&(wire(VIDEO_HEADER_SIZE) - 1).to_le_bytes());
+        assert!(matches!(
+            parse_frame_header(&header),
+            Err(ProtocolError::Invalid(_))
+        ));
+        // A payload past the per-type ceiling is refused before it is allocated.
+        let ceiling = wire(VIDEO_MAX_SIZE + VIDEO_HEADER_SIZE);
+        header[12..16].copy_from_slice(&ceiling.to_le_bytes());
+        assert!(parse_frame_header(&header).is_ok(), "the ceiling itself");
+        header[12..16].copy_from_slice(&(ceiling + 1).to_le_bytes());
+        assert_eq!(
+            parse_frame_header(&header),
+            Err(ProtocolError::Oversized("OMT frame payload"))
+        );
+        // Metadata cannot claim more of the frame than the frame carries.
+        header[12..16].copy_from_slice(&(wire(VIDEO_HEADER_SIZE) + 8).to_le_bytes());
+        header[10..12].copy_from_slice(&9_u16.to_le_bytes());
+        assert!(matches!(
+            parse_frame_header(&header),
+            Err(ProtocolError::Invalid(_))
+        ));
+    }
     #[derive(Deserialize)]
     struct Vector {
         value: String,
         valid: bool,
     }
     #[derive(Deserialize)]
+    struct ForbiddenCodepoints {
+        ranges: Vec<[String; 2]>,
+    }
+    #[derive(Deserialize)]
     struct Vectors {
         source_names: Vec<Vector>,
         direct_targets: Vec<Vector>,
+        forbidden_name_codepoints: ForbiddenCodepoints,
     }
     #[test]
     fn shared_validation_vectors() {
@@ -408,6 +755,7 @@ mod tests {
             "../../../tests/schema/omt-target-vectors.json"
         ))
         .unwrap_or_else(|e| panic!("{e}"));
+        published_table_matches(&vectors.forbidden_name_codepoints);
         for vector in vectors.source_names {
             assert_eq!(
                 is_valid_source_name(&vector.value),
@@ -423,6 +771,51 @@ mod tests {
                 "target {:?}",
                 vector.value
             );
+        }
+    }
+
+    /// The compiled table has to be the published one, minus the surrogates it
+    /// cannot express. Comparing the tables rather than sampling them is what
+    /// makes the Web layer's `unicodedata` sweep speak for this validator too.
+    fn published_table_matches(published: &ForbiddenCodepoints) {
+        let expected: Vec<(u32, u32)> = published
+            .ranges
+            .iter()
+            .map(|[low, high]| {
+                (
+                    u32::from_str_radix(low, 16).unwrap_or_else(|e| panic!("{low}: {e}")),
+                    u32::from_str_radix(high, 16).unwrap_or_else(|e| panic!("{high}: {e}")),
+                )
+            })
+            .filter(|range| *range != SURROGATE_RANGE)
+            .collect();
+        let actual: Vec<(u32, u32)> = FORBIDDEN_NAME_RANGES
+            .iter()
+            .map(|(low, high)| (u32::from(*low), u32::from(*high)))
+            .collect();
+        assert_eq!(
+            actual, expected,
+            "compiled table differs from the published one"
+        );
+        assert!(
+            published
+                .ranges
+                .iter()
+                .any(|[low, _]| u32::from_str_radix(low, 16) == Ok(SURROGATE_RANGE.0)),
+            "the published table no longer lists the surrogates this one filters"
+        );
+        assert!(
+            actual.windows(2).all(|pair| pair[0].1 < pair[1].0),
+            "the compiled table must stay sorted and non-overlapping for the binary search"
+        );
+        for (low, high) in FORBIDDEN_NAME_RANGES {
+            for boundary in [low, high] {
+                assert!(is_forbidden_name_char(boundary), "{boundary:?}");
+                assert!(
+                    !is_valid_source_name(&format!("a{boundary}b")),
+                    "{boundary:?}"
+                );
+            }
         }
     }
 }

@@ -1,9 +1,11 @@
 import json
+import unicodedata
 
 import pytest
 from conftest import REPO_ROOT
 
 from omt_client.discovery import (
+    FORBIDDEN_UNICODE_CATEGORIES,
     OmtSourceChoice,
     is_valid_direct_target,
     is_valid_source_name,
@@ -16,6 +18,12 @@ from omt_client.network_config import (
 )
 
 VECTORS = REPO_ROOT / "tests" / "schema" / "omt-target-vectors.json"
+FORBIDDEN_RANGES = [
+    tuple(entry)
+    for entry in json.loads(VECTORS.read_text(encoding="utf-8"))["forbidden_name_codepoints"][
+        "ranges"
+    ]
+]
 
 # Both validators take the same `omt://host:port`, so they must accept the same
 # hosts. They read that host for different reasons -- one decides whether a
@@ -145,3 +153,33 @@ def test_python_and_receiver_share_target_validation_vectors():
         assert is_valid_source_name(vector["value"]) is vector["valid"]
     for vector in vectors["direct_targets"]:
         assert is_valid_direct_target(vector["value"]) is vector["valid"]
+
+
+def test_published_forbidden_codepoints_are_exactly_this_unicode_data():
+    """Tie the receiver's compiled table to the categories this module rejects.
+
+    The receiver cannot ask `unicodedata` anything, so it carries the answer as
+    ranges and `omt-protocol` asserts its table against the published one. That
+    chain is only worth having if this end of it is derived rather than
+    restated: a Unicode revision that adds a format character has to fail here,
+    not silently make a name the receiver plays and the dashboard drops.
+    """
+    published = json.loads(VECTORS.read_text(encoding="utf-8"))["forbidden_name_codepoints"]
+    assert set(published["categories"]) == FORBIDDEN_UNICODE_CATEGORIES
+    expected: list[tuple[int, int]] = []
+    for codepoint in range(0x110000):
+        if unicodedata.category(chr(codepoint)) not in FORBIDDEN_UNICODE_CATEGORIES:
+            continue
+        if expected and expected[-1][1] == codepoint - 1:
+            expected[-1] = (expected[-1][0], codepoint)
+        else:
+            expected.append((codepoint, codepoint))
+    assert [(int(low, 16), int(high, 16)) for low, high in published["ranges"]] == expected
+
+
+@pytest.mark.parametrize(("low", "high"), FORBIDDEN_RANGES)
+def test_every_published_range_boundary_is_an_invalid_source_name(low, high):
+    for codepoint in (int(low, 16), int(high, 16)):
+        # Surrogates are the one published range with no UTF-8 spelling, so the
+        # only thing to assert about them is that a lone one is still refused.
+        assert not is_valid_source_name(f"a{chr(codepoint)}b")

@@ -144,10 +144,12 @@ run_container_mode() {
     )
     # Every mode that reaches a container engine builds the image and both
     # deployer packages. A mode that quietly drops one of them would still be
-    # green here without these three logs.
-    if [[ "$(wc -l < "${log_file}")" -eq 2 ]] &&
+    # green here without these three logs. The deployer gate is invoked exactly
+    # once: the second invocation this used to require was the retired
+    # `--integration-only` mode, which re-ran the tests the first one had
+    # already run and reported it as an Alpine userland check.
+    if [[ "$(wc -l < "${log_file}")" -eq 1 ]] &&
        grep -Fxq -- '--publish' "${log_file}" &&
-       grep -Fxq -- '--integration-only' "${log_file}" &&
        grep -Fxq ran "${case_dir}/${mode}-docker-build" &&
        grep -Fxq ran "${case_dir}/${mode}-windows"; then
         echo "PASS: ${mode} mode builds the image and publishes both deployers"

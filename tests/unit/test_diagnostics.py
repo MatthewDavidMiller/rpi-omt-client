@@ -15,6 +15,7 @@ import pytest
 from conftest import VirtualClock, raises
 
 from omt_client.models import CommandResult
+from omt_client.safe_io import read_text
 from omt_client.services.about import RuntimeAbout
 from omt_client.services.diagnostics import (
     PCAP_MAX_BYTES,
@@ -169,6 +170,43 @@ def test_fresh_host_report_accepts_only_matching_bounded_schema(tmp_path: Path):
     report.unlink()
     value, error = diagnostics._fresh_host_report(REQUEST_ID, time.monotonic() + 0.02)
     assert not value and "does not exist" in error
+
+
+def test_waiting_for_the_host_report_reads_it_once_per_change(tmp_path: Path, monkeypatch):
+    """The wait polls at 20 Hz for up to the host timeout, and the report can
+    reach 16 MiB. Re-decoding an unchanged file cannot change the answer, so
+    only a new inode or new contents may cost a read."""
+    diagnostics = _diagnostics(tmp_path, OMT_DIAGNOSTICS_HOST_TIMEOUT_SECONDS="0.5")
+    report = Path(diagnostics._settings.diagnostics_host_report_file)
+    report.write_text(
+        "version=1\nrequest_id=other\nstatus=complete\n\nbody\n",
+        encoding="utf-8",
+    )
+    reads = 0
+
+    def counted(path, maximum_bytes):
+        nonlocal reads
+        reads += 1
+        return read_text(path, maximum_bytes)
+
+    monkeypatch.setattr("omt_client.services.diagnostics.read_text", counted)
+    clock = VirtualClock()
+    monkeypatch.setattr("omt_client.services.diagnostics.time", clock.module())
+
+    value, error = diagnostics._fresh_host_report(REQUEST_ID, clock.monotonic() + 10)
+    assert not value and "did not match" in error
+    assert reads == 1, "an unchanged report was read again"
+    assert len(clock.slept) > 1, "the wait did not poll"
+
+    # The publisher replaces the file, which is a new inode and a new answer.
+    reads = 0
+    report.write_text(
+        f"version=1\nrequest_id={REQUEST_ID}\nstatus=complete\n\nbody\n",
+        encoding="utf-8",
+    )
+    value, error = diagnostics._fresh_host_report(REQUEST_ID, clock.monotonic() + 10)
+    assert value.endswith(b"body\n") and not error
+    assert reads == 1
 
 
 @pytest.mark.parametrize(

@@ -34,6 +34,7 @@ class PersistentAuthentication:
         self._settings = settings
         self._registry_file = os.path.join(settings.config_dir, "web_sessions.json")
         self._lock_file = os.path.join(settings.config_dir, "web_sessions.lock")
+        os.makedirs(settings.config_dir, mode=0o700, exist_ok=True)
         secret_result = read_text(os.path.join(settings.config_dir, "flask_secret"), 256)
         if not secret_result.ok or not secret_result.text.strip():
             raise RuntimeError("The Flask secret is missing or unsafe.")
@@ -81,7 +82,8 @@ class PersistentAuthentication:
 
     @contextmanager
     def _locked(self, *, exclusive: bool = False) -> Iterator[None]:
-        os.makedirs(self._settings.config_dir, mode=0o700, exist_ok=True)
+        # The directory is created once, in __init__. Doing it here spent a
+        # syscall per lock, and every authenticated request takes this lock.
         flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
         descriptor = os.open(self._lock_file, flags, 0o600)
         locked = False

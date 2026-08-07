@@ -172,24 +172,8 @@ impl Decoder {
         })
     }
 
-    #[must_use]
-    pub fn dimensions(&self) -> Dimensions {
-        self.dimensions
-    }
-    #[must_use]
-    pub fn worker_count(&self) -> usize {
-        self.workers
-    }
-    #[must_use]
-    pub fn slice_count(&self) -> usize {
-        self.slices.len()
-    }
-
     /// Validates the bounded VMX1 envelope before decoding.
-    ///
-    /// # Errors
-    /// Returns a typed error for empty, truncated, oversized, or unknown input.
-    pub fn validate_stream<'a>(&self, input: &'a [u8]) -> Result<&'a [u8], DecodeError> {
+    fn validate_stream(input: &[u8]) -> Result<&[u8], DecodeError> {
         if input.is_empty() {
             return Err(DecodeError::Empty);
         }
@@ -213,7 +197,7 @@ impl Decoder {
     /// not match the decoder geometry, or a truncated stream table.
     pub fn load(&mut self, input: &[u8]) -> Result<(), DecodeError> {
         self.loaded = false;
-        let input = self.validate_stream(input)?;
+        let input = Self::validate_stream(input)?;
         let (offset, dc_shift) = if input[0] == CODEC_FORMAT_EXTENDED {
             (2_usize, i32::from(input[1]))
         } else {
@@ -376,7 +360,6 @@ fn decode_group(
     matrix: &[u16; 64],
     coefficients: &[i16; 5],
 ) -> bool {
-    let opaque = [0xFF_u8; MAX_WIDTH];
     for (index, slice) in slices.iter_mut().enumerate() {
         let luma = PlaneShape {
             stride: geometry.luma_stride,
@@ -418,8 +401,6 @@ fn decode_group(
             blue: &slice.blue,
             red: &slice.red,
             chroma_stride: geometry.chroma_stride,
-            alpha: &opaque,
-            alpha_stride: 0,
         };
         let rectangle = convert::Target {
             stride: geometry.stride,

@@ -65,6 +65,23 @@ their status projection rather than allocating per frame; publication still
 occurs immediately on change and at the 500 ms heartbeat. Audio failure
 degrades playback while video continues.
 
+The presenter decodes the next frame *before* it waits for the outstanding page
+flip. DRM allows one flip per CRTC, so with three surfaces the buffer being
+decoded into is neither the one on screen nor the one queued, and the decode
+overlaps the previous frame's scanout; waiting first left the decoder idle for
+most of every frame interval and made the third buffer pointless. A format the
+display has no mode for is remembered with the reason it was refused, so an
+unsupported stream stops re-reading the connector's mode list at its own frame
+rate. Dumb buffers and framebuffers are kernel objects that a dropped handle
+does not release, so one path retires any pending flip and destroys both, for
+reconfiguration and for shutdown alike. The card is opened non-blocking,
+because DRM events arrive by reading it: on a blocking descriptor the wait for
+a flip that a vanished display will never complete never returns, and the
+500 ms flip timeout that ends such a session could not fire. All four are
+review- and unit-tested only: they are on the Pi 5 DRM hardware boundary
+described under trust and legal surfaces, and must be validated on hardware
+before release.
+
 ## Container and host boundary
 
 The Alpine 3.23.5 runtime is read-only, drops all Linux capabilities, runs as

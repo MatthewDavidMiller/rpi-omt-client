@@ -18,6 +18,7 @@
 | VMX bitstream and colour conversion | `crates/vmx-decoder/src/bitstream.rs`, `crates/vmx-decoder/src/convert.rs` |
 | Inverse DCT: portable definition, AArch64 NEON kernel, and the choice between them | `crates/vmx-decoder/src/idct/scalar.rs`, `crates/vmx-decoder/src/idct/neon.rs`, `crates/vmx-decoder/src/idct/mod.rs` |
 | VMX conformance vectors captured from the reference decoder | `tests/vectors/vmx/` |
+| Shared validation, status, and forbidden-code-point contracts | `tests/schema/` |
 | Per-artifact SBOM closures from `Cargo.lock` | `scripts/cargo_lock.py` |
 | OMT provenance | `third_party/omt/PROVENANCE.md`, `third_party/omt/libvmx/LICENSE.txt` |
 | Flask composition | `src/omt_client/factory.py`, `src/omt_client/wsgi.py` |
@@ -64,6 +65,12 @@ check still spans the application code after the move. The first-party wheel is
 excluded from the third-party notice sweep and from the SBOM's PyPI components;
 `tests/integration/test_docker_build.sh` asserts all of this.
 
+A source name's forbidden code points have one published definition, in
+`tests/schema/omt-target-vectors.json`: the Python validator derives them from
+`unicodedata` and `omt-protocol` compiles them into a table it asserts against
+that file. Both suites read it, so a name the receiver would play cannot be one
+the dashboard silently drops.
+
 The receiver is built with checksum-locked Cargo dependencies and Rust 1.97.1
 in a digest-pinned Alpine builder stage. A `scratch` stage contains only the
 stripped `omt-receiver`, so neither the SDK nor build toolchain is part of the
@@ -90,7 +97,8 @@ are POST and CSRF protected.
 | CLI deployment | `scripts/deploy.sh` |
 | Deployer validation, fixed actions, SSH/SFTP, deploy, and Wi-Fi | `crates/omt-deployer-core/src/lib.rs`, `crates/omt-deployer-core/src/ssh.rs`, `crates/omt-deployer-core/src/ops.rs` |
 | Secure command-line deployer | `crates/rpi-omt-deploy/src/main.rs` |
-| egui desktop deployer and embedded legal texts | `crates/rpi-omt-deployer/` |
+| Deployer CLI contract | `tests/native/test_deployer_cli.sh` |
+| egui desktop deployer, its button-gating rules, and embedded legal texts | `crates/rpi-omt-deployer/` |
 | Hash-locked Rust dependencies and supply-chain gates | `Cargo.lock`, `deny.toml`, `supply-chain/`, `scripts/check-supply-chain.sh` |
 | Windows cross build | `scripts/build-windows-deployer.sh` |
 | Local toolchain provisioning | `scripts/install-dev-deps.sh`, `scripts/install-hadolint.sh`, `scripts/install-trivy.sh`, `scripts/install-arm64-emulation.sh` |

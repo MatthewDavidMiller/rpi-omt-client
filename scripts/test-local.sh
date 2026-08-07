@@ -102,9 +102,10 @@ run_test "Receiver Core" "${PROJECT_ROOT}/tools/test-receiver.sh"
 
 # ─── Rust Deployer Tests ─────────────────────────────────────
 if [[ "${QUICK_MODE}" == "true" ]]; then
-    run_test "Deployer Core" "${PROJECT_ROOT}/scripts/check-deployer.sh"
+    run_test "Deployer Core and CLI" "${PROJECT_ROOT}/scripts/check-deployer.sh"
 else
-    run_test "Deployer Core and GUI publish" "${PROJECT_ROOT}/scripts/check-deployer.sh" --publish
+    run_test "Deployer Core, CLI, and GUI publish" \
+        "${PROJECT_ROOT}/scripts/check-deployer.sh" --publish
     # Both published deployer packages come off this one Linux workstation, so
     # the Windows package is built and header-verified in the same gate that
     # builds the host one.
@@ -135,10 +136,6 @@ if ! ensure_test_container_engine; then
 fi
 
 run_test "Dockerfile lint" "${PROJECT_ROOT}/tests/unit/test_dockerfile_lint.sh"
-echo "=== Alpine Userland Integration ==="
-"${PROJECT_ROOT}/scripts/check-deployer.sh" --integration-only
-echo -e "${GREEN}PASSED${NC}: Alpine userland integration"
-echo ""
 # Builds the appliance's own ARM64 receiver stage as well as the amd64 image.
 # The gate itself requires registered emulation in every mode; there is no
 # argument or variable here that can reduce what it checks.

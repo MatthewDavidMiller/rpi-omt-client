@@ -52,8 +52,6 @@ enum Command {
 struct DeployArgs {
     #[arg(long, default_value = "/opt/omt-client")]
     remote_directory: String,
-    #[arg(long, default_value = "omt-client")]
-    image_name: String,
     #[arg(long, default_value = "omt-client-arm64.tar.gz")]
     tarball_name: String,
     #[arg(long)]
@@ -205,7 +203,6 @@ fn run(cli: Cli) -> Result<(), (i32, String)> {
                     .clone()
                     .ok_or_else(|| (2, "--project is required".into()))?,
                 remote_directory: args.remote_directory.clone(),
-                image_name: args.image_name.clone(),
                 tarball_name: args.tarball_name.clone(),
                 build_image: !args.no_build,
             };

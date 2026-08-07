@@ -225,9 +225,21 @@ fn video_name(value: VideoState) -> &'static str {
     }
 }
 fn timestamp() -> String {
-    let duration = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default();
+    format_timestamp(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default(),
+    )
+}
+
+/// Formats a Unix duration as the RFC 3339 instant the status contract carries.
+///
+/// The conversion is the civil-from-days algorithm rather than a date library:
+/// the receiver's dependency closure is audited, and this is the only date
+/// arithmetic in it. `format_timestamp_contract` pins it, because the Web
+/// consumer rejects a record whose timestamp is stale or future-dated, so a
+/// wrong calendar here reads as a receiver that has stopped publishing.
+fn format_timestamp(duration: Duration) -> String {
     let seconds = i64::try_from(duration.as_secs()).unwrap_or(i64::MAX);
     let days = seconds / 86_400;
     let day_seconds = seconds % 86_400;
@@ -297,6 +309,42 @@ mod tests {
     fn detail_contract() {
         assert_eq!(sanitize_detail("  a\nb  "), "ab");
         assert_eq!(sanitize_detail(&"x".repeat(4096)).len(), DETAIL_LIMIT);
+    }
+    #[test]
+    fn format_timestamp_contract() {
+        for (seconds, millis, expected) in [
+            (0_u64, 0_u32, "1970-01-01T00:00:00.000Z"),
+            (1, 7, "1970-01-01T00:00:01.007Z"),
+            (86_399, 999, "1970-01-01T23:59:59.999Z"),
+            (86_400, 0, "1970-01-02T00:00:00.000Z"),
+            // 2000 is a leap year and 2100 is not: the two cases the
+            // hand-written era arithmetic exists to get right.
+            (951_782_400, 0, "2000-02-29T00:00:00.000Z"),
+            (4_107_456_000, 0, "2100-02-28T00:00:00.000Z"),
+            (4_107_456_000 + 86_400, 0, "2100-03-01T00:00:00.000Z"),
+            // A representative present-day instant and a 32-bit rollover.
+            (1_767_225_600, 250, "2026-01-01T00:00:00.250Z"),
+            (2_147_483_648, 0, "2038-01-19T03:14:08.000Z"),
+        ] {
+            assert_eq!(
+                format_timestamp(Duration::new(seconds, millis * 1_000_000)),
+                expected,
+                "{seconds}s + {millis}ms"
+            );
+        }
+    }
+    #[test]
+    fn published_timestamps_parse_as_the_web_consumer_reads_them() {
+        // The consumer accepts `...Z` and compares against the current time, so
+        // a published record has to be fixed width and describe now.
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default();
+        let published = format_timestamp(now);
+        assert_eq!(published.len(), 24, "{published}");
+        assert!(published.ends_with('Z'), "{published}");
+        assert_eq!(&published[4..5], "-", "{published}");
+        assert_eq!(&published[10..11], "T", "{published}");
     }
     #[derive(Deserialize)]
     struct Vectors {

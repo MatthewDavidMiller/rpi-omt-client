@@ -84,7 +84,6 @@ pub struct Connection {
 pub struct DeployOptions {
     pub project_root: PathBuf,
     pub remote_directory: String,
-    pub image_name: String,
     pub tarball_name: String,
     pub build_image: bool,
 }
@@ -186,10 +185,8 @@ pub fn validate_options(
             "Remote install directory is not a normalized safe absolute path.",
         ));
     }
-    if !ascii_token(&value.image_name, "._-:") || !ascii_token(&value.tarball_name, "._-") {
-        return Err(ValidationError(
-            "Image and archive names contain unsafe characters.",
-        ));
+    if !ascii_token(&value.tarball_name, "._-") {
+        return Err(ValidationError("Archive name contains unsafe characters."));
     }
     Ok(())
 }

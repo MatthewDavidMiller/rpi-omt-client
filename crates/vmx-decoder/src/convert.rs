@@ -21,9 +21,6 @@ pub struct Planes<'a> {
     pub blue: &'a [u8],
     pub red: &'a [u8],
     pub chroma_stride: usize,
-    /// Opaque for BGRX output; unused by the UYVY path.
-    pub alpha: &'a [u8],
-    pub alpha_stride: usize,
 }
 
 /// The destination rectangle for one slice.
@@ -39,7 +36,6 @@ struct Rows<'a> {
     luma: &'a [u8],
     blue: &'a [u8],
     red: &'a [u8],
-    alpha: &'a [u8],
 }
 
 impl<'a> Planes<'a> {
@@ -50,7 +46,6 @@ impl<'a> Planes<'a> {
             luma: self.luma.get(row * self.luma_stride..)?.get(..width)?,
             blue: self.blue.get(row * self.chroma_stride..)?.get(..pairs)?,
             red: self.red.get(row * self.chroma_stride..)?.get(..pairs)?,
-            alpha: self.alpha.get(row * self.alpha_stride..)?.get(..width)?,
         })
     }
 }
@@ -80,10 +75,12 @@ pub fn planar_to_uyvy(planes: &Planes<'_>, target: Target, destination: &mut [u8
     }
 }
 
-/// `VMX_YUV4224ToBGRA`: convert one slice of 4:2:2 planes into packed BGRA.
+/// `VMX_YUV4224ToBGRA`: convert one slice of 4:2:2 planes into packed BGRX.
 ///
-/// The alpha plane supplies the fourth byte of each pixel; the receiver passes
-/// an opaque plane so the result is the XRGB8888 the scanout expects.
+/// The reference kernel takes the fourth byte of each pixel from an alpha
+/// plane. VMX1 carries no alpha, and the only consumer here is a DRM scanout
+/// that reads the buffer as XRGB8888, so the byte is the constant this decoder
+/// always fed it.
 pub fn yuv422_to_bgra(
     planes: &Planes<'_>,
     target: Target,
@@ -101,14 +98,10 @@ pub fn yuv422_to_bgra(
             return;
         };
         // Two pixels share one chroma sample, so they are converted together.
-        for (pixels, (((luma, alpha), &blue), &red)) in out.chunks_exact_mut(8).zip(
-            source
-                .luma
-                .chunks_exact(2)
-                .zip(source.alpha.chunks_exact(2))
-                .zip(source.blue)
-                .zip(source.red),
-        ) {
+        for (pixels, ((luma, &blue), &red)) in out
+            .chunks_exact_mut(8)
+            .zip(source.luma.chunks_exact(2).zip(source.blue).zip(source.red))
+        {
             let blue_difference = i16::from(blue) - 128;
             let red_difference = i16::from(red) - 128;
             let chroma_red = mulhi(red_difference << 6, coefficients[1]);
@@ -131,7 +124,7 @@ pub fn yuv422_to_bgra(
                         .saturating_sub(green_from_red),
                 );
                 pixel[2] = round(chroma_red.saturating_add(scaled));
-                pixel[3] = alpha[index];
+                pixel[3] = 0xFF;
             }
         }
     }

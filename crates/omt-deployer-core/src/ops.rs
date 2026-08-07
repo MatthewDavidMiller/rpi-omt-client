@@ -8,7 +8,7 @@ use crate::{
 };
 use std::fs;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::SystemTime;
@@ -67,10 +67,6 @@ fn cancelled(flag: &AtomicBool) -> io::Result<()> {
     } else {
         Ok(())
     }
-}
-
-fn emit(progress: &mut dyn FnMut(&str), message: &str) {
-    progress(message);
 }
 
 fn require_success(result: &RemoteResult, operation: &str) -> io::Result<()> {
@@ -217,7 +213,7 @@ fn build_image(
         }
         return Ok(());
     }
-    emit(progress, "Building the ARM64 appliance image...");
+    progress("Building the ARM64 appliance image...");
     let result = run_process(
         "make",
         &["build-arm64".into()],
@@ -246,12 +242,12 @@ pub fn test_connection(
     progress: &mut dyn FnMut(&str),
 ) -> io::Result<()> {
     cancelled(cancellation)?;
-    emit(progress, "Testing SSH connection...");
+    progress("Testing SSH connection...");
     let mut session = connect(connection)?;
     let result = session.run(PLATFORM_PROBE, "", cancellation)?;
     require_success(&result, "Remote platform probe")?;
     require_alpine_pi5(&result.stdout)?;
-    emit(progress, "SSH connection succeeded.");
+    progress("SSH connection succeeded.");
     Ok(())
 }
 
@@ -263,14 +259,11 @@ pub fn manage(
     progress: &mut dyn FnMut(&str),
 ) -> io::Result<String> {
     cancelled(cancellation)?;
-    emit(
-        progress,
-        match action {
-            ManagementAction::Status => "Fetching container status...",
-            ManagementAction::Logs => "Fetching recent logs...",
-            ManagementAction::Restart => "Restarting service...",
-        },
-    );
+    progress(match action {
+        ManagementAction::Status => "Fetching container status...",
+        ManagementAction::Logs => "Fetching recent logs...",
+        ManagementAction::Restart => "Restarting service...",
+    });
     let mut session = connect(connection)?;
     let command = action
         .remote_argv()
@@ -283,7 +276,7 @@ pub fn manage(
     require_success(&result, "Remote management action")?;
     let output = result.combined();
     if !output.trim().is_empty() {
-        emit(progress, &output);
+        progress(&output);
     }
     Ok(output)
 }
@@ -298,19 +291,13 @@ pub fn apply_wifi(
     validate_connection(connection).map_err(map_validation)?;
     validate_wifi(settings).map_err(map_validation)?;
     cancelled(cancellation)?;
-    emit(
-        progress,
-        if settings.connect {
-            "Applying Wi-Fi settings and requesting a connection..."
-        } else {
-            "Saving Wi-Fi profile without connecting..."
-        },
-    );
+    progress(if settings.connect {
+        "Applying Wi-Fi settings and requesting a connection..."
+    } else {
+        "Saving Wi-Fi profile without connecting..."
+    });
     if settings.connect {
-        emit(
-            progress,
-            "SSH may disconnect if the Raspberry Pi switches networks.",
-        );
+        progress("SSH may disconnect if the Raspberry Pi switches networks.");
     }
 
     let password = settings.password.expose();
@@ -362,15 +349,87 @@ pub fn apply_wifi(
         let detail = redact(&result.combined(), &secrets);
         return Err(io::Error::other(format!("Wi-Fi update failed:\n{detail}")));
     }
-    emit(
-        progress,
-        if settings.connect {
-            "Wi-Fi settings applied and connection requested."
-        } else {
-            "Wi-Fi settings saved."
-        },
-    );
+    progress(if settings.connect {
+        "Wi-Fi settings applied and connection requested."
+    } else {
+        "Wi-Fi settings saved."
+    });
     Ok(())
+}
+
+/// Where one deployment's files are staged before they are promoted.
+struct Staging<'a> {
+    stage: &'a str,
+    token: &'a str,
+    remote: &'a str,
+}
+
+fn remove_stage(session: &mut SshSession, stage_q: &str) {
+    let command = format!(
+        "if [ -d {stage_q} ] && [ ! -L {stage_q} ]; then find -P {stage_q} -xdev -depth -delete; fi"
+    );
+    // Deliberately uncancellable: this is the failure path, and the operator
+    // cancelling is one of the reasons it runs.
+    let _ = session.run(&command, "", &AtomicBool::new(false));
+}
+
+/// Uploads every manifest member, verifies each one's remote digest, and
+/// promotes the set. The caller removes the staging directory if this fails.
+fn stage_and_promote(
+    session: &mut SshSession,
+    identities: &[(String, PathBuf, ArtifactIdentity)],
+    staging: &Staging<'_>,
+    cancellation: &AtomicBool,
+    progress: &mut dyn FnMut(&str),
+) -> io::Result<()> {
+    let stage = staging.stage;
+    for (name, local, identity) in identities {
+        cancelled(cancellation)?;
+        if let Some(parent) = Path::new(name)
+            .parent()
+            .filter(|path| !path.as_os_str().is_empty())
+        {
+            let remote_parent = format!("{stage}/{}", parent.display());
+            let mkdir = format!("mkdir -p -- {}", shell_quote(&remote_parent));
+            require_success(
+                &session.run(&mkdir, "", cancellation)?,
+                "Remote staging preparation",
+            )?;
+        }
+
+        progress(&format!("Uploading {name}..."));
+        let remote_path = format!("{stage}/{name}");
+        session.upload(local, &remote_path, cancellation)?;
+        if !identity_unchanged(local, identity)? {
+            return Err(io::Error::other(format!(
+                "local deployment artifact changed during upload: {name}"
+            )));
+        }
+        let checksum = session.run(
+            &format!("sha256sum -- {}", shell_quote(&remote_path)),
+            "",
+            cancellation,
+        )?;
+        require_success(&checksum, "Remote checksum")?;
+        if parse_sha256_line(&checksum.stdout).as_ref() != Some(&identity.digest) {
+            return Err(io::Error::other(format!(
+                "SHA-256 mismatch after uploading {name}"
+            )));
+        }
+        progress(&format!("Verified SHA-256 for {name}."));
+    }
+
+    let promote = format!(
+        "bash {} promote {} {} {}",
+        shell_quote(&format!("{stage}/deploy/transaction.sh")),
+        staging.remote,
+        shell_quote(staging.token),
+        shell_quote(&format!("{stage}/deploy/manifest-v3.txt")),
+    );
+    require_success(
+        &session.run(&promote, "", cancellation)?,
+        "Deployment promotion",
+    )
 }
 
 /// Build (optional), upload, verify, recover, promote, and install the capsule.
@@ -405,7 +464,7 @@ pub fn deploy(
         identities.push((name.clone(), local.clone(), capture_identity(&local)?));
     }
 
-    emit(progress, "Connecting and checking the Raspberry Pi...");
+    progress("Connecting and checking the Raspberry Pi...");
     let mut session = connect(connection)?;
     let probe = session.run(PLATFORM_PROBE, "", cancellation)?;
     require_success(&probe, "Remote platform probe")?;
@@ -427,7 +486,7 @@ pub fn deploy(
     let staging_q = shell_quote(&staging_root);
     let stage_q = shell_quote(&stage);
 
-    let recovery = format!(
+    let recovery_command = format!(
         "if [ -x {legacy} ] && [ -f {legacy_manifest} ]; then {legacy} recover {remote_q} {legacy_manifest}; fi; \
          if [ -x {current} ]; then {current} recover {remote_q}; fi",
         legacy = shell_quote(&format!("{remote_directory}/deploy-transaction.sh")),
@@ -435,7 +494,7 @@ pub fn deploy(
         current = shell_quote(&format!("{remote_directory}/deploy/transaction.sh")),
     );
     require_success(
-        &session.run(&recovery, "", cancellation)?,
+        &session.run(&recovery_command, "", cancellation)?,
         "Interrupted deployment recovery",
     )?;
 
@@ -448,94 +507,24 @@ pub fn deploy(
         "Remote staging root validation",
     )?;
 
-    let cleanup = |session: &mut SshSession| {
-        let command = format!(
-            "if [ -d {stage_q} ] && [ ! -L {stage_q} ]; then find -P {stage_q} -xdev -depth -delete; fi"
-        );
-        let _ = session.run(&command, "", &AtomicBool::new(false));
-    };
-
-    for (name, local, identity) in &identities {
-        cancelled(cancellation).inspect_err(|_| cleanup(&mut session))?;
-        if let Some(parent) = Path::new(name)
-            .parent()
-            .filter(|path| !path.as_os_str().is_empty())
-        {
-            let remote_parent = format!("{stage}/{}", parent.display());
-            let mkdir = format!("mkdir -p -- {}", shell_quote(&remote_parent));
-            if let Err(error) = require_success(
-                &session.run(&mkdir, "", cancellation)?,
-                "Remote staging preparation",
-            ) {
-                cleanup(&mut session);
-                return Err(error);
-            }
-        }
-
-        emit(progress, &format!("Uploading {name}..."));
-        let remote_path = format!("{stage}/{name}");
-        if let Err(error) = session.upload(local, &remote_path, cancellation) {
-            cleanup(&mut session);
-            return Err(error);
-        }
-        match identity_unchanged(local, identity) {
-            Ok(true) => {}
-            Ok(false) => {
-                cleanup(&mut session);
-                return Err(io::Error::other(format!(
-                    "local deployment artifact changed during upload: {name}"
-                )));
-            }
-            Err(error) => {
-                cleanup(&mut session);
-                return Err(error);
-            }
-        }
-        let checksum = session.run(
-            &format!("sha256sum -- {}", shell_quote(&remote_path)),
-            "",
-            cancellation,
-        );
-        let checksum = match checksum {
-            Ok(value) => value,
-            Err(error) => {
-                cleanup(&mut session);
-                return Err(error);
-            }
-        };
-        if let Err(error) = require_success(&checksum, "Remote checksum") {
-            cleanup(&mut session);
-            return Err(error);
-        }
-        let Some(remote_digest) = parse_sha256_line(&checksum.stdout) else {
-            cleanup(&mut session);
-            return Err(io::Error::other(format!(
-                "SHA-256 mismatch after uploading {name}"
-            )));
-        };
-        if remote_digest != identity.digest {
-            cleanup(&mut session);
-            return Err(io::Error::other(format!(
-                "SHA-256 mismatch after uploading {name}"
-            )));
-        }
-        emit(progress, &format!("Verified SHA-256 for {name}."));
-    }
-
-    let promote = format!(
-        "bash {} promote {} {} {}",
-        shell_quote(&format!("{stage}/deploy/transaction.sh")),
-        remote_q,
-        shell_quote(&token),
-        shell_quote(&format!("{stage}/deploy/manifest-v3.txt")),
+    // One owner for the staging directory: every failure between here and a
+    // completed promotion removes it, including a transport error, which the
+    // per-step cleanup this replaced could not see.
+    let staged = stage_and_promote(
+        &mut session,
+        &identities,
+        &Staging {
+            stage: &stage,
+            token: &token,
+            remote: &remote_q,
+        },
+        cancellation,
+        progress,
     );
-    if let Err(error) = require_success(
-        &session.run(&promote, "", cancellation)?,
-        "Deployment promotion",
-    ) {
-        cleanup(&mut session);
-        return Err(error);
+    if staged.is_err() {
+        remove_stage(&mut session, &stage_q);
     }
+    staged?;
 
     let executable_paths = [
         "deploy/host/install.sh",
@@ -557,10 +546,7 @@ pub fn deploy(
         &session.run(&install, &sudo_data, cancellation)?,
         "Remote installer",
     )?;
-    emit(
-        progress,
-        "Deployment complete; use the installer URL shown above.",
-    );
+    progress("Deployment complete; use the installer URL shown above.");
     Ok(())
 }
 

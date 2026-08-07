@@ -24,7 +24,14 @@
     {"value": "a b", "valid": true},
     {"value": "", "valid": true},
     {"value": "-a-", "valid": true},
-    {"value": "omt://camera:6400", "valid": true}
+    {"value": "omt://camera:6400", "valid": true},
+    {"note": "U+00AD SOFT HYPHEN (Cf)", "value": "a\u00adb", "valid": false},
+    {"note": "U+0600 ARABIC NUMBER SIGN (Cf)", "value": "\u0600a", "valid": false},
+    {"note": "U+061C ARABIC LETTER MARK (Cf)", "value": "a\u061cb", "valid": false},
+    {"note": "U+FFF9 INTERLINEAR ANNOTATION ANCHOR (Cf)", "value": "a\ufff9b", "valid": false},
+    {"note": "U+1D173 MUSICAL SYMBOL BEGIN BEAM (Cf)", "value": "a\ud834\udd73b", "valid": false},
+    {"note": "U+E0020 TAG SPACE (Cf)", "value": "a\udb40\udc20b", "valid": false},
+    {"note": "U+2065 is unassigned (Cn), not a forbidden category", "value": "a\u2065b", "valid": true}
   ],
   "direct_targets": [
     {"value": "omt://camera.local:6400", "valid": true},
@@ -79,5 +86,19 @@
     {"value": "omt://999.1.1.1:1", "valid": true},
     {"value": "omt://xn--caf-dma.local:6400", "valid": true},
     {"value": "omt://host:65535", "valid": true}
-  ]
+  ],
+  "forbidden_name_codepoints": {
+    "description": "Every code point a discovered source name may not contain. This is the one published form of the rule: the Python validator derives it from unicodedata, the Rust validator compiles it into a table, and each suite asserts its own side against these ranges. Surrogates cannot occur in a Rust char or in valid UTF-8 and are listed for completeness.",
+    "unicode_version": "15.0.0",
+    "categories": ["Cc", "Cf", "Cs", "Zl", "Zp"],
+    "ranges": [
+      ["0000", "001F"], ["007F", "009F"], ["00AD", "00AD"], ["0600", "0605"],
+      ["061C", "061C"], ["06DD", "06DD"], ["070F", "070F"], ["0890", "0891"],
+      ["08E2", "08E2"], ["180E", "180E"], ["200B", "200F"], ["2028", "202E"],
+      ["2060", "2064"], ["2066", "206F"], ["D800", "DFFF"], ["FEFF", "FEFF"],
+      ["FFF9", "FFFB"], ["110BD", "110BD"], ["110CD", "110CD"],
+      ["13430", "1343F"], ["1BCA0", "1BCA3"], ["1D173", "1D17A"],
+      ["E0001", "E0001"], ["E0020", "E007F"]
+    ]
+  }
 }

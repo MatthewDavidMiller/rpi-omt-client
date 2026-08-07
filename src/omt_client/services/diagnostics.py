@@ -20,7 +20,7 @@ from ..discovery import is_valid_direct_target, parse_omt_sources
 from ..json_document import JsonDocumentError, load_json_document
 from ..models import CommandResult, DiagnosticResult
 from ..records import parse_key_value_record
-from ..safe_io import read_bytes, read_text, write_fixed_inode
+from ..safe_io import file_snapshot, read_bytes, read_text, write_fixed_inode
 from ..settings import AppSettings
 from .command import run_command
 from .protocols import AboutService, SourcePlaybackService
@@ -255,7 +255,17 @@ class RuntimeDiagnostics:
             time.monotonic() + self._settings.diagnostics_host_timeout_seconds,
         )
         last_detail = "host diagnostic report was not published"
+        # The report is published atomically and can reach 16 MiB, while this
+        # loop polls at 20 Hz for as long as the host budget allows. Re-reading
+        # and re-decoding an unchanged file hundreds of times can only produce
+        # the answer it already produced, so the poll is on the inode.
+        observed: tuple[int, int, int, int, int] | None = None
         while time.monotonic() < timeout_deadline:
+            snapshot = file_snapshot(self._settings.diagnostics_host_report_file)
+            if snapshot is not None and snapshot == observed:
+                time.sleep(0.05)
+                continue
+            observed = snapshot
             result = read_text(
                 self._settings.diagnostics_host_report_file,
                 HOST_REPORT_LIMIT,

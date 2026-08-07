@@ -38,7 +38,10 @@ cd "${PROJECT_ROOT}"
 if command -v cargo >/dev/null 2>&1; then
     echo "Running rustfmt and strict Clippy..."
     cargo fmt --all -- --check
-    cargo clippy --workspace --all-targets --locked -- -D warnings
+    # The egui deployer is behind a feature. Without it here, the largest
+    # single file in the workspace is never linted.
+    cargo clippy --workspace --all-targets --locked \
+        --features rpi-omt-deployer/desktop -- -D warnings
     echo "Running Rust supply-chain gates..."
     "${SCRIPT_DIR}/check-supply-chain.sh"
 else

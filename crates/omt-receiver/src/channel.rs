@@ -281,3 +281,76 @@ fn positive(value: Duration) -> Duration {
         value
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn received(payload: usize, metadata_length: u16) -> Frame {
+        let mut frame = Frame::new();
+        frame.payload = vec![0_u8; payload];
+        frame.header.metadata_length = metadata_length;
+        frame
+    }
+
+    /// `media` is what every decoder is handed, so its arithmetic decides
+    /// whether a crafted frame can make a codec read the trailing metadata --
+    /// or a length that underflows -- as media.
+    #[test]
+    fn media_excludes_the_extended_header_and_trailing_metadata() {
+        let frame = received(100, 10);
+        assert_eq!(frame.media(32).map(<[u8]>::len), Some(58));
+        assert_eq!(frame.media(0).map(<[u8]>::len), Some(90));
+        // Exactly consumed is an empty body, not a failure.
+        assert_eq!(received(32, 0).media(32).map(<[u8]>::len), Some(0));
+        // Metadata longer than the payload, and an extended header longer than
+        // what the metadata leaves, are both refusals rather than wraps.
+        assert_eq!(received(8, 10).media(0), None);
+        assert_eq!(received(40, 10).media(32), None);
+        assert_eq!(received(100, 10).media(usize::MAX), None);
+    }
+
+    /// A zone belongs to the display form of a scoped IPv6 target; passing it
+    /// to the resolver would fail the lookup the target exists to make.
+    #[test]
+    fn resolve_drops_an_ipv6_zone_and_keeps_the_port() {
+        let scoped = Endpoint {
+            host: "fe80::1%eth0".into(),
+            port: 6400,
+        };
+        let addresses = scoped.resolve().unwrap_or_else(|error| panic!("{error}"));
+        assert_eq!(addresses.len(), 1);
+        assert_eq!(addresses[0].port(), 6400);
+        assert!(addresses[0].is_ipv6());
+
+        let literal = Endpoint {
+            host: "127.0.0.1".into(),
+            port: 1,
+        };
+        assert_eq!(
+            literal
+                .resolve()
+                .unwrap_or_else(|error| panic!("{error}"))
+                .len(),
+            1
+        );
+        assert!(
+            Endpoint {
+                host: "not a host".into(),
+                port: 1,
+            }
+            .resolve()
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn a_deadline_that_has_passed_is_zero_rather_than_a_wrap() {
+        let past = Instant::now()
+            .checked_sub(Duration::from_secs(5))
+            .unwrap_or_else(|| panic!("the monotonic clock has no past"));
+        assert!(remaining(past).is_zero());
+        assert_eq!(positive(remaining(past)), Duration::from_millis(1));
+        assert!(!remaining(Instant::now() + Duration::from_secs(5)).is_zero());
+    }
+}

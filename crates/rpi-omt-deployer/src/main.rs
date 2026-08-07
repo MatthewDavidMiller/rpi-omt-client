@@ -3,13 +3,122 @@
 #![forbid(unsafe_code)]
 #![cfg_attr(feature = "desktop", windows_subsystem = "windows")]
 
+/// Which actions the form as typed allows.
+///
+/// This is deliberately outside the `desktop` module and free of egui: a
+/// disabled button is a validation rule, and restating the core's rules in the
+/// view is how the Wi-Fi button came to accept a 64-character passphrase that
+/// `validate_wifi` then refused. Compiled without the feature too, so
+/// `cargo test -p rpi-omt-deployer` cannot quietly run nothing.
+#[cfg_attr(not(feature = "desktop"), allow(dead_code))]
+mod gates {
+    use omt_deployer_core::{Secret, WifiSettings, valid_host, valid_username, validate_wifi};
+
+    /// The connection and deployment fields as the operator has typed them.
+    pub struct Form<'a> {
+        pub host: &'a str,
+        pub user: &'a str,
+        pub password: &'a str,
+        pub project_root: &'a str,
+        pub wifi_ssid: &'a str,
+        pub wifi_password: &'a str,
+    }
+
+    impl Form<'_> {
+        /// Everything `omt_deployer_core::connect` will insist on.
+        pub fn can_connect(&self) -> bool {
+            valid_host(self.host) && valid_username(self.user) && !self.password.is_empty()
+        }
+
+        pub fn can_deploy(&self) -> bool {
+            self.can_connect() && !self.project_root.is_empty()
+        }
+
+        pub fn can_apply_wifi(&self) -> bool {
+            self.can_connect()
+                && Secret::new(self.wifi_password.to_owned()).is_ok_and(|password| {
+                    validate_wifi(&WifiSettings {
+                        ssid: self.wifi_ssid.to_owned(),
+                        password,
+                        connect: false,
+                    })
+                    .is_ok()
+                })
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::Form;
+
+        fn form<'a>(wifi_ssid: &'a str, wifi_password: &'a str) -> Form<'a> {
+            Form {
+                host: "pi.local",
+                user: "root",
+                password: "secret",
+                project_root: "/src/rpi-omt-client",
+                wifi_ssid,
+                wifi_password,
+            }
+        }
+
+        #[test]
+        fn connection_fields_gate_every_action() {
+            let complete = form("", "");
+            assert!(complete.can_connect());
+            assert!(complete.can_deploy());
+            for incomplete in [
+                Form {
+                    host: "-pi.local",
+                    ..form("", "")
+                },
+                Form {
+                    user: "ro ot",
+                    ..form("", "")
+                },
+                Form {
+                    password: "",
+                    ..form("", "")
+                },
+            ] {
+                assert!(!incomplete.can_connect());
+                assert!(!incomplete.can_deploy());
+                assert!(!incomplete.can_apply_wifi());
+            }
+            assert!(
+                !Form {
+                    project_root: "",
+                    ..form("", "")
+                }
+                .can_deploy()
+            );
+        }
+
+        /// The button and the core have to agree, or the operator gets an
+        /// enabled control that fails the moment it is used.
+        #[test]
+        fn the_wifi_button_follows_validate_wifi() {
+            assert!(form("studio", "passphrase").can_apply_wifi());
+            assert!(form("studio", &"f".repeat(64)).can_apply_wifi());
+            // 64 characters that are not a hex PSK: neither a passphrase (8-63)
+            // nor a key, which the old length-only check let through.
+            assert!(!form("studio", &"z".repeat(64)).can_apply_wifi());
+            assert!(!form("studio", "short").can_apply_wifi());
+            assert!(!form("studio", &"p".repeat(65)).can_apply_wifi());
+            assert!(!form("", "passphrase").can_apply_wifi());
+            assert!(!form(&"s".repeat(33), "passphrase").can_apply_wifi());
+            assert!(!form("studio", "pass\u{7f}word").can_apply_wifi());
+        }
+    }
+}
+
 #[cfg(feature = "desktop")]
 mod desktop {
+    use crate::gates::Form;
     use eframe::egui;
     use omt_deployer_core::{
         AuthMethod, Connection, DeployOptions, ManagementAction, Secret, WifiSettings, apply_wifi,
-        deploy, discover_project_root, manage, test_connection, valid_host, valid_username,
-        validate_wifi,
+        deploy, discover_project_root, manage, test_connection, validate_wifi,
     };
     use std::path::PathBuf;
     use std::sync::Arc;
@@ -62,8 +171,6 @@ mod desktop {
         cancel: Arc<AtomicBool>,
         running: bool,
         events: Option<Receiver<WorkerEvent>>,
-        last_password: Zeroizing<String>,
-        last_wifi_password: Zeroizing<String>,
     }
 
     impl Default for App {
@@ -93,19 +200,20 @@ mod desktop {
                 cancel: Arc::new(AtomicBool::new(false)),
                 running: false,
                 events: None,
-                last_password: Zeroizing::new(String::new()),
-                last_wifi_password: Zeroizing::new(String::new()),
             }
         }
     }
 
     impl App {
-        fn wipe_replaced_secrets(&mut self) {
-            if *self.password != *self.last_password {
-                self.last_password = Zeroizing::new((*self.password).clone());
-            }
-            if *self.wifi_password != *self.last_wifi_password {
-                self.last_wifi_password = Zeroizing::new((*self.wifi_password).clone());
+        /// The form as typed, for the gating rules the core owns.
+        fn form(&self) -> Form<'_> {
+            Form {
+                host: &self.host,
+                user: &self.user,
+                password: &self.password,
+                project_root: &self.project_root,
+                wifi_ssid: &self.wifi_ssid,
+                wifi_password: &self.wifi_password,
             }
         }
 
@@ -222,7 +330,6 @@ mod desktop {
                 let options = DeployOptions {
                     project_root: request.project_root,
                     remote_directory: request.remote_directory,
-                    image_name: "omt-client".into(),
                     tarball_name: "omt-client-arm64.tar.gz".into(),
                     build_image: true,
                 };
@@ -248,7 +355,6 @@ mod desktop {
 
     impl eframe::App for App {
         fn update(&mut self, context: &egui::Context, _frame: &mut eframe::Frame) {
-            self.wipe_replaced_secrets();
             self.poll_worker(context);
             egui::TopBottomPanel::top("navigation").show(context, |ui| {
                 ui.horizontal_wrapped(|ui| {
@@ -276,11 +382,9 @@ mod desktop {
                     ui.label("SSH password");
                     ui.add(egui::TextEdit::singleline(&mut *self.password).password(!self.reveal));
                     ui.checkbox(&mut self.reveal, "Reveal secrets");
-                    let valid = valid_host(&self.host)
-                        && valid_username(&self.user)
-                        && !self.password.is_empty();
+                    let enabled = self.form().can_connect() && !self.running;
                     if ui
-                        .add_enabled(valid && !self.running, egui::Button::new("Test connection"))
+                        .add_enabled(enabled, egui::Button::new("Test connection"))
                         .clicked()
                     {
                         self.start_job(Job::Test);
@@ -295,13 +399,9 @@ mod desktop {
                     ui.text_edit_singleline(&mut self.project_root);
                     ui.label("Remote directory");
                     ui.text_edit_singleline(&mut self.remote_directory);
+                    let enabled = self.form().can_deploy() && !self.running;
                     if ui
-                        .add_enabled(
-                            valid_host(&self.host)
-                                && !self.project_root.is_empty()
-                                && !self.running,
-                            egui::Button::new("Deploy"),
-                        )
+                        .add_enabled(enabled, egui::Button::new("Deploy"))
                         .clicked()
                     {
                         self.start_job(Job::Deploy);
@@ -333,13 +433,9 @@ mod desktop {
                         egui::TextEdit::singleline(&mut *self.wifi_password).password(!self.reveal),
                     );
                     ui.checkbox(&mut self.wifi_connect, "Connect after saving");
+                    let enabled = self.form().can_apply_wifi() && !self.running;
                     if ui
-                        .add_enabled(
-                            !self.wifi_ssid.is_empty()
-                                && (8..=64).contains(&self.wifi_password.len())
-                                && !self.running,
-                            egui::Button::new("Apply Wi-Fi"),
-                        )
+                        .add_enabled(enabled, egui::Button::new("Apply Wi-Fi"))
                         .clicked()
                     {
                         self.start_job(Job::Wifi);
