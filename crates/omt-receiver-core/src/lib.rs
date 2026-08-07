@@ -290,35 +290,6 @@ pub fn sanitize_detail(value: &str) -> String {
     out.trim().to_owned()
 }
 
-pub trait Discovery: Send + Sync {
-    fn discover(&self, wait: Duration) -> Result<Vec<Source>, String>;
-}
-pub trait Channel: Send {
-    fn receive(&mut self, deadline: Instant) -> Result<MediaFrame, String>;
-}
-pub trait Presenter: Send {
-    fn present(&mut self, frame: &MediaFrame) -> PresentOutcome;
-}
-pub trait AudioOutput: Send {
-    fn write(&mut self, frame: &MediaFrame) -> Result<(), String>;
-}
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub struct Source {
-    pub name: String,
-    pub target: String,
-    pub kind: &'static str,
-}
-#[derive(Clone, Debug)]
-pub struct MediaFrame {
-    pub data: Vec<u8>,
-}
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum PresentOutcome {
-    Presented,
-    UnsupportedFormat(String),
-    Failed(String),
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

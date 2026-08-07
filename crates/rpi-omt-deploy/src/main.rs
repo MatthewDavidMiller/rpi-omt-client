@@ -2,12 +2,14 @@
 
 use clap::{Args, Parser, Subcommand};
 use omt_deployer_core::{
-    AuthMethod, Connection, DeployOptions, ManagementAction, Secret, WifiSettings, derive_wpa_psk,
-    load_manifest, validate_connection, validate_options, validate_wifi,
+    AuthMethod, Connection, DeployOptions, ManagementAction, Secret, WifiSettings, apply_wifi,
+    deploy, load_manifest, manage, validate_connection, validate_options, validate_wifi,
 };
 use serde::{Deserialize, Serialize};
 use std::io::{self, Read};
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 const VERSION: &str = match option_env!("RPI_OMT_CLIENT_VERSION") {
     Some(value) => value,
@@ -121,6 +123,13 @@ fn connection(cli: &Cli, mut values: SecretInput) -> Result<Connection, String> 
         values.password =
             Some(rpassword::prompt_password("SSH password: ").map_err(|e| e.to_string())?);
     }
+    if cli.interactive_secrets && values.sudo_password.is_none() {
+        let prompted = rpassword::prompt_password("sudo password (empty if passwordless): ")
+            .map_err(|e| e.to_string())?;
+        if !prompted.is_empty() {
+            values.sudo_password = Some(prompted);
+        }
+    }
     let connection = Connection {
         host,
         username,
@@ -141,9 +150,18 @@ fn connection(cli: &Cli, mut values: SecretInput) -> Result<Connection, String> 
 fn needs_connection(command: &Command) -> bool {
     !matches!(command, Command::Check | Command::SetupEmulation)
 }
+fn progress_emitter(json: bool) -> impl FnMut(&str) {
+    move |message: &str| {
+        for line in message.lines() {
+            if !line.is_empty() {
+                emit(json, "progress", line, None);
+            }
+        }
+    }
+}
 fn run(cli: Cli) -> Result<(), (i32, String)> {
     let mut secrets = read_secrets(cli.secrets_stdin).map_err(|e| (2, e))?;
-    let _connection = if needs_connection(&cli.command) {
+    let connection = if needs_connection(&cli.command) {
         Some(
             connection(
                 &cli,
@@ -159,6 +177,7 @@ fn run(cli: Cli) -> Result<(), (i32, String)> {
     } else {
         None
     };
+    let cancellation = Arc::new(AtomicBool::new(false));
     match &cli.command {
         Command::Check => {
             let root = cli
@@ -191,13 +210,16 @@ fn run(cli: Cli) -> Result<(), (i32, String)> {
                 build_image: !args.no_build,
             };
             validate_options(&options, true).map_err(|e| (2, e.to_string()))?;
+            let connection = connection.ok_or_else(|| (2, "connection required".into()))?;
+            let mut progress = progress_emitter(cli.json);
+            deploy(&connection, &options, &cancellation, &mut progress)
+                .map_err(|e| (1, e.to_string()))?;
             emit(
                 cli.json,
-                "error",
-                "SSH deployment adapter is unavailable in this build.",
-                Some(false),
+                "result",
+                "Deployment completed successfully.",
+                Some(true),
             );
-            return Err((1, "operational failure".into()));
         }
         Command::Wifi(args) => {
             let password = if let Some(value) = secrets.wifi_password.take() {
@@ -221,15 +243,11 @@ fn run(cli: Cli) -> Result<(), (i32, String)> {
                 connect: !args.no_connect,
             };
             validate_wifi(&settings).map_err(|e| (2, e.to_string()))?;
-            let _psk = derive_wpa_psk(&settings.ssid, &settings.password)
+            let connection = connection.ok_or_else(|| (2, "connection required".into()))?;
+            let mut progress = progress_emitter(cli.json);
+            apply_wifi(&connection, &settings, &cancellation, &mut progress)
                 .map_err(|e| (1, e.to_string()))?;
-            emit(
-                cli.json,
-                "error",
-                "SSH Wi-Fi adapter is unavailable in this build.",
-                Some(false),
-            );
-            return Err((1, "operational failure".into()));
+            emit(cli.json, "result", "Wi-Fi settings applied.", Some(true));
         }
         Command::Status | Command::Logs | Command::Restart => {
             let action = match cli.command {
@@ -237,14 +255,16 @@ fn run(cli: Cli) -> Result<(), (i32, String)> {
                 Command::Logs => ManagementAction::Logs,
                 _ => ManagementAction::Restart,
             };
-            let _fixed = action.remote_argv();
+            let connection = connection.ok_or_else(|| (2, "connection required".into()))?;
+            let mut progress = progress_emitter(cli.json);
+            manage(&connection, action, &cancellation, &mut progress)
+                .map_err(|e| (1, e.to_string()))?;
             emit(
                 cli.json,
-                "error",
-                "SSH management adapter is unavailable in this build.",
-                Some(false),
+                "result",
+                "Remote management action succeeded.",
+                Some(true),
             );
-            return Err((1, "operational failure".into()));
         }
     }
     Ok(())
@@ -253,12 +273,10 @@ fn main() {
     let cli = Cli::parse();
     let json = cli.json;
     if let Err((code, message)) = run(cli) {
-        if message != "operational failure" {
-            if json {
-                emit(true, "error", &message, Some(false));
-            } else {
-                eprintln!("{message}");
-            }
+        if json {
+            emit(true, "error", &message, Some(false));
+        } else {
+            eprintln!("{message}");
         }
         std::process::exit(code);
     }

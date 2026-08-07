@@ -54,6 +54,13 @@ literal "${PROJECT_ROOT}/Makefile" 'test-receiver:' "Make exposes test-receiver"
 literal "${PROJECT_ROOT}/Makefile" 'test-deployer:' "Make exposes test-deployer"
 literal "${PROJECT_ROOT}/scripts/security-scan.sh" '--skip-files vars.yml' "Security scan excludes vars.yml"
 
+executable "${PROJECT_ROOT}/scripts/check-supply-chain.sh" "Supply-chain gate is executable"
+literal "${PROJECT_ROOT}/scripts/check-supply-chain.sh" 'cargo deny check' "cargo-deny is invoked by a gate"
+literal "${PROJECT_ROOT}/scripts/check-supply-chain.sh" 'cargo vet check' "cargo-vet is invoked by a gate"
+literal "${PROJECT_ROOT}/supply-chain/config.toml" '[exemptions.' "cargo-vet exemptions cover shipped crates"
+literal "${PROJECT_ROOT}/crates/omt-deployer-core/src/ssh.rs" 'check_known_hosts' "Deployer verifies OpenSSH known_hosts"
+literal "${PROJECT_ROOT}/crates/omt-deployer-core/src/ops.rs" 'wpa_cli -i wlan0' "Wi-Fi updates use wpa_cli"
+
 skip_escapes="$(grep -rInE 'SKIP_RETURN_CODE|pytest\.(skip|mark\.skip|mark\.xfail)|SKIP\$\{NC\}|"SKIP:' "${PROJECT_ROOT}/tests" "${PROJECT_ROOT}/scripts" "${PROJECT_ROOT}/tools" --include='*.sh' --include='*.py' --exclude-dir=.venv --exclude="$(basename -- "${BASH_SOURCE[0]}")" || true)"
 [[ -z "${skip_escapes}" ]] && pass "No gate silently skips work" || { printf '%s\n' "${skip_escapes}" >&2; fail "No gate silently skips work"; }
 literal "${PROJECT_ROOT}/tests/conftest.py" 'session.exitstatus = 1' "Python suite fails on excused cases"

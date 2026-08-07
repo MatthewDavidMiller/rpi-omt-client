@@ -27,6 +27,7 @@ mkdir -p \
     "${FIXTURE}/fake-bin" \
     "${OUTSIDE}"
 cp "${ROOT}/scripts/lint.sh" "${FIXTURE}/scripts/lint.sh"
+cp "${ROOT}/scripts/check-supply-chain.sh" "${FIXTURE}/scripts/check-supply-chain.sh"
 touch \
     "${FIXTURE}/deploy/Dockerfile" \
     "${FIXTURE}/deploy/compose.yml" \
@@ -34,7 +35,7 @@ touch \
     "${FIXTURE}/.yamllint.yml" \
     "${FIXTURE}/src/omt_client/__init__.py"
 
-for command_name in cargo shellcheck hadolint; do
+for command_name in cargo cargo-deny cargo-vet shellcheck hadolint; do
     cat > "${FIXTURE}/fake-bin/${command_name}" <<'EOF'
 #!/bin/bash
 exit 0

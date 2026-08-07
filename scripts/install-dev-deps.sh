@@ -160,6 +160,13 @@ rustup toolchain install "${RUST_PIN}" --profile minimal --component clippy,rust
 RUST_TARGETS=(x86_64-pc-windows-gnu aarch64-unknown-linux-musl)
 rustup target add --toolchain "${RUST_PIN}" "${RUST_TARGETS[@]}"
 
+# Supply-chain gates (scripts/check-supply-chain.sh) require these Cargo tools.
+for crate in cargo-deny cargo-vet; do
+    if ! command -v "${crate}" >/dev/null 2>&1; then
+        cargo install "${crate}" --locked
+    fi
+done
+
 if ! command -v x86_64-w64-mingw32-gcc >/dev/null 2>&1; then
     install_windows_cross_toolchain
 fi
@@ -185,7 +192,7 @@ fi
 
 echo ""
 echo "=== Development Dependency Summary ==="
-summary_tools=(cargo curl pkg-config python3 rustc rustfmt sha512sum shellcheck tar hadolint trivy)
+summary_tools=(cargo cargo-deny cargo-vet curl pkg-config python3 rustc rustfmt sha512sum shellcheck tar hadolint trivy)
 if [[ "$(uname -s)" == "Linux" ]]; then
     # Podman or Docker runs the image gates; the mingw toolchain cross-builds
     # the Windows deployer that ships alongside the Linux one.

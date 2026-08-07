@@ -1,5 +1,11 @@
 #![forbid(unsafe_code)]
 
+mod ops;
+mod ssh;
+
+pub use ops::{apply_wifi, connect, deploy, manage, test_connection};
+pub use ssh::{RemoteResult, SshSession};
+
 use hmac::Hmac;
 use pbkdf2::pbkdf2;
 use serde::{Deserialize, Serialize};
@@ -384,9 +390,30 @@ fn spawn_reader(mut input: impl Read + Send + 'static, tx: mpsc::Sender<Vec<u8>>
     });
 }
 
+/// Thin adapter contract consumed by higher-level operations.
 pub trait Remote: Send {
-    fn run(&mut self, action: ManagementAction, cancellation: &AtomicBool) -> io::Result<String>;
+    fn run(
+        &mut self,
+        command: &str,
+        stdin: &str,
+        cancellation: &AtomicBool,
+    ) -> io::Result<RemoteResult>;
     fn upload(&mut self, local: &Path, remote: &str, cancellation: &AtomicBool) -> io::Result<()>;
+}
+
+impl Remote for SshSession {
+    fn run(
+        &mut self,
+        command: &str,
+        stdin: &str,
+        cancellation: &AtomicBool,
+    ) -> io::Result<RemoteResult> {
+        Self::run(self, command, stdin, cancellation)
+    }
+
+    fn upload(&mut self, local: &Path, remote: &str, cancellation: &AtomicBool) -> io::Result<()> {
+        Self::upload(self, local, remote, cancellation)
+    }
 }
 
 #[cfg(test)]
@@ -408,5 +435,22 @@ mod tests {
             derived.expose(),
             "f42c6fc52df0ebef9ebb4b90b38a5f902e83fe1b135a70e23aed762e9710a12e"
         );
+    }
+    #[test]
+    fn manifest_requires_transaction_members() {
+        let dir = std::env::temp_dir().join(format!("omt-manifest-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap_or_else(|e| panic!("{e}"));
+        let path = dir.join("manifest-v3.txt");
+        fs::write(&path, "version=3\nLICENSE\n").unwrap_or_else(|e| panic!("{e}"));
+        assert!(load_manifest(&path).is_err());
+        fs::write(
+            &path,
+            "version=3\ndeploy/transaction.sh\ndeploy/manifest-v3.txt\n",
+        )
+        .unwrap_or_else(|e| panic!("{e}"));
+        let members = load_manifest(&path).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(members.len(), 2);
+        let _ = fs::remove_dir_all(&dir);
     }
 }

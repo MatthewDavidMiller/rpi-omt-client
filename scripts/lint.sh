@@ -39,6 +39,8 @@ if command -v cargo >/dev/null 2>&1; then
     echo "Running rustfmt and strict Clippy..."
     cargo fmt --all -- --check
     cargo clippy --workspace --all-targets --locked -- -D warnings
+    echo "Running Rust supply-chain gates..."
+    "${SCRIPT_DIR}/check-supply-chain.sh"
 else
     missing_tool "cargo"
 fi

@@ -13,7 +13,7 @@
 | HDMI audio through ALSA | `crates/omt-receiver/src/audio.rs` |
 | Playback supervisor, retry, and audio worker | `crates/omt-receiver/src/play.rs` |
 | OMT wire transport and validation | `crates/omt-protocol/src/lib.rs` |
-| Status projection, traits, and atomic publication | `crates/omt-receiver-core/src/lib.rs` |
+| Status projection and atomic publication | `crates/omt-receiver-core/src/lib.rs` |
 | Decode-only VMX1 implementation | `crates/vmx-decoder/` |
 | VMX bitstream and colour conversion | `crates/vmx-decoder/src/bitstream.rs`, `crates/vmx-decoder/src/convert.rs` |
 | Inverse DCT: portable definition, AArch64 NEON kernel, and the choice between them | `crates/vmx-decoder/src/idct/scalar.rs`, `crates/vmx-decoder/src/idct/neon.rs`, `crates/vmx-decoder/src/idct/mod.rs` |
@@ -88,10 +88,10 @@ are POST and CSRF protected.
 | HDMI boot-configuration rules | `deploy/lib/hdmi-config.sh` |
 | Deployment contract | `deploy/manifest-v3.txt`, `deploy/transaction.sh` |
 | CLI deployment | `scripts/deploy.sh` |
-| Deployer validation, fixed actions, and processes | `crates/omt-deployer-core/src/lib.rs` |
+| Deployer validation, fixed actions, SSH/SFTP, deploy, and Wi-Fi | `crates/omt-deployer-core/src/lib.rs`, `crates/omt-deployer-core/src/ssh.rs`, `crates/omt-deployer-core/src/ops.rs` |
 | Secure command-line deployer | `crates/rpi-omt-deploy/src/main.rs` |
 | egui desktop deployer and embedded legal texts | `crates/rpi-omt-deployer/` |
-| Hash-locked Rust dependencies | `Cargo.lock`, `deny.toml`, `supply-chain/config.toml` |
+| Hash-locked Rust dependencies and supply-chain gates | `Cargo.lock`, `deny.toml`, `supply-chain/`, `scripts/check-supply-chain.sh` |
 | Windows cross build | `scripts/build-windows-deployer.sh` |
 | Local toolchain provisioning | `scripts/install-dev-deps.sh`, `scripts/install-hadolint.sh`, `scripts/install-trivy.sh`, `scripts/install-arm64-emulation.sh` |
 

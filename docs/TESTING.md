@@ -61,12 +61,15 @@ caps.
 
 `make test-deployer` builds the Rust core, CLI, and GUI and tests validation,
 quoting, SHA-256, secure tokens, Wi-Fi PSK vectors, bounded processes, and
-manifest-v3 path safety. Publish mode builds the egui GUI and CLI.
+manifest-v3 path safety. Publish mode builds the egui GUI and CLI. The SSH
+adapter rejects missing `known_hosts` files and unknown or changed host keys;
+legacy SHA-1 host-key hashes and CBC ciphers are excluded from negotiation.
 
 The supply-chain gate rejects every tracked C/C++ source, Git Cargo dependency,
-or unlocked registry package. Container integration checks that no C++
-standard-library payload ships and that Python's decimal fallback remains
-functional.
+or unlocked registry package. `scripts/check-supply-chain.sh` also runs
+`cargo deny` and `cargo vet` against `deny.toml` and `supply-chain/`. Container
+integration checks that no C++ standard-library payload ships and that Python's
+decimal fallback remains functional.
 
 Restricted or offline builders use a trusted Cargo registry mirror populated
 with the exact checksums in `Cargo.lock`.
@@ -122,8 +125,8 @@ staleness threshold.
 
 ## Lint and legal gates
 
-`./scripts/lint.sh` runs Bash syntax, ShellCheck, Hadolint, yamllint, Ruff, and
-mypy. The legal gate is:
+`./scripts/lint.sh` runs rustfmt, Clippy, the supply-chain gate, Bash syntax,
+ShellCheck, Hadolint, yamllint, Ruff, and mypy. The legal gate is:
 
 ```bash
 python3 scripts/check-legal-notices.py
