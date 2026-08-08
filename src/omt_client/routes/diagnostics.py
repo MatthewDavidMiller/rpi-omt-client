@@ -13,12 +13,13 @@ diagnostics_blueprint = Blueprint("diagnostics", __name__)
 
 def _render(result: DiagnosticResult | None = None) -> ResponseReturnValue:
     container = services()
-    source, direct_target = container.source.configuration()
+    configuration = container.source.configuration()
     return render_template(
         "diagnostics.html",
         app_version=container.about.version(),
-        current_source=source,
-        current_direct_target=direct_target,
+        current_source=configuration.source,
+        current_direct_target=configuration.direct_address,
+        configuration_error=configuration.error,
         omt_status=container.diagnostics.status(),
         result=result,
     )

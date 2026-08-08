@@ -9,6 +9,9 @@
         {% if network.error %}
         <p class="notice notice-warning" role="status">{{ network.error }}</p>
         {% endif %}
+        {% if configuration_error %}
+        <p class="notice notice-warning" role="status">Saved OMT target is invalid: {{ configuration_error }}</p>
+        {% endif %}
         <form method="POST" action="{{ url_for('network.network_settings') }}">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div class="field">

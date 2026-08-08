@@ -193,9 +193,10 @@ fn interleave(
             } else {
                 0.0
             };
-            if let Some(slot) = out.get_mut(sample * channels + channel) {
-                *slot = value;
-            }
+            let Some(slot) = out.get_mut(sample * channels + channel) else {
+                return Err("OMT audio output buffer is too short".to_owned());
+            };
+            *slot = value;
         }
     }
     Ok(())
@@ -262,6 +263,13 @@ mod tests {
     fn a_short_body_is_refused_rather_than_read_past() {
         let body = planar(&[1.0, 2.0, 3.0]);
         let mut out = [0.0_f32; 4];
+        assert!(interleave(&body, 0b11, 2, 2, &mut out).is_err());
+    }
+
+    #[test]
+    fn a_short_output_is_refused_rather_than_skipped() {
+        let body = planar(&[1.0, 2.0, 3.0, 4.0]);
+        let mut out = [0.0_f32; 3];
         assert!(interleave(&body, 0b11, 2, 2, &mut out).is_err());
     }
 

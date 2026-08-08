@@ -110,6 +110,32 @@ def _discovery_json(result: CommandResult) -> str:
     )
 
 
+def _receive_probe_json(text: str, *, skipped: bool = False) -> str:
+    """Return a valid JSON member for the current-target receive probe."""
+    if skipped:
+        return json.dumps(
+            {"ok": False, "error": text.strip() or "Receive probe skipped."},
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+    try:
+        document = load_json_document(text)
+    except JsonDocumentError:
+        document = None
+    if isinstance(document, dict):
+        return json.dumps(
+            document,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+    detail = text.strip() or "Receiver returned invalid receive-probe JSON."
+    return json.dumps(
+        {"ok": False, "error": detail},
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+
+
 @dataclass(frozen=True)
 class _ContainerReport:
     """The container's own answers, already resolved into archive members."""
@@ -419,15 +445,20 @@ class RuntimeDiagnostics:
         version_result, status_result = self._runtime_checks(deadline)
         runtime = _runtime_report(version_result, status_result).command.stdout
         discovery_result = self._discovery(deadline).command
-        source, _address = self._source.configuration()
-        if self._settings.diagnostics_receive_probe and source:
+        configuration = self._source.configuration()
+        if configuration.error:
+            receive_probe = _receive_probe_json(
+                f"skipped: {configuration.error}",
+                skipped=True,
+            )
+        elif self._settings.diagnostics_receive_probe and configuration.source:
             remaining = max(0.0, deadline - time.monotonic())
             probe = _run_before_deadline(
                 [
                     self._settings.receiver_command,
                     "probe",
                     "--target",
-                    source,
+                    configuration.source,
                     "--timeout-ms",
                     str(max(1, min(3000, int(remaining * 1000)))),
                     "--json",
@@ -435,9 +466,14 @@ class RuntimeDiagnostics:
                 min(5, remaining),
                 deadline,
             )
-            receive_probe = probe.stdout or probe.error or probe.stderr
+            receive_probe = _receive_probe_json(
+                probe.stdout or probe.error or probe.stderr,
+            )
         else:
-            receive_probe = "skipped: no current target or receive probe disabled\n"
+            receive_probe = _receive_probe_json(
+                "skipped: no current target or receive probe disabled",
+                skipped=True,
+            )
         return _ContainerReport(
             runtime=runtime,
             # Keep the archive member valid JSON even when the command fails or
@@ -560,7 +596,7 @@ class RuntimeDiagnostics:
                 # member while retaining compression for the text diagnostics.
                 packet_info = zipfile.ZipInfo(
                     "host-network.pcap",
-                    date_time=datetime.now().timetuple()[:6],
+                    date_time=datetime.now(UTC).timetuple()[:6],
                 )
                 packet_info.compress_type = zipfile.ZIP_STORED
                 with archive.open(packet_info, "w") as destination:

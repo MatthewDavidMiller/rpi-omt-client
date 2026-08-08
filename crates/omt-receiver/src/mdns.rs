@@ -16,7 +16,7 @@ use async_io::Timer;
 use futures_lite::StreamExt;
 use futures_lite::future;
 use omt_protocol::is_valid_source_name;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::time::Instant;
 use zbus::zvariant::OwnedObjectPath;
 use zbus::{Connection, Message, MessageStream, Proxy};
@@ -27,6 +27,8 @@ const SERVICE_TYPE: &str = "_omt._tcp";
 const UNSPEC: i32 = -1;
 /// Cap on concurrently resolving services, bounding a flooded local network.
 const MAX_RESOLVERS: usize = 256;
+/// Cap on remembered removals so a flapping network cannot grow the set without bound.
+const MAX_REMOVED: usize = 256;
 
 /// True when the system bus is reachable and Avahi is registered on it.
 #[must_use]
@@ -66,7 +68,7 @@ async fn browse_inner(deadline: Instant, capacity: usize) -> zbus::Result<Vec<So
 
     let mut resolvers: Vec<OwnedObjectPath> = Vec::new();
     let mut found: BTreeMap<String, Endpoint> = BTreeMap::new();
-    let mut removed: Vec<String> = Vec::new();
+    let mut removed: HashSet<String> = HashSet::new();
 
     loop {
         let next = future::or(async { stream.next().await.map(Some) }, async {
@@ -101,7 +103,9 @@ async fn browse_inner(deadline: Instant, capacity: usize) -> zbus::Result<Vec<So
                     .deserialize::<(i32, i32, String, String, String)>()
                 {
                     found.remove(&name);
-                    removed.push(name);
+                    if removed.len() < MAX_REMOVED {
+                        removed.insert(name);
+                    }
                 }
             }
             Some("Found") => {

@@ -2,7 +2,7 @@
 # Test Flask app syntax
 # Run with: ./tests/unit/test_flask_app_syntax.sh
 
-set -e
+set -euo pipefail
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'

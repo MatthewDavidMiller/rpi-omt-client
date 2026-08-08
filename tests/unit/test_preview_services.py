@@ -80,6 +80,8 @@ def test_preview_authentication_rotates_and_revokes_sessions():
     app = Flask(__name__)
     app.secret_key = "test"
     with app.test_request_context("/"):
+        session["authenticated"] = True
+        session["password_digest"] = services.auth.password_digest
         session["session_id"] = first
         assert services.auth.is_current() is False
         session["session_id"] = second

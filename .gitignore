@@ -45,6 +45,7 @@ tests/.venv/
 /env/
 
 # IDE
+.cursor/
 .vscode/
 .idea/
 .vs/

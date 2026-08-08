@@ -278,28 +278,49 @@ impl Output {
 
         let mut surfaces = Vec::new();
         for _ in 0..BUFFERS {
-            surfaces.push(self.create_surface(&mode)?);
+            match self.create_surface(&mode) {
+                Ok(surface) => surfaces.push(surface),
+                Err(error) => {
+                    self.destroy_surfaces(surfaces);
+                    return Err(error);
+                }
+            }
         }
-        let first = surfaces
-            .first()
-            .map(|surface| surface.framebuffer)
-            .ok_or_else(|| Present::Failed("Unable to create DRM buffers".into()))?;
-        self.card
+        let Some(first) = surfaces.first().map(|surface| surface.framebuffer) else {
+            self.destroy_surfaces(surfaces);
+            return Err(Present::Failed("Unable to create DRM buffers".into()));
+        };
+        if let Err(error) = self
+            .card
             .set_crtc(crtc, Some(first), (0, 0), &[handle], Some(mode))
-            .map_err(|error| Present::Failed(format!("Unable to set DRM mode: {error}")))?;
+        {
+            self.destroy_surfaces(surfaces);
+            return Err(Present::Failed(format!("Unable to set DRM mode: {error}")));
+        }
 
-        let width = usize::try_from(header.width)
-            .map_err(|_| Present::UnsupportedFormat("Unsupported video width".into()))?;
-        let height = usize::try_from(header.height)
-            .map_err(|_| Present::UnsupportedFormat("Unsupported video height".into()))?;
-        let decoder = Decoder::new(
+        let Ok(width) = usize::try_from(header.width) else {
+            self.destroy_surfaces(surfaces);
+            return Err(Present::UnsupportedFormat("Unsupported video width".into()));
+        };
+        let Ok(height) = usize::try_from(header.height) else {
+            self.destroy_surfaces(surfaces);
+            return Err(Present::UnsupportedFormat(
+                "Unsupported video height".into(),
+            ));
+        };
+        let decoder = match Decoder::new(
             Dimensions { width, height },
             ColorSpace::resolve(header.color_space, height),
             DECODE_WORKERS,
-        )
-        .map_err(|error| {
-            Present::UnsupportedFormat(format!("Unable to create the VMX decoder: {error}"))
-        })?;
+        ) {
+            Ok(decoder) => decoder,
+            Err(error) => {
+                self.destroy_surfaces(surfaces);
+                return Err(Present::UnsupportedFormat(format!(
+                    "Unable to create the VMX decoder: {error}"
+                )));
+            }
+        };
 
         self.active = Some(Configured {
             crtc,
@@ -313,6 +334,17 @@ impl Output {
         Ok(())
     }
 
+    /// Destroys dumb buffers and framebuffers that never reached `active`.
+    ///
+    /// Kernel objects outlive a dropped Rust handle, so every configure error
+    /// path that already allocated surfaces must hand them back here.
+    fn destroy_surfaces(&self, surfaces: Vec<Surface>) {
+        for surface in surfaces {
+            let _ = self.card.destroy_framebuffer(surface.framebuffer);
+            let _ = self.card.destroy_dumb_buffer(surface.buffer);
+        }
+    }
+
     fn create_surface(&self, mode: &Mode) -> Result<Surface, Present> {
         let (width, height) = mode.size();
         let buffer = self
@@ -323,12 +355,15 @@ impl Output {
                 32,
             )
             .map_err(|error| Present::Failed(format!("Unable to create DRM buffer: {error}")))?;
-        let framebuffer = self
-            .card
-            .add_framebuffer(&buffer, 24, 32)
-            .map_err(|error| {
-                Present::Failed(format!("Unable to register DRM framebuffer: {error}"))
-            })?;
+        let framebuffer = match self.card.add_framebuffer(&buffer, 24, 32) {
+            Ok(framebuffer) => framebuffer,
+            Err(error) => {
+                let _ = self.card.destroy_dumb_buffer(buffer);
+                return Err(Present::Failed(format!(
+                    "Unable to register DRM framebuffer: {error}"
+                )));
+            }
+        };
         Ok(Surface {
             buffer,
             framebuffer,

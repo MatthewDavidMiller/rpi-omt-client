@@ -32,4 +32,5 @@ if __name__ == "__main__":
     print("Open http://localhost:5000")
     print(f"Password: {PASSWORD}")
     print("All appliance services are replaced by in-memory fakes.")
-    app.run(host="127.0.0.1", port=5000, debug=True)
+    debug = os.environ.get("OMT_PREVIEW_DEBUG") == "1"
+    app.run(host="127.0.0.1", port=5000, debug=debug)

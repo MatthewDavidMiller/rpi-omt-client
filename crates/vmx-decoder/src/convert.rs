@@ -51,16 +51,24 @@ impl<'a> Planes<'a> {
 }
 
 /// `VMX_PlanarToUYVY`: interleave one slice of 4:2:2 planes into packed UYVY.
-pub fn planar_to_uyvy(planes: &Planes<'_>, target: Target, destination: &mut [u8]) {
+///
+/// # Errors
+/// Returns an error when a source plane or the destination is shorter than the
+/// declared rectangle, so a truncated decode cannot look successful.
+pub fn planar_to_uyvy(
+    planes: &Planes<'_>,
+    target: Target,
+    destination: &mut [u8],
+) -> Result<(), ()> {
     for row in 0..target.height {
         let Some(source) = planes.row(row, target.width) else {
-            return;
+            return Err(());
         };
         let Some(out) = destination
             .get_mut(row * target.stride..)
             .and_then(|rest| rest.get_mut(..target.width * 2))
         else {
-            return;
+            return Err(());
         };
         // One output group is two pixels: U, Y, V, Y.
         for (group, ((luma, &blue), &red)) in out
@@ -73,6 +81,7 @@ pub fn planar_to_uyvy(planes: &Planes<'_>, target: Target, destination: &mut [u8
             group[3] = luma[1];
         }
     }
+    Ok(())
 }
 
 /// `VMX_YUV4224ToBGRA`: convert one slice of 4:2:2 planes into packed BGRX.
@@ -81,21 +90,25 @@ pub fn planar_to_uyvy(planes: &Planes<'_>, target: Target, destination: &mut [u8
 /// plane. VMX1 carries no alpha, and the only consumer here is a DRM scanout
 /// that reads the buffer as XRGB8888, so the byte is the constant this decoder
 /// always fed it.
+///
+/// # Errors
+/// Returns an error when a source plane or the destination is shorter than the
+/// declared rectangle, so a truncated decode cannot look successful.
 pub fn yuv422_to_bgra(
     planes: &Planes<'_>,
     target: Target,
     destination: &mut [u8],
     coefficients: &[i16; 5],
-) {
+) -> Result<(), ()> {
     for row in 0..target.height {
         let Some(source) = planes.row(row, target.width) else {
-            return;
+            return Err(());
         };
         let Some(out) = destination
             .get_mut(row * target.stride..)
             .and_then(|rest| rest.get_mut(..target.width * 4))
         else {
-            return;
+            return Err(());
         };
         // Two pixels share one chroma sample, so they are converted together.
         for (pixels, ((luma, &blue), &red)) in out
@@ -128,6 +141,7 @@ pub fn yuv422_to_bgra(
             }
         }
     }
+    Ok(())
 }
 
 fn mulhi(a: i16, b: i16) -> i16 {
@@ -136,4 +150,59 @@ fn mulhi(a: i16, b: i16) -> i16 {
 
 fn round(value: i16) -> u8 {
     (value.saturating_add(8) >> 4).clamp(0, 255) as u8
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Planes, Target, planar_to_uyvy, yuv422_to_bgra};
+    use crate::tables::YUV_RGB_709;
+
+    #[test]
+    fn uyvy_refuses_a_short_luma_plane() {
+        let planes = Planes {
+            luma: &[0_u8; 8],
+            luma_stride: 8,
+            blue: &[0_u8; 4],
+            red: &[0_u8; 4],
+            chroma_stride: 4,
+        };
+        let mut out = [0_u8; 32];
+        assert!(
+            planar_to_uyvy(
+                &planes,
+                Target {
+                    stride: 16,
+                    width: 8,
+                    height: 2,
+                },
+                &mut out,
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn bgra_refuses_a_short_destination() {
+        let planes = Planes {
+            luma: &[0_u8; 16],
+            luma_stride: 8,
+            blue: &[0_u8; 8],
+            red: &[0_u8; 8],
+            chroma_stride: 4,
+        };
+        let mut out = [0_u8; 16];
+        assert!(
+            yuv422_to_bgra(
+                &planes,
+                Target {
+                    stride: 32,
+                    width: 8,
+                    height: 2,
+                },
+                &mut out,
+                &YUV_RGB_709,
+            )
+            .is_err()
+        );
+    }
 }

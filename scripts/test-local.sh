@@ -7,7 +7,7 @@
 #   --full    Run unit tests + image build + container smoke + OMT network tests
 #   (default) Run unit tests + image build (no smoke tests)
 
-set -e
+set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
@@ -83,6 +83,7 @@ run_test "OMT Controller" "${PROJECT_ROOT}/tests/unit/test_control_omt.sh"
 run_test "Entrypoint Logic" "${PROJECT_ROOT}/tests/unit/test_entrypoint_logic.sh"
 run_test "Start OMT Script" "${PROJECT_ROOT}/tests/unit/test_start_omt.sh"
 run_test "Host Diagnostics" "${PROJECT_ROOT}/tests/unit/test_host_diagnostics.sh"
+run_test "Host Event Watcher" "${PROJECT_ROOT}/tests/unit/test_host_event_watcher.sh"
 run_test "Host Reboot Bridge" "${PROJECT_ROOT}/tests/unit/test_host_reboot.sh"
 run_test "Host Reboot Behavior" "${PROJECT_ROOT}/tests/unit/test_host_reboot_behavior.sh"
 run_test "Host Install Helpers" "${PROJECT_ROOT}/tests/unit/test_host_install_helpers.sh"

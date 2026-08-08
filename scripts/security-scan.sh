@@ -37,7 +37,6 @@ echo "=== Trivy filesystem scan ==="
     --skip-dirs .git \
     --skip-dirs .build \
     --skip-dirs dist \
-    --skip-dirs .build \
     --skip-dirs build \
     --skip-dirs output \
     --skip-dirs work \
@@ -47,9 +46,17 @@ echo "=== Trivy filesystem scan ==="
     --skip-files .env \
     .
 
-echo "=== Building image for security scan ==="
-container_engine_build -f deploy/Dockerfile \
-    --build-arg RPI_OMT_CLIENT_VERSION="vtest" -t "${SCAN_IMAGE_TAG}" .
+if [[ "${SECURITY_SCAN_REUSE_IMAGE:-0}" == "1" ]]; then
+    if ! "${CONTAINER_ENGINE}" image inspect "${SCAN_IMAGE_TAG}" >/dev/null 2>&1; then
+        echo "FAIL: SECURITY_SCAN_REUSE_IMAGE=1 but image ${SCAN_IMAGE_TAG} is missing" >&2
+        exit 1
+    fi
+    echo "=== Reusing existing image for security scan (${SCAN_IMAGE_TAG}) ==="
+else
+    echo "=== Building image for security scan ==="
+    container_engine_build -f deploy/Dockerfile \
+        --build-arg RPI_OMT_CLIENT_VERSION="vtest" -t "${SCAN_IMAGE_TAG}" .
+fi
 
 SCAN_IMAGE_ARCHIVE="$(mktemp)"
 trap 'rm -f "${SCAN_IMAGE_ARCHIVE}"' EXIT

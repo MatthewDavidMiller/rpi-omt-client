@@ -18,7 +18,7 @@ from conftest import VirtualClock, raises
 from flask import Flask, session
 from werkzeug.security import generate_password_hash
 
-from omt_client.models import CommandResult
+from omt_client.models import CommandResult, SourceConfigurationView
 from omt_client.safe_io import atomic_replace
 from omt_client.services import (
     HostSystem,
@@ -523,16 +523,16 @@ def test_source_discovery_cache_selection_direct_clear_and_restart(tmp_path, mon
     assert len([call for call in calls if "discover" in call]) == 1
     assert not service.select("bad\nselection").ok
     assert service.select("discovered|Camera").ok
-    assert service.configuration() == ("Camera", "")
+    assert service.configuration().source == "Camera"
+    assert service.configuration().direct_address == ""
     assert service.restart().ok
     assert not service.save_direct("host:6400").ok
     assert service.save_direct("omt://192.0.2.1:6400").ok
-    assert service.configuration() == (
-        "omt://192.0.2.1:6400",
-        "omt://192.0.2.1:6400",
-    )
+    assert service.configuration().source == "omt://192.0.2.1:6400"
+    assert service.configuration().direct_address == "omt://192.0.2.1:6400"
     assert service.clear().ok
-    assert service.configuration() == ("", "")
+    assert service.configuration().source == ""
+    assert not service.configuration().configured
     assert not service.restart().ok
 
 
@@ -827,7 +827,7 @@ def test_a_settings_file_holding_a_bad_server_stays_fixable_from_the_web_ui(tmp_
         encoding="utf-8",
     )
     source = mock.Mock()
-    source.configuration.return_value = ("", "")
+    source.configuration.return_value = SourceConfigurationView()
     network = RuntimeNetwork(settings, source)
     assert network.read()["error"]
 

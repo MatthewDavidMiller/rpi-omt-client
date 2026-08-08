@@ -41,8 +41,24 @@ def test_login_failure_success_and_logout(factory_app):
     assert b"Invalid password" in client.post("/login", data={"password": "bad"}).data
     assert client.post("/login", data={"password": "factory-password"}).status_code == 302
     assert client.get("/").status_code == 200
+    assert client.get("/login").status_code == 302
+    assert client.get("/login").headers["Location"].endswith("/")
     assert client.post("/logout").status_code == 302
     assert client.get("/").headers["Location"].endswith("/login")
+
+
+def test_forged_authenticated_cookie_shows_no_nav_on_login(factory_app):
+    client = factory_app.test_client()
+    with client.session_transaction() as browser_session:
+        browser_session["authenticated"] = True
+        browser_session["session_id"] = "forged-session"
+        browser_session["password_digest"] = "deadbeef"
+    response = client.get("/login")
+    assert response.status_code == 200
+    assert b'name="password"' in response.data
+    assert b"nav-strip" not in response.data
+    assert b"Log out" not in response.data
+    assert b"Logout" not in response.data
 
 
 def test_authentication_storage_failures_fail_closed(factory_app, monkeypatch):
@@ -136,7 +152,7 @@ def test_dashboard_actions_use_injected_source_service(factory_client, factory_a
         follow_redirects=True,
     )
     assert b"Preview source saved and running" in selected.data
-    assert source.configuration() == ("MEDIA-SERVER (Channel 1)", "")
+    assert source.configuration().source == "MEDIA-SERVER (Channel 1)"
     assert factory_client.post("/sources/refresh").status_code == 302
     assert (
         b"Preview playback restarted"
@@ -144,7 +160,8 @@ def test_dashboard_actions_use_injected_source_service(factory_client, factory_a
     )
     cleared = factory_client.post("/playback/clear", follow_redirects=True)
     assert b"source cleared" in cleared.data
-    assert source.configuration() == ("", "")
+    assert source.configuration().source == ""
+    assert not source.configuration().configured
     assert (
         b"Invalid OMT source"
         in factory_client.post(
@@ -167,7 +184,7 @@ def test_network_page_owns_sdk_and_direct_settings(factory_client, factory_app):
     )
     assert b"Preview network settings saved" in response.data
     network = factory_app.extensions["omt_client.services"].network.read()
-    assert network["discovery_server"] == "192.168.1.10:6399"
+    assert network["discovery_server"] == "omt://192.168.1.10:6399"
     response = factory_client.post(
         "/settings/direct-source",
         data={"direct_address": "omt://192.168.1.50:6400"},

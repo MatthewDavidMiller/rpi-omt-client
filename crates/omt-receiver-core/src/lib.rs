@@ -111,9 +111,16 @@ impl PlaybackStatus {
             .inner
             .lock()
             .map_err(|_| io::Error::other("status lock poisoned"))?;
-        inner.current.video = state;
-        inner.current.video_detail = sanitize_detail(detail);
-        inner.current.connector = connector.clone();
+        if inner.current.video != state || inner.current.connector != *connector {
+            inner.current.video = state;
+            inner.current.video_detail = sanitize_detail(detail);
+            inner.current.connector = connector.clone();
+        } else if inner.current.video_detail != detail {
+            let sanitized = sanitize_detail(detail);
+            if inner.current.video_detail != sanitized {
+                inner.current.video_detail = sanitized;
+            }
+        }
         self.publish(&mut inner, false)
     }
     pub fn audio(
@@ -126,9 +133,16 @@ impl PlaybackStatus {
             .inner
             .lock()
             .map_err(|_| io::Error::other("status lock poisoned"))?;
-        inner.current.audio = state;
-        inner.current.audio_detail = sanitize_detail(detail);
-        inner.current.connector = connector.clone();
+        if inner.current.audio != state || inner.current.connector != *connector {
+            inner.current.audio = state;
+            inner.current.audio_detail = sanitize_detail(detail);
+            inner.current.connector = connector.clone();
+        } else if inner.current.audio_detail != detail {
+            let sanitized = sanitize_detail(detail);
+            if inner.current.audio_detail != sanitized {
+                inner.current.audio_detail = sanitized;
+            }
+        }
         self.publish(&mut inner, false)
     }
     pub fn heartbeat(&self, connector: &Connector) -> io::Result<bool> {
@@ -136,7 +150,9 @@ impl PlaybackStatus {
             .inner
             .lock()
             .map_err(|_| io::Error::other("status lock poisoned"))?;
-        inner.current.connector = connector.clone();
+        if inner.current.connector != *connector {
+            inner.current.connector = connector.clone();
+        }
         self.publish(&mut inner, false)
     }
     pub fn stopped(&self, detail: &str) -> io::Result<bool> {
@@ -423,7 +439,86 @@ mod tests {
                 "{}",
                 vector.name
             );
+            let keys: std::collections::BTreeSet<&str> = document
+                .as_object()
+                .unwrap_or_else(|| panic!("{}: not an object", vector.name))
+                .keys()
+                .map(String::as_str)
+                .collect();
+            let expected: std::collections::BTreeSet<&str> = vectors_fields().into_iter().collect();
+            assert_eq!(keys, expected, "{}", vector.name);
             let _ = std::fs::remove_dir_all(directory);
         }
+    }
+
+    #[derive(Deserialize)]
+    struct FieldVectors {
+        fields: Vec<String>,
+    }
+
+    fn vectors_fields() -> Vec<&'static str> {
+        let vectors: FieldVectors = serde_json::from_str(include_str!(
+            "../../../tests/schema/playback-status-vectors.json"
+        ))
+        .unwrap_or_else(|e| panic!("{e}"));
+        // Leak is fine in tests; pinning the contract is what matters.
+        vectors
+            .fields
+            .into_iter()
+            .map(|field| Box::leak(field.into_boxed_str()) as &'static str)
+            .collect()
+    }
+
+    #[test]
+    fn heartbeat_republishes_after_the_interval_without_changing_state() {
+        let directory =
+            std::env::temp_dir().join(format!("omt-rust-heartbeat-{}", std::process::id()));
+        let path = directory.join("status.json");
+        let status = PlaybackStatus::new(&path, "Camera");
+        let connector = Connector::none();
+        assert!(
+            status
+                .video(VideoState::Running, "Playing OMT video.", &connector)
+                .unwrap_or_else(|e| panic!("{e}"))
+        );
+        assert!(
+            !status
+                .heartbeat(&connector)
+                .unwrap_or_else(|e| panic!("{e}")),
+            "unchanged heartbeat inside the interval must not rewrite"
+        );
+        std::thread::sleep(HEARTBEAT + std::time::Duration::from_millis(20));
+        assert!(
+            status
+                .heartbeat(&connector)
+                .unwrap_or_else(|e| panic!("{e}")),
+            "heartbeat after the interval must rewrite"
+        );
+        let document: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap_or_else(|e| panic!("{e}")))
+                .unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(document["video_state"], "running");
+        assert_eq!(document["state"], "running");
+        let _ = std::fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn unchanged_video_skips_detail_allocation_path() {
+        let directory =
+            std::env::temp_dir().join(format!("omt-rust-status-same-{}", std::process::id()));
+        let path = directory.join("status.json");
+        let status = PlaybackStatus::new(&path, "Camera");
+        let connector = Connector::none();
+        assert!(
+            status
+                .video(VideoState::Running, "Playing OMT video.", &connector)
+                .unwrap_or_else(|e| panic!("{e}"))
+        );
+        assert!(
+            !status
+                .video(VideoState::Running, "Playing OMT video.", &connector)
+                .unwrap_or_else(|e| panic!("{e}"))
+        );
+        let _ = std::fs::remove_dir_all(directory);
     }
 }

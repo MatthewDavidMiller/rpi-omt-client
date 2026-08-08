@@ -41,10 +41,11 @@ no locale-dependent or unbounded parsing and enforces the Web layer's NFC
 contract with Unicode normalization.
 
 The runtime is capped at 256 MiB and 64 processes. At 1080p it uses three DRM
-scanout buffers, bounded network frames, and two VMX workers with 512 KiB
-stacks. A 512 MiB Pi Zero 2 W is the memory-design floor, but remains outside
-the supported hardware matrix because the installer, DRM integration, and
-1080p60 performance target are Pi 5-specific.
+scanout buffers, bounded network frames, and a persistent pool of VMX workers
+with 512 KiB stacks (created once per decoder, not per frame). A 512 MiB Pi
+Zero 2 W is the memory-design floor, but remains outside the supported hardware
+matrix because the installer, DRM integration, and 1080p60 performance target
+are Pi 5-specific.
 
 Playback supports either Pi HDMI connector. A missing, unreadable, or
 half-populated DRM tree reads as "no display connected", so the play loop

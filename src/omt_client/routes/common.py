@@ -6,7 +6,7 @@ from collections.abc import Callable
 from functools import wraps
 from typing import ParamSpec, cast
 
-from flask import current_app, flash, redirect, session, url_for
+from flask import current_app, flash, g, redirect, session, url_for
 from flask.typing import ResponseReturnValue
 
 from ..models import ActionResult
@@ -20,7 +20,11 @@ def services() -> ServiceContainer:
 
 
 def authenticated() -> bool:
+    cached = getattr(g, "_omt_authenticated", None)
+    if cached is not None:
+        return bool(cached)
     if not session.get("authenticated"):
+        g._omt_authenticated = False
         return False
     try:
         valid = services().auth.is_current()
@@ -29,6 +33,7 @@ def authenticated() -> bool:
         valid = False
     if not valid:
         session.clear()
+    g._omt_authenticated = valid
     return valid
 
 

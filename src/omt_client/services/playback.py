@@ -12,7 +12,7 @@ from ..discovery import (
     parse_omt_sources,
     parse_source_selection,
 )
-from ..models import ActionResult, CommandResult, PlaybackSummary
+from ..models import ActionResult, CommandResult, PlaybackSummary, SourceConfigurationView
 from ..playback_status import STATUS_FILE_LIMIT, PlaybackStatusRecord
 from ..safe_io import read_bytes
 from ..settings import AppSettings
@@ -97,14 +97,16 @@ class RuntimeSourcePlayback:
             self._cache_condition.notify_all()
         return list(choices)
 
-    def configuration(self) -> tuple[str, str]:
+    def configuration(self) -> SourceConfigurationView:
         try:
             target = self._target()
-        except SourceConfigurationError:
-            return "", ""
+        except SourceConfigurationError as exc:
+            return SourceConfigurationView(error=str(exc))
         if target is None:
-            return "", ""
-        return (target.value, "") if target.kind == "discovered" else (target.value, target.value)
+            return SourceConfigurationView()
+        if target.kind == "discovered":
+            return SourceConfigurationView(source=target.value)
+        return SourceConfigurationView(source=target.value, direct_address=target.value)
 
     def _control(self, action: str) -> CommandResult:
         return run_command(

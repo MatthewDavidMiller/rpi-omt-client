@@ -5,7 +5,7 @@ from __future__ import annotations
 from flask import Blueprint, current_app, redirect, render_template, request, session, url_for
 from flask.typing import ResponseReturnValue
 
-from .common import services
+from .common import authenticated, services
 
 auth_blueprint = Blueprint("auth", __name__)
 
@@ -35,6 +35,8 @@ def login() -> ResponseReturnValue:
             session.permanent = True
             return redirect(url_for("dashboard.dashboard"))
         return render_template("login.html", error="Invalid password")
+    if authenticated():
+        return redirect(url_for("dashboard.dashboard"))
     return render_template("login.html")
 
 

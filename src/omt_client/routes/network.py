@@ -25,12 +25,13 @@ def network_settings() -> ResponseReturnValue:
     configuration = services().network.read()
     if submitted is not None:
         configuration.update(submitted)
-    current_source, current_direct_target = services().source.configuration()
+    source_configuration = services().source.configuration()
     return render_template(
         "network.html",
         network=configuration,
-        current_source=current_source,
-        current_direct_target=current_direct_target,
+        current_source=source_configuration.source,
+        current_direct_target=source_configuration.direct_address,
+        configuration_error=source_configuration.error,
     )
 
 

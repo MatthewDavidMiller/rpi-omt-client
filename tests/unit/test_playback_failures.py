@@ -203,7 +203,7 @@ def test_lone_surrogate_detail_is_rejected_rather_than_crashing():
 def test_unreadable_saved_target_is_not_mislabeled_as_unconfigured(tmp_path: Path):
     service = _service(tmp_path)
     Path(service._settings.source_target_file).write_text("not-json", encoding="utf-8")
-    assert service.configuration() == ("", "")
+    assert service.configuration().error
     summary = service.playback()
     assert summary.state == "configuration-error"
     assert summary.tone == "danger"

@@ -17,8 +17,22 @@ from typing import Any
 
 from flask import session
 
-from omt_client.discovery import OmtSourceChoice, is_valid_direct_target
-from omt_client.models import ActionResult, CommandResult, DiagnosticResult, PlaybackSummary
+from omt_client.discovery import (
+    OmtSourceChoice,
+    is_valid_direct_target,
+    parse_source_selection,
+)
+from omt_client.models import (
+    ActionResult,
+    CommandResult,
+    DiagnosticResult,
+    PlaybackSummary,
+    SourceConfigurationView,
+)
+from omt_client.network_config import (
+    OmtNetworkConfigurationError,
+    normalize_discovery_server,
+)
 from omt_client.services import ServiceContainer
 
 
@@ -46,7 +60,15 @@ class PreviewAuthentication:
         return session_id
 
     def is_current(self) -> bool:
-        return session.get("session_id") in self._sessions
+        if not session.get("authenticated"):
+            return False
+        digest = session.get("password_digest")
+        session_id = session.get("session_id")
+        if not isinstance(digest, str) or not isinstance(session_id, str):
+            return False
+        if not hmac.compare_digest(digest, self.password_digest):
+            return False
+        return session_id in self._sessions
 
     def revoke(self, session_id: str | None) -> None:
         if session_id:
@@ -70,8 +92,8 @@ class PreviewSourcePlayback:
     def sources(self) -> list[OmtSourceChoice]:
         return list(self._sources)
 
-    def configuration(self) -> tuple[str, str]:
-        return self._source, self._address
+    def configuration(self) -> SourceConfigurationView:
+        return SourceConfigurationView(source=self._source, direct_address=self._address)
 
     def playback(self) -> PlaybackSummary:
         if not self._source:
@@ -100,9 +122,15 @@ class PreviewSourcePlayback:
         )
 
     def select(self, selection: str) -> ActionResult:
-        name = selection.removeprefix("discovered|")
+        parsed = parse_source_selection(selection.strip())
+        if parsed is None:
+            return ActionResult(False, error="Invalid OMT source name.")
+        name, address, _backend = parsed
+        if address is not None:
+            self._source, self._address, self._playing = name, address, True
+            return ActionResult(True, message="Preview source saved and running.")
         choice = next((item for item in self._sources if item.name == name), None)
-        if not choice:
+        if choice is None:
             return ActionResult(False, error="Invalid OMT source name.")
         self._source, self._address, self._playing = choice.name, choice.address, True
         return ActionResult(True, message="Preview source saved and running.")
@@ -141,9 +169,14 @@ class PreviewNetwork:
         return dict(self._value)
 
     def save(self, discovery_server: str) -> ActionResult:
+        try:
+            normalized = normalize_discovery_server(discovery_server)
+        except OmtNetworkConfigurationError as exc:
+            return ActionResult(False, error=str(exc))
         self._value.update(
-            discovery_server=discovery_server,
-            discovery_server_text=discovery_server,
+            discovery_server=normalized,
+            discovery_server_text=normalized,
+            error="",
         )
         return ActionResult(True, message="Preview network settings saved.")
 

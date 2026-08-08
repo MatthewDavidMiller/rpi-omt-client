@@ -183,3 +183,160 @@ def test_gunicorn_entry_point_builds_an_app_from_the_environment(real_settings, 
         assert wsgi.app.test_client().get("/").status_code == 302
     finally:
         sys.modules.pop("omt_client.wsgi", None)
+
+
+def _control_stub(path: Path, *, exit_code: int = 0, stdout: str = "ok\n") -> str:
+    return _stub_command(path, exit_code, stdout)
+
+
+@pytest.fixture
+def mutable_real_app(tmp_path: Path):
+    """Production services with control/receiver stubs that succeed for mutations."""
+    config = tmp_path / "config"
+    (config / "run").mkdir(parents=True)
+    (config / "omt").mkdir()
+    (config / "flask_secret").write_text("a" * 64, encoding="utf-8")
+    (config / "web_password").write_text(PASSWORD_HASH, encoding="utf-8")
+    host_actions = tmp_path / "host-actions"
+    host_actions.mkdir()
+    reboot_request = host_actions / "reboot.request"
+    reboot_result = host_actions / "reboot.result"
+    reboot_request.touch(mode=0o600)
+    reboot_result.touch(mode=0o640)
+    os.chmod(reboot_request, 0o600)
+    diagnostics_request = tmp_path / "diagnostics.request"
+    diagnostics_request.touch(mode=0o600)
+    os.chmod(diagnostics_request, 0o600)
+    discovery = '[{"name":"Camera","target":"Camera"}]'
+    settings = load_settings(
+        {
+            "OMT_CONFIG_DIR": str(config),
+            "OMT_CONTROL_COMMAND": _control_stub(tmp_path / "control", exit_code=0),
+            "OMT_RECEIVER_COMMAND": _stub_command(tmp_path / "receiver", stdout=discovery),
+            "RPI_OMT_CLIENT_VERSION_FILE": str(tmp_path / "version"),
+            "OMT_PROJECT_LICENSE_FILE": str(tmp_path / "missing-license"),
+            "OMT_THIRD_PARTY_NOTICES_FILE": str(tmp_path / "missing-notices"),
+            "OMT_REBOOT_REQUEST_FILE": str(reboot_request),
+            "OMT_REBOOT_RESULT_FILE": str(reboot_result),
+            "OMT_REBOOT_ACK_TIMEOUT_SECONDS": "0.2",
+            "OMT_DIAGNOSTICS_HOST_REQUEST_FILE": str(diagnostics_request),
+            "OMT_DIAGNOSTICS_RECEIVE_PROBE": "0",
+        }
+    )
+    (tmp_path / "version").write_text("vtest\n", encoding="utf-8")
+    app = build_app(settings, production_services(settings))
+    app.extensions["omt_client.test_reboot_request"] = reboot_request
+    app.extensions["omt_client.test_reboot_result"] = reboot_result
+    return app
+
+
+def test_production_mutation_routes_with_stubbed_control(mutable_real_app, monkeypatch):
+    client = mutable_real_app.test_client()
+    assert _login(client).status_code == 302
+
+    selected = client.post(
+        "/sources/select",
+        data={"source": "discovered|Camera"},
+        follow_redirects=True,
+    )
+    assert selected.status_code == 200
+    assert b"saved and running" in selected.data.lower() or b"OMT discovery" in selected.data
+
+    assert client.post("/sources/refresh").status_code == 302
+    assert client.post("/playback/restart", follow_redirects=True).status_code == 200
+    cleared = client.post("/playback/clear", follow_redirects=True)
+    assert cleared.status_code == 200
+
+    network = client.post(
+        "/settings/network",
+        data={"discovery_server": ""},
+        follow_redirects=True,
+    )
+    assert network.status_code == 200
+
+    direct = client.post(
+        "/settings/direct-source",
+        data={"direct_address": "omt://192.0.2.10:6400"},
+        follow_redirects=True,
+    )
+    assert direct.status_code == 200
+
+    assert client.post("/diagnostics/discovery", follow_redirects=True).status_code == 200
+    assert client.post("/diagnostics/runtime", follow_redirects=True).status_code == 200
+    assert (
+        client.post(
+            "/diagnostics/direct",
+            data={"direct_address": "omt://192.0.2.10:6400"},
+            follow_redirects=True,
+        ).status_code
+        == 200
+    )
+    bundle = client.post("/diagnostics/download", data={"include_packet_capture": "0"})
+    assert bundle.status_code == 200
+    assert bundle.mimetype in {"application/zip", "application/x-zip-compressed"}
+
+    reboot_request = mutable_real_app.extensions["omt_client.test_reboot_request"]
+    reboot_result = mutable_real_app.extensions["omt_client.test_reboot_result"]
+
+    def acknowledge_reboot(path: str, record: bytes) -> None:
+        from omt_client.safe_io import write_fixed_inode
+
+        write_fixed_inode(path, record, 512)
+        request_id = dict(line.split("=", 1) for line in record.decode().splitlines())["request_id"]
+        reboot_result.write_text(
+            f"version=1\nrequest_id={request_id}\nstatus=accepted\ndetail=scheduled\n",
+            encoding="utf-8",
+        )
+
+    monkeypatch.setattr(
+        "omt_client.services.host_system.HostSystem._write_request",
+        staticmethod(acknowledge_reboot),
+    )
+    accepted = client.post("/system/reboot")
+    assert accepted.status_code == 202
+
+    def reject_reboot(path: str, record: bytes) -> None:
+        from omt_client.safe_io import write_fixed_inode
+
+        write_fixed_inode(path, record, 512)
+        request_id = dict(line.split("=", 1) for line in record.decode().splitlines())["request_id"]
+        reboot_result.write_text(
+            f"version=1\nrequest_id={request_id}\nstatus=rejected\ndetail=cooldown\n",
+            encoding="utf-8",
+        )
+
+    monkeypatch.setattr(
+        "omt_client.services.host_system.HostSystem._write_request",
+        staticmethod(reject_reboot),
+    )
+    rejected = client.post("/system/reboot", follow_redirects=True)
+    assert rejected.status_code == 200
+    assert b"rejected" in rejected.data.lower() or b"cooldown" in rejected.data.lower()
+    assert reboot_request.exists()
+
+
+def test_corrupt_target_surfaces_on_diagnostics_and_network(mutable_real_app):
+    client = mutable_real_app.test_client()
+    assert _login(client).status_code == 302
+    settings = mutable_real_app.extensions["omt_client.settings"]
+    Path(settings.source_target_file).write_text("not-json", encoding="utf-8")
+
+    diagnostics = client.get("/diagnostics")
+    assert diagnostics.status_code == 200
+    assert b"Saved OMT target is invalid" in diagnostics.data
+
+    network = client.get("/settings/network")
+    assert network.status_code == 200
+    assert b"Saved OMT target is invalid" in network.data
+
+
+def test_revoked_session_shows_no_nav_on_login(real_app):
+    client = real_app.test_client()
+    assert _login(client).status_code == 302
+    with client.session_transaction() as browser_session:
+        session_id = browser_session["session_id"]
+    real_app.extensions["omt_client.services"].auth.revoke(session_id)
+    response = client.get("/login")
+    assert response.status_code == 200
+    assert b"nav-strip" not in response.data
+    assert b'name="password"' in response.data

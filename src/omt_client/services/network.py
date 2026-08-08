@@ -65,7 +65,7 @@ class RuntimeNetwork:
         except (OmtNetworkConfigurationError, OSError) as exc:
             return ActionResult(False, error=str(exc))
         self._source.refresh()
-        configured = bool(self._source.configuration()[0])
+        configured = self._source.configuration().configured
         if configured:
             restarted = self._source.restart()
             if not restarted.ok:

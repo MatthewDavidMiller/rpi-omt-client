@@ -13,6 +13,11 @@ unset GIT_INDEX_FILE GIT_DIR GIT_WORK_TREE GIT_PREFIX
 
 echo "=== Pre-commit checks ==="
 
+# Keep the amd64 test image for the security scan that follows, so Trivy does
+# not rebuild the same Dockerfile a second time.
+export SECURITY_SCAN_REUSE_IMAGE=1
+export SECURITY_SCAN_IMAGE_TAG=omt-client:test-build
+
 # scripts/test-local.sh owns the shared syntax, lint, unit, Docker-build, and
 # smoke/network test sequence so Make, manual runs, and this hook cannot drift.
 ./scripts/test-local.sh --full

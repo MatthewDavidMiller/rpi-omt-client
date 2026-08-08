@@ -37,37 +37,65 @@ pub struct Options {
 /// Runs until `stop` is raised by a signal, then reports a stopped document.
 pub fn run(options: &Options, status: &Arc<PlaybackStatus>, stop: &Arc<AtomicBool>) {
     let direct = options.target.starts_with("omt://");
+    let mut status_failed = false;
     while !stop.load(Ordering::Relaxed) {
         if !direct && !discovery::transport_available() {
-            let _ = status.video(
-                VideoState::WaitingForDiscovery,
-                "No configured OMT discovery transport is available.",
-                &omt_receiver_core::Connector::none(),
+            note_status(
+                &mut status_failed,
+                status.video(
+                    VideoState::WaitingForDiscovery,
+                    "No configured OMT discovery transport is available.",
+                    &omt_receiver_core::Connector::none(),
+                ),
             );
-            wait(Duration::from_secs(1), status, None, stop);
+            wait(
+                Duration::from_secs(1),
+                status,
+                None,
+                stop,
+                &mut status_failed,
+            );
             continue;
         }
         let Some(connector) = connector::find(&options.preference) else {
-            let _ = status.video(
-                VideoState::WaitingForHdmi,
-                "No supported HDMI display is connected.",
-                &omt_receiver_core::Connector::none(),
+            note_status(
+                &mut status_failed,
+                status.video(
+                    VideoState::WaitingForHdmi,
+                    "No supported HDMI display is connected.",
+                    &omt_receiver_core::Connector::none(),
+                ),
             );
-            wait(Duration::from_secs(1), status, None, stop);
+            wait(
+                Duration::from_secs(1),
+                status,
+                None,
+                stop,
+                &mut status_failed,
+            );
             continue;
         };
-        if let Err(error) = session(options, &connector, status, stop)
+        if let Err(error) = session(options, &connector, status, stop, &mut status_failed)
             && !stop.load(Ordering::Relaxed)
         {
-            let _ = status.video(
-                VideoState::Retrying,
-                &sanitize_detail(&error),
-                &connector.describe(),
+            note_status(
+                &mut status_failed,
+                status.video(
+                    VideoState::Retrying,
+                    &sanitize_detail(&error),
+                    &connector.describe(),
+                ),
             );
-            wait(options.retry, status, Some(&connector), stop);
+            wait(
+                options.retry,
+                status,
+                Some(&connector),
+                stop,
+                &mut status_failed,
+            );
         }
     }
-    let _ = status.stopped("Playback stopped.");
+    note_status(&mut status_failed, status.stopped("Playback stopped."));
 }
 
 fn session(
@@ -75,6 +103,7 @@ fn session(
     connector: &Connector,
     status: &Arc<PlaybackStatus>,
     stop: &Arc<AtomicBool>,
+    status_failed: &mut bool,
 ) -> Result<(), String> {
     let endpoint = discovery::resolve(&options.target, RESOLVE_TIMEOUT)
         .ok_or_else(|| "OMT target was not discovered.".to_owned())?;
@@ -90,7 +119,10 @@ fn session(
 
     let audio = AudioWorker::start(&endpoint, connector, status, stop);
     let described = connector.describe();
-    let _ = status.video(VideoState::Starting, "Waiting for OMT media.", &described);
+    note_status(
+        status_failed,
+        status.video(VideoState::Starting, "Waiting for OMT media.", &described),
+    );
 
     // A fresh connection gets the same grace as one that has been delivering,
     // so "starting" stays visible while the sender ramps up.
@@ -115,16 +147,19 @@ fn session(
                 video.frame()
             }
             Err(error) => {
-                let _ = status.heartbeat(&described);
+                note_status(status_failed, status.heartbeat(&described));
                 if !video.connected() {
                     failure = Some(error);
                     break;
                 }
                 if Instant::now() >= last_frame {
-                    let _ = status.video(
-                        VideoState::Retrying,
-                        "Waiting for video frames.",
-                        &described,
+                    note_status(
+                        status_failed,
+                        status.video(
+                            VideoState::Retrying,
+                            "Waiting for video frames.",
+                            &described,
+                        ),
                     );
                 }
                 continue;
@@ -134,18 +169,24 @@ fn session(
         let interlaced = frame.video.as_ref().is_some_and(|v| v.flags & 1 != 0);
         match output.present(frame) {
             Present::Presented => {
-                let _ = status.video(
-                    VideoState::Running,
-                    if interlaced {
-                        "Playing interlaced input progressively without deinterlacing."
-                    } else {
-                        "Playing OMT video."
-                    },
-                    &described,
+                note_status(
+                    status_failed,
+                    status.video(
+                        VideoState::Running,
+                        if interlaced {
+                            "Playing interlaced input progressively without deinterlacing."
+                        } else {
+                            "Playing OMT video."
+                        },
+                        &described,
+                    ),
                 );
             }
             Present::UnsupportedFormat(detail) => {
-                let _ = status.video(VideoState::UnsupportedFormat, &detail, &described);
+                note_status(
+                    status_failed,
+                    status.video(VideoState::UnsupportedFormat, &detail, &described),
+                );
             }
             Present::Failed(detail) => {
                 failure = Some(detail);
@@ -155,7 +196,10 @@ fn session(
     }
 
     audio.stop();
-    let _ = status.audio(AudioState::Stopped, "", &described);
+    note_status(
+        status_failed,
+        status.audio(AudioState::Stopped, "", &described),
+    );
     failure.map_or(Ok(()), Err)
 }
 
@@ -192,6 +236,7 @@ impl AudioWorker {
             status: Arc::clone(status),
             active: Arc::clone(&active),
             stop: Arc::clone(stop),
+            status_failed: AtomicBool::new(false),
         };
         let spawned = thread::Builder::new()
             .name("omt-audio".into())
@@ -199,11 +244,15 @@ impl AudioWorker {
             .spawn(move || audio_loop(&context));
         let Ok(handle) = spawned else {
             active.store(false, Ordering::Relaxed);
-            let _ = status.audio(
+            // Best-effort: the audio worker never started, so a failed publish
+            // here is still the first diagnostic the operator can see.
+            if let Err(error) = status.audio(
                 AudioState::Failed,
                 "Audio unavailable: unable to create bounded-stack worker.",
                 &described,
-            );
+            ) {
+                eprintln!("playback status publish failed: {error}");
+            }
             return Self {
                 active,
                 handle: None,
@@ -230,11 +279,20 @@ struct AudioContext {
     status: Arc<PlaybackStatus>,
     active: Arc<AtomicBool>,
     stop: Arc<AtomicBool>,
+    status_failed: AtomicBool,
 }
 
 impl AudioContext {
     fn wanted(&self) -> bool {
         self.active.load(Ordering::Relaxed) && !self.stop.load(Ordering::Relaxed)
+    }
+
+    fn note_status(&self, result: std::io::Result<bool>) {
+        if let Err(error) = result
+            && !self.status_failed.swap(true, Ordering::Relaxed)
+        {
+            eprintln!("playback status publish failed: {error}");
+        }
     }
 }
 
@@ -260,11 +318,11 @@ fn audio_loop(context: &AudioContext) {
                                 failure = error;
                                 break;
                             }
-                            let _ = context.status.audio(
+                            context.note_status(context.status.audio(
                                 AudioState::Running,
                                 "Playing OMT video and audio.",
                                 &context.connector,
-                            );
+                            ));
                         }
                         Ok(_) => {}
                         Err(error) => {
@@ -282,11 +340,11 @@ fn audio_loop(context: &AudioContext) {
         if !context.wanted() {
             break;
         }
-        let _ = context.status.audio(
+        context.note_status(context.status.audio(
             AudioState::Failed,
             &format!("Audio unavailable: {}", sanitize_detail(&failure)),
             &context.connector,
-        );
+        ));
         // Back off before reconnecting so a dead sink cannot spin a core.
         for _ in 0..10 {
             if !context.wanted() {
@@ -295,9 +353,11 @@ fn audio_loop(context: &AudioContext) {
             thread::sleep(Duration::from_millis(100));
         }
     }
-    let _ = context
-        .status
-        .audio(AudioState::Stopped, "", &context.connector);
+    context.note_status(
+        context
+            .status
+            .audio(AudioState::Stopped, "", &context.connector),
+    );
 }
 
 /// Sleeps in short slices so a signal is noticed promptly and the status file
@@ -307,12 +367,24 @@ fn wait(
     status: &Arc<PlaybackStatus>,
     connector: Option<&Connector>,
     stop: &Arc<AtomicBool>,
+    status_failed: &mut bool,
 ) {
     let deadline = Instant::now() + total;
     while !stop.load(Ordering::Relaxed) && Instant::now() < deadline {
         thread::sleep(Duration::from_millis(100).min(remaining(deadline)));
         let described =
             connector.map_or_else(omt_receiver_core::Connector::none, Connector::describe);
-        let _ = status.heartbeat(&described);
+        note_status(status_failed, status.heartbeat(&described));
+    }
+}
+
+/// Logs the first status-publish failure in a session so a full `/run/omt` is
+/// diagnosable instead of silently freezing the dashboard.
+fn note_status(logged: &mut bool, result: std::io::Result<bool>) {
+    if let Err(error) = result
+        && !*logged
+    {
+        eprintln!("playback status publish failed: {error}");
+        *logged = true;
     }
 }

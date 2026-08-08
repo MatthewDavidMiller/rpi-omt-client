@@ -182,12 +182,10 @@ impl Channel {
         let header = parse_frame_header(&fixed).map_err(io::Error::other)?;
         let required = usize::try_from(header.data_length).map_err(io::Error::other)?;
 
-        self.frame.payload.clear();
-        self.frame
-            .payload
-            .try_reserve(required)
-            .map_err(|_| io::Error::other("unable to allocate the bounded OMT frame"))?;
-        self.frame.payload.resize(required, 0);
+        // Grow or shrink in place. `clear` before `resize` would re-zero the
+        // entire previous capacity every frame; only newly grown bytes need to
+        // be zeroed, and `read_exact` overwrites the kept prefix.
+        ensure_payload(&mut self.frame.payload, required)?;
         let mut payload = std::mem::take(&mut self.frame.payload);
         let outcome = self.read_exact(&mut payload, deadline, false);
         self.frame.payload = payload;
@@ -282,6 +280,14 @@ fn positive(value: Duration) -> Duration {
     }
 }
 
+fn ensure_payload(payload: &mut Vec<u8>, required: usize) -> io::Result<()> {
+    payload
+        .try_reserve(required)
+        .map_err(|_| io::Error::other("unable to allocate the bounded OMT frame"))?;
+    payload.resize(required, 0);
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -352,5 +358,21 @@ mod tests {
         assert!(remaining(past).is_zero());
         assert_eq!(positive(remaining(past)), Duration::from_millis(1));
         assert!(!remaining(Instant::now() + Duration::from_secs(5)).is_zero());
+    }
+
+    #[test]
+    fn payload_resize_reuses_capacity_without_clearing() {
+        let mut payload = Vec::new();
+        ensure_payload(&mut payload, 64).unwrap_or_else(|error| panic!("{error}"));
+        payload.fill(0xAB);
+        let capacity = payload.capacity();
+        ensure_payload(&mut payload, 32).unwrap_or_else(|error| panic!("{error}"));
+        assert_eq!(payload.len(), 32);
+        assert!(payload.capacity() >= capacity);
+        assert!(payload.iter().all(|&byte| byte == 0xAB));
+        ensure_payload(&mut payload, 96).unwrap_or_else(|error| panic!("{error}"));
+        assert_eq!(payload.len(), 96);
+        assert!(payload[..32].iter().all(|&byte| byte == 0xAB));
+        assert!(payload[32..].iter().all(|&byte| byte == 0));
     }
 }

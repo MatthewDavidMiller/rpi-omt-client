@@ -7,7 +7,7 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Any, cast
 
-from flask import Flask, render_template, request, session
+from flask import Flask, render_template, request
 from flask.typing import ResponseReturnValue, RouteCallable
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
@@ -101,7 +101,7 @@ def create_app(
     def shared_template_context() -> dict[str, object]:
         return {
             "hostname": socket.gethostname(),
-            "authenticated": bool(session.get("authenticated")),
+            "authenticated": authenticated(),
         }
 
     @app.after_request

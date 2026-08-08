@@ -21,7 +21,11 @@ cleanup() {
     if [[ -n "${CONTAINER_ENGINE:-}" ]]; then
         "${CONTAINER_ENGINE}" rm -f "${ARM64_ARTIFACT_CONTAINER}" >/dev/null 2>&1 || true
         "${CONTAINER_ENGINE}" rmi "${ARM64_ARTIFACT_TAG}" >/dev/null 2>&1 || true
-        "${CONTAINER_ENGINE}" rmi "${IMAGE_TAG}" >/dev/null 2>&1 || true
+        # Pre-commit sets SECURITY_SCAN_REUSE_IMAGE=1 so the following Trivy
+        # image scan can reuse this amd64 tag instead of rebuilding it.
+        if [[ "${SECURITY_SCAN_REUSE_IMAGE:-0}" != "1" ]]; then
+            "${CONTAINER_ENGINE}" rmi "${IMAGE_TAG}" >/dev/null 2>&1 || true
+        fi
     fi
 }
 trap cleanup EXIT

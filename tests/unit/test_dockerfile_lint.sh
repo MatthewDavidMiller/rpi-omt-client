@@ -2,7 +2,7 @@
 # Lint the Dockerfile with hadolint
 # Run with: ./tests/unit/test_dockerfile_lint.sh
 
-set -e
+set -euo pipefail
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'

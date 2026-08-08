@@ -14,6 +14,9 @@
             <dt>Direct address</dt><dd>{{ current_direct_target if current_direct_target else "Discovery" }}</dd>
             <dt>Controller status</dt><dd><code>{{ omt_status }}</code></dd>
         </dl>
+        {% if configuration_error %}
+        <p class="notice notice-warning" role="status">Saved OMT target is invalid: {{ configuration_error }}</p>
+        {% endif %}
         <div class="button-row">
             <form method="POST" action="{{ url_for('diagnostics.discovery_check') }}">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">

@@ -1,6 +1,5 @@
 #![forbid(unsafe_code)]
 
-use serde::{Deserialize, Serialize};
 use std::net::{Ipv4Addr, Ipv6Addr};
 use unicode_normalization::UnicodeNormalization;
 
@@ -13,7 +12,7 @@ pub const METADATA_MAX_SIZE: usize = 64 * 1024;
 pub const SOURCE_NAME_MAX_BYTES: usize = 63;
 pub const TARGET_MAX_BYTES: usize = 512;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
 pub enum FrameType {
     Metadata = 1,

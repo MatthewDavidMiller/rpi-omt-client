@@ -43,7 +43,7 @@ run_action() {
 # Establish one persistent watch. Waiting for inotify's readiness message before
 # checking the file closes the startup race: an event is either already queued
 # or its non-empty request is visible to the check below.
-watch_ready="$(mktemp /run/omt-client-inotify.XXXXXX)"
+watch_ready="$(mktemp "${TMPDIR:-/tmp}/omt-client-inotify.XXXXXX")"
 coproc OMT_WATCH {
     exec inotifywait --monitor --event close_write --format '%e' -- \
         "${request_file}" 2>"${watch_ready}"

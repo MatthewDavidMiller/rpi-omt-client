@@ -13,7 +13,9 @@ or dark preference.
 Dashboard lists OMT names returned by the native receiver. Selecting a source
 writes one atomic target record and restarts the controller. Playback states
 include playing, starting, waiting for discovery, waiting for HDMI, retrying,
-degraded, unsupported format, stopped, stale, and failed.
+degraded, unsupported format, stopped, stale, configuration-error, and failed.
+Diagnostics and Network Settings surface the same corrupt-target error rather
+than labeling it as "not configured".
 
 Stop & Clear first stops the managed process and only then removes the target.
 Restart requires an existing target. Controller process identity includes PID,

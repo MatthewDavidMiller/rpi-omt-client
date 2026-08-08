@@ -1,6 +1,5 @@
 ARG ALPINE_DIGEST=sha256:fd791d74b68913cbb027c6546007b3f0d3bc45125f797758156952bc2d6daf40
 ARG RUST_DIGEST=sha256:c4a364ddbf684fe038e6fa6a4f25b30c8dc85247423e0e660676ece0d17be4a2
-ARG TARGETARCH
 
 # Build with the exact stable compiler required by rust-toolchain.toml. The
 # official image digest is a multi-architecture manifest, so each output is
@@ -123,7 +122,6 @@ ENV OMT_STORAGE_PATH=/etc/omt/omt
 # not create the directory at all.
 ENV OMT_RUNTIME_DIR=/run/omt/state
 ENV FLASK_APP=omt_client.wsgi:app
-ENV PIP_DISABLE_PIP_VERSION_CHECK=1
 ENV PYTHONUNBUFFERED=1
 ENV WEB_PORT=${WEB_PORT}
 ENV PATH="/opt/venv/bin:${PATH}"

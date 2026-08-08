@@ -42,20 +42,24 @@ safe_nonempty_file() {
 
 if ! safe_nonempty_file "${OMT_CONFIG_DIR}/flask_secret" 256; then
     secret_tmp="$(mktemp "${OMT_CONFIG_DIR}/.flask_secret.XXXXXX")"
+    trap 'rm -f -- "${secret_tmp}"' EXIT
     python3 -c "import secrets; print(secrets.token_hex(32))" > "${secret_tmp}"
     chmod 600 "${secret_tmp}"
     sync_replace "${secret_tmp}" "${OMT_CONFIG_DIR}/flask_secret"
+    trap - EXIT
 fi
 chmod 600 "${OMT_CONFIG_DIR}/flask_secret"
 
 if ! safe_nonempty_file "${OMT_CONFIG_DIR}/web_password" 16384; then
     password="$(python3 -c "import secrets; print(secrets.token_urlsafe(16))")"
     password_tmp="$(mktemp "${OMT_CONFIG_DIR}/.web_password.XXXXXX")"
+    trap 'rm -f -- "${password_tmp}"' EXIT
     PLAINTEXT_WEB_PASSWORD="${password}" python3 -c \
         "import os; from werkzeug.security import generate_password_hash; print(generate_password_hash(os.environ['PLAINTEXT_WEB_PASSWORD']))" \
         > "${password_tmp}"
     chmod 600 "${password_tmp}"
     sync_replace "${password_tmp}" "${OMT_CONFIG_DIR}/web_password"
+    trap - EXIT
     printf '%s\n' "============================================"
     printf '%s\n' " Web UI password (save this now):"
     printf ' %s\n' "${password}"
@@ -67,9 +71,11 @@ chmod 600 "${OMT_CONFIG_DIR}/web_password"
 settings_file="${OMT_STORAGE_PATH}/settings.xml"
 if [[ ! -e "${settings_file}" ]]; then
     settings_tmp="$(mktemp "${OMT_STORAGE_PATH}/.settings.xml.XXXXXX")"
+    trap 'rm -f -- "${settings_tmp}"' EXIT
     printf '%s\n' '<?xml version="1.0" encoding="utf-8"?>' '<Settings />' > "${settings_tmp}"
     chmod 600 "${settings_tmp}"
     sync_replace "${settings_tmp}" "${settings_file}"
+    trap - EXIT
 elif [[ -L "${settings_file}" || ! -f "${settings_file}" ]]; then
     echo "Unsafe OMT settings path: ${settings_file}" >&2
     exit 1
@@ -98,6 +104,7 @@ tls_valid() {
 if ! tls_valid; then
     key_tmp="$(mktemp "${ssl_dir}/.key.pem.XXXXXX")"
     cert_tmp="$(mktemp "${ssl_dir}/.cert.pem.XXXXXX")"
+    trap 'rm -f -- "${key_tmp}" "${cert_tmp}"' EXIT
     openssl req -x509 -nodes -newkey ec -pkeyopt ec_paramgen_curve:P-384 \
         -days 365 -keyout "${key_tmp}" -out "${cert_tmp}" \
         -subj "/CN=omt-client" \
@@ -106,6 +113,7 @@ if ! tls_valid; then
     chmod 644 "${cert_tmp}"
     sync_replace "${key_tmp}" "${ssl_key}"
     sync_replace "${cert_tmp}" "${ssl_cert}"
+    trap - EXIT
 fi
 chmod 600 "${ssl_key}"
 chmod 644 "${ssl_cert}"

@@ -6,6 +6,19 @@ from dataclasses import dataclass
 
 
 @dataclass(frozen=True)
+class SourceConfigurationView:
+    """Configured OMT target as routes and diagnostics should present it."""
+
+    source: str = ""
+    direct_address: str = ""
+    error: str = ""
+
+    @property
+    def configured(self) -> bool:
+        return bool(self.source) and not self.error
+
+
+@dataclass(frozen=True)
 class ActionResult:
     """Outcome of an operator-requested state change."""
 

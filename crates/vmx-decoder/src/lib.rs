@@ -14,11 +14,12 @@ mod bitstream;
 mod convert;
 mod idct;
 mod plane;
+mod pool;
 mod tables;
 
 use bitstream::BitReader;
 use plane::{PlaneShape, SliceStreams, decode_plane};
-use std::thread;
+use pool::WorkerPool;
 use tables::{SLICE_HEIGHT, YUV_RGB_601, YUV_RGB_709, decode_matrix, quality_index};
 
 /// Every media worker runs on an explicitly sized stack. The kernel keeps only
@@ -106,6 +107,7 @@ pub struct Decoder {
     chroma_stride: usize,
     slices: Vec<Slice>,
     workers: usize,
+    pool: WorkerPool,
     matrix: [u16; 64],
     dc_shift: i32,
     loaded: bool,
@@ -159,13 +161,17 @@ impl Decoder {
             });
         }
 
+        let workers = workers.min(slice_count.max(1));
+        let pool = WorkerPool::new(workers)?;
+
         Ok(Self {
             dimensions,
             color_space,
             luma_stride,
             chroma_stride,
             slices,
-            workers: workers.min(slice_count.max(1)),
+            workers,
+            pool,
             matrix: decode_matrix(0),
             dc_shift: 0,
             loaded: false,
@@ -297,54 +303,32 @@ impl Decoder {
         };
         let matrix = self.matrix;
         let coefficients = self.color_space.coefficients();
-        let group = self.slices.len().div_ceil(self.workers.max(1));
-        let rows_per_group = group * SLICE_HEIGHT;
 
-        let mut spawn_failed = false;
-        let mut corrupt = false;
-        thread::scope(|scope| {
-            let mut handles = Vec::new();
-            for (slices, region) in self
-                .slices
-                .chunks_mut(group)
-                .zip(output.chunks_mut(rows_per_group * stride))
-            {
-                let matrix = &matrix;
-                match thread::Builder::new()
-                    .name("vmx-decode".into())
-                    .stack_size(WORKER_STACK_SIZE)
-                    .spawn_scoped(scope, move || {
-                        decode_group(slices, region, geometry, matrix, coefficients)
-                    }) {
-                    Ok(handle) => handles.push(handle),
-                    Err(_) => spawn_failed = true,
-                }
-            }
-            for handle in handles {
-                if !handle.join().unwrap_or(false) {
-                    corrupt = true;
-                }
-            }
-        });
-
-        if spawn_failed {
-            return Err(DecodeError::WorkerFailure);
+        // A single worker keeps the decode on this thread: the pool still
+        // exists for Drop symmetry, but the channel round-trip would only add
+        // latency when there is nothing to parallelise.
+        let ok = if self.workers <= 1 {
+            decode_group(&mut self.slices, output, geometry, &matrix, coefficients)
+        } else {
+            self.pool
+                .decode(&mut self.slices, output, geometry, &matrix, coefficients)?
+        };
+        if ok {
+            Ok(())
+        } else {
+            Err(DecodeError::CorruptStream)
         }
-        if corrupt {
-            return Err(DecodeError::CorruptStream);
-        }
-        Ok(())
     }
 }
 
 #[derive(Clone, Copy)]
-enum Pixels {
+pub(crate) enum Pixels {
     Uyvy,
     Bgrx,
 }
 
 #[derive(Clone, Copy)]
-struct DecodeGeometry {
+pub(crate) struct DecodeGeometry {
     width: usize,
     stride: usize,
     luma_stride: usize,
@@ -353,7 +337,7 @@ struct DecodeGeometry {
     pixels: Pixels,
 }
 
-fn decode_group(
+pub(crate) fn decode_group(
     slices: &mut [Slice],
     region: &mut [u8],
     geometry: DecodeGeometry,
@@ -408,8 +392,16 @@ fn decode_group(
             height: slice.rows,
         };
         match geometry.pixels {
-            Pixels::Uyvy => convert::planar_to_uyvy(&planes, rectangle, target),
-            Pixels::Bgrx => convert::yuv422_to_bgra(&planes, rectangle, target, coefficients),
+            Pixels::Uyvy => {
+                if convert::planar_to_uyvy(&planes, rectangle, target).is_err() {
+                    return false;
+                }
+            }
+            Pixels::Bgrx => {
+                if convert::yuv422_to_bgra(&planes, rectangle, target, coefficients).is_err() {
+                    return false;
+                }
+            }
         }
     }
     true

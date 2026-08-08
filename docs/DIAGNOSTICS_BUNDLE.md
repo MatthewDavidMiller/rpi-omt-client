@@ -8,7 +8,9 @@ The authenticated Diagnostics page creates a bounded ZIP named
 - `runtime.txt`
 - `discovery.json`
 - `controller-status.txt`
-- `current-target-receive-probe.json`
+- `current-target-receive-probe.json` — always a JSON document. A successful
+  probe is the receiver's JSON object; skipped or failed probes are
+  `{"ok":false,"error":"..."}` so the member never contains plain text.
 - `playback-status.json`
 - `omt-settings.xml`
 - `runtime-sha256.manifest`
