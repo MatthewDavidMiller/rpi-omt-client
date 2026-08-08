@@ -20,7 +20,6 @@ pub enum VideoState {
     UnsupportedFormat,
     Starting,
     Stopped,
-    Failed,
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -76,6 +75,8 @@ struct Inner {
     current: Projection,
     published: Option<Published>,
     sequence: u64,
+    /// Whether the status directory has been created for this process yet.
+    directory_ready: bool,
 }
 
 pub struct PlaybackStatus {
@@ -98,6 +99,7 @@ impl PlaybackStatus {
                 },
                 published: None,
                 sequence: 0,
+                directory_ready: false,
             }),
         }
     }
@@ -107,20 +109,16 @@ impl PlaybackStatus {
         detail: &str,
         connector: &Connector,
     ) -> io::Result<bool> {
-        let mut inner = self
-            .inner
-            .lock()
-            .map_err(|_| io::Error::other("status lock poisoned"))?;
-        if inner.current.video != state || inner.current.connector != *connector {
-            inner.current.video = state;
-            inner.current.video_detail = sanitize_detail(detail);
-            inner.current.connector = connector.clone();
-        } else if inner.current.video_detail != detail {
-            let sanitized = sanitize_detail(detail);
-            if inner.current.video_detail != sanitized {
-                inner.current.video_detail = sanitized;
-            }
-        }
+        let mut inner = self.lock()?;
+        let changed = inner.current.video != state;
+        inner.current.video = state;
+        update_detail(
+            &mut inner.current,
+            |projection| &mut projection.video_detail,
+            changed,
+            detail,
+            connector,
+        );
         self.publish(&mut inner, false)
     }
     pub fn audio(
@@ -129,37 +127,32 @@ impl PlaybackStatus {
         detail: &str,
         connector: &Connector,
     ) -> io::Result<bool> {
-        let mut inner = self
-            .inner
-            .lock()
-            .map_err(|_| io::Error::other("status lock poisoned"))?;
-        if inner.current.audio != state || inner.current.connector != *connector {
-            inner.current.audio = state;
-            inner.current.audio_detail = sanitize_detail(detail);
-            inner.current.connector = connector.clone();
-        } else if inner.current.audio_detail != detail {
-            let sanitized = sanitize_detail(detail);
-            if inner.current.audio_detail != sanitized {
-                inner.current.audio_detail = sanitized;
-            }
-        }
+        let mut inner = self.lock()?;
+        let changed = inner.current.audio != state;
+        inner.current.audio = state;
+        update_detail(
+            &mut inner.current,
+            |projection| &mut projection.audio_detail,
+            changed,
+            detail,
+            connector,
+        );
         self.publish(&mut inner, false)
     }
-    pub fn heartbeat(&self, connector: &Connector) -> io::Result<bool> {
-        let mut inner = self
-            .inner
+    fn lock(&self) -> io::Result<std::sync::MutexGuard<'_, Inner>> {
+        self.inner
             .lock()
-            .map_err(|_| io::Error::other("status lock poisoned"))?;
+            .map_err(|_| io::Error::other("status lock poisoned"))
+    }
+    pub fn heartbeat(&self, connector: &Connector) -> io::Result<bool> {
+        let mut inner = self.lock()?;
         if inner.current.connector != *connector {
             inner.current.connector = connector.clone();
         }
         self.publish(&mut inner, false)
     }
     pub fn stopped(&self, detail: &str) -> io::Result<bool> {
-        let mut inner = self
-            .inner
-            .lock()
-            .map_err(|_| io::Error::other("status lock poisoned"))?;
+        let mut inner = self.lock()?;
         inner.current.video = VideoState::Stopped;
         inner.current.audio = AudioState::Stopped;
         inner.current.video_detail = sanitize_detail(detail);
@@ -211,13 +204,39 @@ impl PlaybackStatus {
             updated_at: timestamp(),
         };
         let bytes = serde_json::to_vec(&document).map_err(io::Error::other)?;
-        atomic_replace(&self.path, &bytes, inner.sequence)?;
+        atomic_replace(&self.path, &bytes, inner.sequence, inner.directory_ready)?;
+        inner.directory_ready = true;
         inner.sequence = inner.sequence.wrapping_add(1);
         inner.published = Some(Published {
             projection: inner.current.clone(),
             at: Instant::now(),
         });
         Ok(true)
+    }
+}
+
+/// Folds one worker's detail and connector into the projection.
+///
+/// The video and audio paths had this rule written out twice with the field
+/// names swapped, which is how they could have drifted apart. `sanitize_detail`
+/// allocates, and both workers call in on every frame with a detail that is
+/// almost always the same string they last sent, so the unchanged case compares
+/// the raw text first and only sanitizes when that comparison fails.
+fn update_detail(
+    current: &mut Projection,
+    which: fn(&mut Projection) -> &mut String,
+    state_changed: bool,
+    detail: &str,
+    connector: &Connector,
+) {
+    if state_changed || current.connector != *connector {
+        *which(current) = sanitize_detail(detail);
+        current.connector.clone_from(connector);
+    } else if which(current) != detail {
+        let sanitized = sanitize_detail(detail);
+        if *which(current) != sanitized {
+            *which(current) = sanitized;
+        }
     }
 }
 
@@ -237,7 +256,6 @@ fn video_name(value: VideoState) -> &'static str {
         VideoState::UnsupportedFormat => "unsupported-format",
         VideoState::Starting => "starting",
         VideoState::Stopped => "stopped",
-        VideoState::Failed => "failed",
     }
 }
 fn timestamp() -> String {
@@ -282,9 +300,23 @@ fn format_timestamp(duration: Duration) -> String {
         duration.subsec_millis()
     )
 }
-fn atomic_replace(path: &Path, bytes: &[u8], sequence: u64) -> io::Result<()> {
+/// Replaces the status file through a private stage and a rename.
+///
+/// `directory_ready` skips `create_dir_all` after the first success. The
+/// entrypoint owns `/run/omt` and creates it 0700 before the receiver starts,
+/// so re-asserting the directory on every publish -- on every state change and
+/// then twice a second, forever -- bought nothing. If it does disappear, the
+/// stage's `open` fails and the caller reports it, which is the honest signal.
+fn atomic_replace(
+    path: &Path,
+    bytes: &[u8],
+    sequence: u64,
+    directory_ready: bool,
+) -> io::Result<()> {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
-    fs::create_dir_all(parent)?;
+    if !directory_ready {
+        fs::create_dir_all(parent)?;
+    }
     let stage = parent.join(format!(
         ".omt-status.{}.{sequence:016x}",
         std::process::id()
@@ -449,6 +481,48 @@ mod tests {
             assert_eq!(keys, expected, "{}", vector.name);
             let _ = std::fs::remove_dir_all(directory);
         }
+    }
+
+    /// Every state this crate can put in the `video_state` field.
+    ///
+    /// Listing them by hand is the point: `video_name` is a `match`, so adding
+    /// a variant without adding it here fails to compile, and the case below
+    /// then fails unless the published contract carries it too.
+    const ALL_VIDEO_STATES: [VideoState; 7] = [
+        VideoState::Running,
+        VideoState::WaitingForDiscovery,
+        VideoState::WaitingForHdmi,
+        VideoState::Retrying,
+        VideoState::UnsupportedFormat,
+        VideoState::Starting,
+        VideoState::Stopped,
+    ];
+
+    /// The producer's state names must be exactly the consumer's accept-list.
+    ///
+    /// The Python half already asserts itself against this file
+    /// (`tests/unit/test_playback_failures.py`), so without this the Rust side
+    /// was the one place a state could be added -- or left behind after it
+    /// stopped being reachable -- without anything noticing. A name only this
+    /// side knows makes every status record unparseable for the dashboard; one
+    /// only the contract knows is dead weight in two languages.
+    #[test]
+    fn video_names_match_the_published_contract() {
+        #[derive(Deserialize)]
+        struct StateVectors {
+            video_states: Vec<String>,
+        }
+        let vectors: StateVectors = serde_json::from_str(include_str!(
+            "../../../tests/schema/playback-status-vectors.json"
+        ))
+        .unwrap_or_else(|e| panic!("{e}"));
+        let published: std::collections::BTreeSet<&str> =
+            vectors.video_states.iter().map(String::as_str).collect();
+        let produced: std::collections::BTreeSet<&str> =
+            ALL_VIDEO_STATES.into_iter().map(video_name).collect();
+        assert_eq!(produced, published);
+        // A `match` arm per variant is only total if no two share a name.
+        assert_eq!(produced.len(), ALL_VIDEO_STATES.len());
     }
 
     #[derive(Deserialize)]

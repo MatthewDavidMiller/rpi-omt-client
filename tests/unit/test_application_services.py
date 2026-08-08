@@ -893,12 +893,12 @@ def test_diagnostics_version_commands_direct_and_bundle(tmp_path, monkeypatch):
             return command_result(stdout='[{"name":"Camera","target":"Camera"}]')
         return command_result(stdout="ok\n")
 
-    monkeypatch.setattr("omt_client.services.diagnostics.run_command", run)
+    monkeypatch.setattr("omt_client.services.diagnostics.checks.run_command", run)
     about = RuntimeAbout(settings)
     diagnostics = RuntimeDiagnostics(settings, source, about)
     assert diagnostics.status() == "ok"
     assert diagnostics.discovery().command.sources == ("Camera",)
-    assert diagnostics.runtime().command.returncode == 0
+    assert diagnostics.runtime()[0].command.returncode == 0
     assert diagnostics.direct("bad").command.skipped
     assert diagnostics.direct("omt://host:6400").command.returncode == 0
     bundle, filename = diagnostics.bundle()

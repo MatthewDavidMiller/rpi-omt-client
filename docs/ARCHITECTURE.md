@@ -38,7 +38,17 @@ owns receive, DRM, ALSA, hotplug, retry, and status publication. Discovered
 names are NFC, have no control characters, and are at most 63 UTF-8 bytes.
 Direct targets must be exact `omt://host:port` URIs. The validation path uses
 no locale-dependent or unbounded parsing and enforces the Web layer's NFC
-contract with Unicode normalization.
+contract with Unicode normalization. Each announcement's name, withdrawal flag,
+address, and port come off a single bounded XML pass rather than one reader per
+field, and every rejection -- a duplicate of any requested tag, a document type
+declaration, an unknown entity -- still refuses the whole document, so no field
+can be read out of one another field's reader would have discarded.
+
+Connector selection tolerates a half-populated DRM tree: an unreadable
+`status`, a missing `connector_id`, a zero id, or an absent `/dev/dri` node
+disqualifies that card and the search continues to the next, because several
+cards can expose the same connector name and the attached display may be behind
+any of them.
 
 The runtime is capped at 256 MiB and 64 processes. At 1080p it uses three DRM
 scanout buffers, bounded network frames, and a persistent pool of VMX workers
@@ -122,7 +132,11 @@ mounted at `/run/omt`; the entrypoint owns a 0700 directory inside that
 world-writable mount point. The receiver republishes status on every change and
 then at a 500 ms heartbeat, including while discovery, HDMI, media, or retry
 waits are in progress. Status publication uses a private, uniquely named stage
-and an atomic replacement. The Web consumer accepts fresh status only when its
+and an atomic replacement. The status directory is created once per process
+rather than re-asserted on every publish: the entrypoint owns `/run/omt` and
+creates it before the receiver starts, so a `create_dir_all` twice a second
+forever bought nothing, and a directory that does vanish now fails the publish
+audibly instead of being silently recreated. The Web consumer accepts fresh status only when its
 target matches the current atomic source record, so a source change cannot
 briefly present the previous receiver session as current. Keeping status on
 the volume put a permanent write + fsync + rename load on SD-card-backed flash
@@ -150,7 +164,10 @@ registry packages are checksum locked and Git dependencies are denied.
 `rpi-omt-deployer` presents responsive egui Connection, Deploy, Manage, Wi-Fi,
 Activity, and About views. Both reuse validators and typed management actions
 from `omt-deployer-core`; secrets are zeroized and never accepted through
-arguments or environment variables.
+arguments or environment variables. That covers every buffer a secret passes
+through, not only the ones it is stored in: the sudo stdin a deployment holds
+for its whole run, the Wi-Fi passphrase handed to the worker thread, and the
+raw `--secrets-stdin` document are all wiped rather than freed intact.
 
 ## Trust and legal surfaces
 

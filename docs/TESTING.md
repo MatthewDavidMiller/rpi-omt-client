@@ -40,12 +40,19 @@ make test
 ```
 
 `make test-py` covers validation, state, persistent auth, CSRF/rate limits,
-routes, diagnostics, and runtime adapters at a 98% branch-coverage floor.
+routes, diagnostics, and runtime adapters at a **100%** branch-coverage floor.
+The floor is 100 rather than a margin below it because a margin is only ever
+spent on branches nobody chose to leave uncovered: the two it was hiding were
+the receive probe's success path and a bundle collected against an unreadable
+target, both of which an operator reads directly out of a support archive.
 
 `make test-receiver` builds and tests the Rust receiver crates. It exercises
 shared target vectors, bounded wire parsing, CLI exit-status contracts, detail
 sanitization and JSON escaping, playback state/order, heartbeat publication,
-and atomic status replacement. It drives a loopback discovery server for both
+and atomic status replacement. HDMI connector selection is driven against a
+temporary directory standing in for `/sys/class/drm` and `/dev/dri`, covering
+card ordering, a renumbered binding, and each way a card can be half-populated
+without hiding a connected one behind it. It drives a loopback discovery server for both
 the single-source contract and the multi-source announcement stream, covering
 withdrawal, re-announcement, sorting, and rejection of names or ports that fail
 the shared grammars.
@@ -112,7 +119,10 @@ aarch64 `sys` installation:
 1. deploy through both CLI and native app and confirm non-Alpine/non-Pi-5
    targets fail before upload;
 2. reboot, then verify all four `omt-client*` OpenRC services and nftables;
-3. verify both HDMI connectors, hotplug, EDID, 1080p60 video, and HDMI audio;
+3. verify both HDMI connectors, hotplug, EDID, 1080p60 video, and HDMI audio.
+   Include the multi-card fallback: the unit suite drives it against a fake
+   sysfs tree, but selecting the second physical connector after the first
+   card's attributes fail to read is not reproducible off the board;
 4. verify zram, the 256 MiB memory limit, 64 PID limit, bounded Docker logs,
    and stable operation under memory pressure;
 5. verify discovery/direct playback, support bundle correlation/PCAP opt-in,
@@ -132,7 +142,10 @@ all accept.
 
 `tests/schema/omt-target-vectors.json` and
 `tests/schema/playback-status-vectors.json` are consumed by Python and the
-Rust tests. The target vectors also publish the forbidden source-name code
+Rust tests. Both halves of the status contract are asserted against the shared
+file, so neither a state only one side knows nor one no producer emits can
+survive: Rust checks `video_states` is exactly what `video_name` produces, and
+Python checks `PUBLIC_STATES` is total over `receiver_states`. The target vectors also publish the forbidden source-name code
 points as ranges: the Python suite derives them from `unicodedata` and the
 receiver's compiled table is asserted against the published one, so neither
 validator can drift from the other or from a Unicode revision. `tests/vectors/vmx/vectors.json` indexes the VMX conformance

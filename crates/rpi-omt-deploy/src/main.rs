@@ -10,6 +10,7 @@ use std::io::{self, Read};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
+use zeroize::Zeroizing;
 
 const VERSION: &str = match option_env!("RPI_OMT_CLIENT_VERSION") {
     Some(value) => value,
@@ -94,11 +95,17 @@ fn emit(json: bool, event: &str, message: &str, success: Option<bool>) {
         println!("{message}");
     }
 }
+/// Reads the bounded `--secrets-stdin` channel.
+///
+/// The buffer is `Zeroizing` because it holds every secret at once in plain
+/// text. The per-field `String`s serde produces are moved into `Secret`, which
+/// zeroizes the same allocation, but this document is the one copy that would
+/// otherwise be freed intact.
 fn read_secrets(enabled: bool) -> Result<SecretInput, String> {
     if !enabled {
         return Ok(SecretInput::default());
     }
-    let mut input = String::new();
+    let mut input = Zeroizing::new(String::new());
     io::stdin()
         .take(16 * 1024 + 1)
         .read_to_string(&mut input)

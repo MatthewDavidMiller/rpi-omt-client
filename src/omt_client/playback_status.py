@@ -34,7 +34,6 @@ RECEIVER_STATES = frozenset(
         "unsupported-format",
         "starting",
         "stopped",
-        "failed",
     }
 )
 VIDEO_STATES = RECEIVER_STATES - {"degraded"}
@@ -66,7 +65,6 @@ PUBLIC_STATES: dict[str, tuple[str, str, str]] = {
     "unsupported-format": ("unsupported-format", "Unsupported video format", "danger"),
     "starting": ("starting", "Starting playback", "warning"),
     "stopped": ("stopped", "Playback stopped", "neutral"),
-    "failed": ("failed", "Playback failed", "danger"),
 }
 
 

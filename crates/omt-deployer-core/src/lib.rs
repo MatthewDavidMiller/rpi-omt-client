@@ -220,15 +220,27 @@ pub fn derive_wpa_psk(ssid: &str, passphrase: &Secret) -> Result<Secret, Validat
         &mut derived,
     )
     .map_err(|_| ValidationError("WPA derivation failed."))?;
-    let encoded = derived
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect::<String>();
+    let encoded = hex_encode(&derived);
     derived.zeroize();
     Secret::new(encoded)
 }
 pub fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+/// Lower-case hex, in one allocation.
+///
+/// The three callers (`derive_wpa_psk`, `random_token`, and the Wi-Fi SSID
+/// encoder) each open-coded `.map(|b| format!("{b:02x}")).collect()`, which
+/// allocates a `String` per byte and then throws all of them away.
+pub(crate) fn hex_encode(bytes: &[u8]) -> String {
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        out.push(char::from(DIGITS[usize::from(byte >> 4)]));
+        out.push(char::from(DIGITS[usize::from(byte & 0x0f)]));
+    }
+    out
 }
 
 pub fn load_manifest(path: &Path) -> io::Result<Vec<String>> {
@@ -302,7 +314,7 @@ pub fn random_token(bytes: usize) -> io::Result<String> {
     }
     let mut value = vec![0_u8; bytes];
     getrandom::fill(&mut value).map_err(|error| io::Error::other(error.to_string()))?;
-    Ok(value.iter().map(|b| format!("{b:02x}")).collect())
+    Ok(hex_encode(&value))
 }
 pub fn sha256_file(path: &Path) -> io::Result<String> {
     let mut file = File::open(path)?;
@@ -398,6 +410,22 @@ mod tests {
         assert!(valid_remote_directory("/opt/omt-client"));
         assert_eq!(shell_quote("a'b"), "'a'\\''b'");
     }
+    /// One encoder now serves the PSK, the staging token, and the SSID, so its
+    /// output has to stay byte-for-byte what each of those callers published
+    /// before: lower case, two digits per byte, no separators.
+    #[test]
+    fn hex_is_lower_case_and_fixed_width() {
+        assert_eq!(hex_encode(&[]), "");
+        assert_eq!(hex_encode(&[0x00, 0x0f, 0xa5, 0xff]), "000fa5ff");
+        assert_eq!(hex_encode(b"studio"), "73747564696f");
+        let all: String = hex_encode(&(0..=255).collect::<Vec<u8>>());
+        assert_eq!(all.len(), 512);
+        assert!(
+            all.bytes()
+                .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+        );
+    }
+
     #[test]
     fn psk_vector() {
         let p = Secret::new("password".into()).unwrap_or_else(|e| panic!("{e}"));

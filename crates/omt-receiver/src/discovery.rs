@@ -100,7 +100,7 @@ fn server_sources(server: &str, deadline: Instant) -> Vec<Source> {
     // A BTreeMap gives the announcement stream last-writer-wins semantics per
     // name and leaves the result sorted.
     let mut collected: BTreeMap<String, Endpoint> = BTreeMap::new();
-    while Instant::now() < deadline && collected.len() <= MAX_SOURCES {
+    while Instant::now() < deadline && collected.len() < MAX_SOURCES {
         let Ok(frame) = channel.receive(deadline) else {
             break;
         };
@@ -110,18 +110,15 @@ fn server_sources(server: &str, deadline: Instant) -> Vec<Source> {
         let Ok(document) = std::str::from_utf8(&frame.payload) else {
             continue;
         };
-        let Ok(name) = xml::unique_text(document, "Name") else {
+        let Some(announcement) = Announcement::read(document) else {
             continue;
         };
-        if !is_valid_source_name(&name) {
+        if announcement.removed {
+            collected.remove(&announcement.name);
             continue;
         }
-        if xml::contains_element(document, "Removed", "True") {
-            collected.remove(&name);
-            continue;
-        }
-        if let Some(endpoint) = announcement_endpoint(document) {
-            collected.insert(name, endpoint);
+        if let Some(endpoint) = announcement.endpoint {
+            collected.insert(announcement.name, endpoint);
         }
     }
     collected
@@ -130,11 +127,33 @@ fn server_sources(server: &str, deadline: Instant) -> Vec<Source> {
         .collect()
 }
 
-/// Reads the address and port from one `OMTAddress` announcement.
-fn announcement_endpoint(document: &str) -> Option<Endpoint> {
-    let address = xml::unique_text(document, "IPAddress").ok()?;
-    let port: u16 = xml::unique_text(document, "Port").ok()?.parse().ok()?;
-    endpoint_from_parts(&address, port)
+/// One `OMTAddress` announcement, read in a single pass over the document.
+struct Announcement {
+    name: String,
+    /// `None` when the announcement carries no usable address, which for a
+    /// withdrawal is the normal case.
+    endpoint: Option<Endpoint>,
+    removed: bool,
+}
+
+impl Announcement {
+    /// Returns the announcement, or `None` if the document cannot name a valid
+    /// source -- a malformed or duplicated field, or a name the shared grammar
+    /// refuses, is discarded rather than partially believed.
+    fn read(document: &str) -> Option<Self> {
+        let [name, removed, address, port] =
+            xml::unique_texts(document, &["Name", "Removed", "IPAddress", "Port"]).ok()?;
+        let name = name?;
+        if !is_valid_source_name(&name) {
+            return None;
+        }
+        let endpoint = address.zip(port.and_then(|port| port.parse::<u16>().ok()));
+        Some(Self {
+            name,
+            endpoint: endpoint.and_then(|(address, port)| endpoint_from_parts(&address, port)),
+            removed: xml::element_is(removed.as_deref(), "True"),
+        })
+    }
 }
 
 /// Re-validates a discovered address through the shared direct-target grammar
@@ -178,12 +197,55 @@ mod tests {
     fn reads_an_announcement() {
         let document = "<OMTAddress><Name>Camera</Name><Port>6400</Port>\
             <Addresses><IPAddress>192.0.2.10</IPAddress></Addresses></OMTAddress>";
+        let announcement =
+            Announcement::read(document).unwrap_or_else(|| panic!("announcement rejected"));
+        assert_eq!(announcement.name, "Camera");
+        assert!(!announcement.removed);
         assert_eq!(
-            announcement_endpoint(document),
+            announcement.endpoint,
             Some(Endpoint {
                 host: "192.0.2.10".into(),
                 port: 6400
             })
         );
+    }
+
+    /// All four fields now come off one parse, so the cases that used to be
+    /// spread over four independent reads have to hold together.
+    #[test]
+    fn a_withdrawal_needs_only_a_name() {
+        let document = "<OMTAddress><Name>Camera</Name><Removed>true</Removed></OMTAddress>";
+        let announcement =
+            Announcement::read(document).unwrap_or_else(|| panic!("announcement rejected"));
+        assert!(
+            announcement.removed,
+            "Removed is matched case-insensitively"
+        );
+        assert_eq!(announcement.endpoint, None);
+        assert_eq!(announcement.name, "Camera");
+    }
+
+    #[test]
+    fn an_unusable_announcement_is_discarded_whole() {
+        // No name at all.
+        assert!(Announcement::read("<OMTAddress><Port>6400</Port></OMTAddress>").is_none());
+        // A name the shared grammar refuses.
+        assert!(
+            Announcement::read("<OMTAddress><Name>bad\u{202e}name</Name></OMTAddress>").is_none()
+        );
+        // A duplicated field rejects the document rather than picking one.
+        assert!(
+            Announcement::read(
+                "<OMTAddress><Name>Camera</Name><Port>6400</Port><Port>1</Port></OMTAddress>"
+            )
+            .is_none()
+        );
+        // A present but unusable address leaves the announcement without an
+        // endpoint instead of inventing one.
+        let document = "<OMTAddress><Name>Camera</Name><Port>0</Port>\
+            <IPAddress>192.0.2.10</IPAddress></OMTAddress>";
+        let announcement =
+            Announcement::read(document).unwrap_or_else(|| panic!("announcement rejected"));
+        assert_eq!(announcement.endpoint, None);
     }
 }

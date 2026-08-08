@@ -29,7 +29,6 @@ pub enum Codec {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FrameHeader {
-    pub version: u8,
     pub frame_type: FrameType,
     pub timestamp: i64,
     pub metadata_length: u16,
@@ -61,7 +60,6 @@ pub struct AudioHeader {
 pub struct DirectTarget {
     pub host: String,
     pub port: u16,
-    pub ipv6_literal: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -139,7 +137,6 @@ pub fn parse_frame_header(data: &[u8]) -> Result<FrameHeader, ProtocolError> {
         ));
     }
     Ok(FrameHeader {
-        version: 1,
         frame_type,
         timestamp,
         metadata_length,
@@ -342,7 +339,6 @@ pub fn parse_direct_target(value: &str) -> Result<DirectTarget, ProtocolError> {
     Ok(DirectTarget {
         host: normalized_host,
         port,
-        ipv6_literal,
     })
 }
 
@@ -460,7 +456,6 @@ mod tests {
 
     fn frame(frame_type: FrameType, data_length: u32, metadata_length: u16) -> FrameHeader {
         FrameHeader {
-            version: 1,
             frame_type,
             timestamp: 0,
             metadata_length,

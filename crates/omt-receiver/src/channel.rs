@@ -49,7 +49,6 @@ impl Frame {
     fn new() -> Self {
         Self {
             header: FrameHeader {
-                version: 1,
                 frame_type: FrameType::Metadata,
                 timestamp: 0,
                 metadata_length: 0,
@@ -98,7 +97,7 @@ impl Channel {
         &self.frame
     }
 
-    pub fn close(&mut self) {
+    fn close(&mut self) {
         if let Some(stream) = self.stream.take() {
             let _ = stream.shutdown(std::net::Shutdown::Both);
         }

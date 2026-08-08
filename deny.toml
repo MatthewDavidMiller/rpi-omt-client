@@ -7,7 +7,10 @@ ignore = [
 ]
 
 [licenses]
-allow = ["Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "ISC", "MIT", "Unicode-3.0", "Zlib"]
+# Exactly the licenses the shipped closure actually carries. An allowance that
+# matches nothing is reported as `license-not-encountered` on every run, which
+# buries the one that would matter.
+allow = ["Apache-2.0", "BSD-3-Clause", "ISC", "MIT", "Unicode-3.0", "Zlib"]
 confidence-threshold = 0.93
 
 [bans]

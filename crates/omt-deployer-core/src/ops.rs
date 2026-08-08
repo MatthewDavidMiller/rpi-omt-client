@@ -2,7 +2,7 @@
 
 use crate::ssh::{RemoteResult, SshSession};
 use crate::{
-    Connection, DeployOptions, ManagementAction, Secret, WifiSettings, derive_wpa_psk,
+    Connection, DeployOptions, ManagementAction, Secret, WifiSettings, derive_wpa_psk, hex_encode,
     load_manifest, random_token, run_process, secure_relative, sha256_file, shell_quote,
     validate_connection, validate_options, validate_wifi,
 };
@@ -96,12 +96,19 @@ fn sudo_prefix(connection: &Connection) -> &'static str {
     }
 }
 
-fn sudo_input(connection: &Connection) -> String {
-    connection
-        .sudo_password
-        .as_ref()
-        .filter(|value| !value.expose().is_empty())
-        .map_or_else(String::new, |value| format!("{}\n", value.expose()))
+/// The sudo password as the remote shell expects it on stdin.
+///
+/// Zeroizing rather than a bare `String`: `deploy` holds this for the whole
+/// upload-verify-promote-install sequence, and a plain buffer would leave the
+/// operator's sudo password in freed heap for the life of the process.
+fn sudo_input(connection: &Connection) -> Zeroizing<String> {
+    Zeroizing::new(
+        connection
+            .sudo_password
+            .as_ref()
+            .filter(|value| !value.expose().is_empty())
+            .map_or_else(String::new, |value| format!("{}\n", value.expose())),
+    )
 }
 
 fn file_fingerprint(path: &Path) -> io::Result<String> {
@@ -173,10 +180,6 @@ fn require_alpine_pi5(output: &str) -> io::Result<()> {
             "remote host must be a Raspberry Pi 5 running Alpine Linux 3.23 aarch64",
         ))
     }
-}
-
-fn hex_encode(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 fn redact(message: &str, secrets: &[&str]) -> String {
@@ -314,7 +317,6 @@ pub fn apply_wifi(
     stdin.push('\n');
     stdin.push_str(psk.expose());
     stdin.push('\n');
-    let stdin = Zeroizing::new(stdin);
 
     let command = format!(
         "{sudo} -v && sudo -n sh -eu -c {} sh {} {} {}",
@@ -571,5 +573,40 @@ mod tests {
         let safe = redact("secret [redacted] secret", &["secret", "eda"]);
         assert!(!safe.contains("secret"));
         assert!(safe.contains("[redacted]"));
+    }
+
+    /// `deploy` holds the sudo stdin for the whole upload-verify-promote-install
+    /// sequence. The return type is the guarantee that it is wiped afterwards --
+    /// a bare `String` here left the operator's sudo password in freed heap --
+    /// so this asserts the type as well as the framing the remote shell reads.
+    #[test]
+    fn sudo_input_is_zeroized_and_newline_terminated() {
+        fn assert_zeroizing(_value: &Zeroizing<String>) {}
+
+        let mut connection = Connection {
+            host: "pi.local".into(),
+            username: "root".into(),
+            port: 22,
+            auth: crate::AuthMethod::Password,
+            password: None,
+            key_path: None,
+            key_passphrase: None,
+            sudo_password: Secret::new("hunter2".into()).ok(),
+        };
+        let input = sudo_input(&connection);
+        assert_zeroizing(&input);
+        assert_eq!(input.as_str(), "hunter2\n");
+        assert_eq!(sudo_prefix(&connection), "sudo -S -p ''");
+
+        // No password means passwordless sudo: nothing on stdin, and the
+        // non-interactive prefix rather than one that waits for a prompt.
+        connection.sudo_password = None;
+        assert!(sudo_input(&connection).is_empty());
+        assert_eq!(sudo_prefix(&connection), "sudo -n");
+
+        // An empty password is the same as none, not an empty line on stdin.
+        connection.sudo_password = Secret::new(String::new()).ok();
+        assert!(sudo_input(&connection).is_empty());
+        assert_eq!(sudo_prefix(&connection), "sudo -n");
     }
 }

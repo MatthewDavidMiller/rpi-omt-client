@@ -219,7 +219,7 @@ class PreviewDiagnostics:
             ),
         )
 
-    def runtime(self) -> DiagnosticResult:
+    def runtime(self) -> tuple[DiagnosticResult, str]:
         return DiagnosticResult(
             "Runtime check",
             CommandResult(
@@ -231,7 +231,7 @@ class PreviewDiagnostics:
                 ),
                 duration_seconds=0.1,
             ),
-        )
+        ), self.status()
 
     def direct(self, address: str) -> DiagnosticResult:
         return DiagnosticResult(

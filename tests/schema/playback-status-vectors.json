@@ -7,9 +7,11 @@
     "side would make every status record unparseable and pin the dashboard to",
     "'Playback status stale'. Both test suites assert against this file.",
     "'events' names PlaybackStateModel methods, applied in order.",
-    "receiver_states/video_states are the consumer accept-lists. 'failed' is",
-    "accepted for forward compatibility; no producer path emits it as an overall",
-    "state today, so it carries no projection row."
+    "receiver_states/video_states are the consumer accept-lists, and every one",
+    "of them is reachable: the Rust suite asserts video_states is exactly what",
+    "video_name produces, and the Python suite asserts PUBLIC_STATES is total",
+    "over receiver_states. audio_states carries 'failed' because AudioState",
+    "::Failed is live -- a failing sink degrades playback rather than ending it."
   ],
   "schema": 1,
   "fields": [
@@ -32,8 +34,7 @@
     "degraded",
     "unsupported-format",
     "starting",
-    "stopped",
-    "failed"
+    "stopped"
   ],
   "video_states": [
     "running",
@@ -42,8 +43,7 @@
     "retrying",
     "unsupported-format",
     "starting",
-    "stopped",
-    "failed"
+    "stopped"
   ],
   "audio_states": ["stopped", "running", "failed"],
   "connectors": ["none", "HDMI-A-1", "HDMI-A-2"],

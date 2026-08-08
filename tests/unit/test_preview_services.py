@@ -107,7 +107,7 @@ def test_preview_source_network_diagnostics_and_bundle_are_in_memory():
     assert services.about.version() == "preview"
     assert "running:" in services.diagnostics.status()
     assert services.diagnostics.discovery().command.sources
-    assert services.diagnostics.runtime().command.returncode == 0
+    assert services.diagnostics.runtime()[0].command.returncode == 0
     assert "omt://host:6400" in services.diagnostics.direct("omt://host:6400").command.command
     assert services.system.request_reboot().ok
     bundle, name = services.diagnostics.bundle()

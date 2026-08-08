@@ -11,7 +11,18 @@ from .common import login_required, services
 diagnostics_blueprint = Blueprint("diagnostics", __name__)
 
 
-def _render(result: DiagnosticResult | None = None) -> ResponseReturnValue:
+def _render(
+    result: DiagnosticResult | None = None,
+    omt_status: str | None = None,
+) -> ResponseReturnValue:
+    """Render the diagnostics page, reusing a controller answer the caller has.
+
+    The page header shows `control-omt.sh status`. The runtime check already
+    runs that command -- once, deliberately, so the two members it produces
+    cannot contradict each other -- so asking again here spent a second flock
+    and /proc walk to obtain a *third* observation, free to disagree with the
+    one shown right beside it.
+    """
     container = services()
     configuration = container.source.configuration()
     return render_template(
@@ -20,7 +31,7 @@ def _render(result: DiagnosticResult | None = None) -> ResponseReturnValue:
         current_source=configuration.source,
         current_direct_target=configuration.direct_address,
         configuration_error=configuration.error,
-        omt_status=container.diagnostics.status(),
+        omt_status=container.diagnostics.status() if omt_status is None else omt_status,
         result=result,
     )
 
@@ -41,7 +52,8 @@ def discovery_check() -> ResponseReturnValue:
 @diagnostics_blueprint.post("/diagnostics/runtime")
 @login_required
 def runtime_check() -> ResponseReturnValue:
-    return _render(services().diagnostics.runtime())
+    result, omt_status = services().diagnostics.runtime()
+    return _render(result, omt_status)
 
 
 @diagnostics_blueprint.post("/diagnostics/direct")

@@ -26,14 +26,36 @@ pub enum XmlError {
 /// format gives each field once, and a duplicate is how a crafted document
 /// would try to make two readers disagree.
 pub fn unique_text(document: &str, tag: &str) -> Result<String, XmlError> {
+    let [found] = unique_texts(document, &[tag])?;
+    found.ok_or(XmlError::NotFound)
+}
+
+/// Returns the decoded text of each named element, in one pass.
+///
+/// The discovery stream wants four fields off every announcement, and a reader
+/// per field walked the whole document four times -- over a thousand parses for
+/// the 256 sources the receiver will track. Every rejection is unchanged and
+/// applies to the document as a whole: a duplicate of *any* requested tag, a
+/// document type declaration, a processing instruction, an unknown entity, more
+/// than 32 levels of nesting, or an oversized document refuses all of them
+/// together, so no caller can read a field out of a document another caller
+/// would have thrown away.
+///
+/// A tag that is simply absent is `None` rather than an error, because callers
+/// differ on which of their fields are optional.
+pub fn unique_texts<const N: usize>(
+    document: &str,
+    tags: &[&str; N],
+) -> Result<[Option<String>; N], XmlError> {
     if document.len() > MAX_DOCUMENT_BYTES {
         return Err(XmlError::Unsupported);
     }
     let mut reader = Reader::from_str(document);
     reader.config_mut().trim_text(false);
     let mut depth = 0_usize;
-    let mut capturing = false;
-    let mut found: Option<String> = None;
+    // Which of `tags` is being captured, and the text collected for it so far.
+    let mut capturing: Option<usize> = None;
+    let mut found: [Option<String>; N] = std::array::from_fn(|_| None);
     let mut text = String::new();
     loop {
         match reader.read_event() {
@@ -43,15 +65,16 @@ pub fn unique_text(document: &str, tag: &str) -> Result<String, XmlError> {
                 if depth > 32 {
                     return Err(XmlError::Unsupported);
                 }
-                if element.name().as_ref() == tag.as_bytes() {
-                    if found.is_some() || capturing {
+                let name = element.name();
+                if let Some(index) = tags.iter().position(|tag| name.as_ref() == tag.as_bytes()) {
+                    if found[index].is_some() || capturing.is_some() {
                         return Err(XmlError::Duplicate);
                     }
-                    capturing = true;
+                    capturing = Some(index);
                     text.clear();
                 }
             }
-            Ok(Event::Text(chunk)) if capturing => {
+            Ok(Event::Text(chunk)) if capturing.is_some() => {
                 let decoded = chunk.decode().map_err(|_| XmlError::Malformed)?;
                 if text.len() + decoded.len() > MAX_DOCUMENT_BYTES {
                     return Err(XmlError::Unsupported);
@@ -61,7 +84,7 @@ pub fn unique_text(document: &str, tag: &str) -> Result<String, XmlError> {
             // The reader surfaces every entity reference separately. Only the
             // five predefined names are resolved; anything else would need a
             // document type declaration, which is refused above.
-            Ok(Event::GeneralRef(reference)) if capturing => {
+            Ok(Event::GeneralRef(reference)) if capturing.is_some() => {
                 let name = reference.decode().map_err(|_| XmlError::Malformed)?;
                 let resolved = match name.as_ref() {
                     "amp" => '&',
@@ -78,9 +101,11 @@ pub fn unique_text(document: &str, tag: &str) -> Result<String, XmlError> {
             }
             Ok(Event::End(element)) => {
                 depth = depth.saturating_sub(1);
-                if capturing && element.name().as_ref() == tag.as_bytes() {
-                    capturing = false;
-                    found = Some(std::mem::take(&mut text));
+                if let Some(index) = capturing
+                    && element.name().as_ref() == tags[index].as_bytes()
+                {
+                    capturing = None;
+                    found[index] = Some(std::mem::take(&mut text));
                 }
             }
             Ok(Event::Eof) => break,
@@ -88,13 +113,13 @@ pub fn unique_text(document: &str, tag: &str) -> Result<String, XmlError> {
             Err(_) => return Err(XmlError::Malformed),
         }
     }
-    found.ok_or(XmlError::NotFound)
+    Ok(found)
 }
 
-/// True when the document contains the given element at all.
+/// True when the given element is present with the given value.
 #[must_use]
-pub fn contains_element(document: &str, tag: &str, value: &str) -> bool {
-    unique_text(document, tag).is_ok_and(|text| text.eq_ignore_ascii_case(value))
+pub fn element_is(text: Option<&str>, value: &str) -> bool {
+    text.is_some_and(|text| text.eq_ignore_ascii_case(value))
 }
 
 /// Confirms the document's single root element is named `tag`.
@@ -153,6 +178,50 @@ mod tests {
         assert_eq!(
             unique_text("<a><Name>&unknown;</Name></a>", "Name"),
             Err(XmlError::Malformed)
+        );
+    }
+
+    /// The single pass has to reach the same verdict the four separate passes
+    /// did, including on the tags it was not asked about first: a duplicate of
+    /// *any* requested tag refuses the whole document, so a crafted
+    /// announcement cannot get one field read out of a document that another
+    /// field's reader would have rejected.
+    #[test]
+    fn reads_every_requested_tag_in_one_pass() {
+        let document = "<OMTAddress><Name>Camera &amp; Two</Name><Removed>True</Removed>\
+            <Addresses><IPAddress>192.0.2.10</IPAddress></Addresses><Port>6400</Port></OMTAddress>";
+        let found = unique_texts(document, &["Name", "Removed", "IPAddress", "Port"])
+            .unwrap_or_else(|error| panic!("{error:?}"));
+        assert_eq!(found[0].as_deref(), Some("Camera & Two"));
+        assert!(element_is(found[1].as_deref(), "true"));
+        assert_eq!(found[2].as_deref(), Some("192.0.2.10"));
+        assert_eq!(found[3].as_deref(), Some("6400"));
+
+        // An absent tag is None, not a failure -- only some fields are required.
+        let sparse = unique_texts(
+            "<OMTAddress><Name>Camera</Name></OMTAddress>",
+            &["Name", "Port"],
+        )
+        .unwrap_or_else(|error| panic!("{error:?}"));
+        assert_eq!(sparse[0].as_deref(), Some("Camera"));
+        assert_eq!(sparse[1], None);
+        assert!(!element_is(None, "True"));
+
+        // A duplicate of any one of them refuses all of them.
+        for duplicated in [
+            "<a><Name>x</Name><Name>y</Name><Port>1</Port></a>",
+            "<a><Name>x</Name><Port>1</Port><Port>2</Port></a>",
+        ] {
+            assert_eq!(
+                unique_texts(duplicated, &["Name", "Port"]),
+                Err(XmlError::Duplicate),
+                "{duplicated}"
+            );
+        }
+        // And so does a declaration, however far from the requested tags.
+        assert_eq!(
+            unique_texts("<!DOCTYPE a><a><Name>x</Name></a>", &["Name", "Port"]),
+            Err(XmlError::Unsupported)
         );
     }
 

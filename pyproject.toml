@@ -31,6 +31,7 @@ packages = [
     "omt_client",
     "omt_client.routes",
     "omt_client.services",
+    "omt_client.services.diagnostics",
 ]
 
 [tool.setuptools.package-data]

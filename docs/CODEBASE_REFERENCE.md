@@ -24,7 +24,11 @@
 | Flask composition | `src/omt_client/factory.py`, `src/omt_client/wsgi.py` |
 | Service composition | `src/omt_client/services/composition.py` |
 | Typed service protocols | `src/omt_client/services/protocols.py` |
-| Authentication, playback, network, diagnostics, host system | `src/omt_client/services/` |
+| Authentication, playback, network, host system | `src/omt_client/services/` |
+| Diagnostics, split by trust boundary | `src/omt_client/services/diagnostics/` |
+| Container-side checks and their JSON archive members | `src/omt_client/services/diagnostics/checks.py` |
+| Correlated host request channel and PCAP validation | `src/omt_client/services/diagnostics/host.py` |
+| `RuntimeDiagnostics` and the support-archive layout | `src/omt_client/services/diagnostics/bundle.py` |
 | Routes | `src/omt_client/routes/` |
 | Safe I/O and persistent state | `src/omt_client/safe_io.py`, `src/omt_client/state_store.py` |
 | Shared host `key=value` record parsing | `src/omt_client/records.py` |
@@ -51,6 +55,17 @@ points prefer an explicit `RPI_OMT_CLIENT_VERSION`, then the canonical version
 in `pyproject.toml`, before falling back to release metadata from Git or a
 versioned source directory.
 
+`src/omt_client/services/diagnostics/` is split by trust boundary rather than
+by type:
+`checks.py` runs only what the container can answer itself, `host.py` owns the
+correlated request channel to the privileged collector, and `bundle.py`
+composes both and lays out the zip. Members reach `bundle.py` already resolved,
+including their stated failure reasons, so the archive layout decides nothing
+about content. `RuntimeDiagnostics` remains the only name outside the package.
+Its `runtime()` returns the check *and* the controller status that check
+observed, so the diagnostics page header cannot contradict the check rendered
+beneath it.
+
 `deploy/Dockerfile` builds a wheel from the `packages` list in `pyproject.toml`
 and installs it into `/opt/venv`, so the appliance imports `omt_client` from
 site-packages rather than a copied tree. That list names only `omt_client*`, so
@@ -70,6 +85,13 @@ A source name's forbidden code points have one published definition, in
 `unicodedata` and `omt-protocol` compiles them into a table it asserts against
 that file. Both suites read it, so a name the receiver would play cannot be one
 the dashboard silently drops.
+
+Playback states are pinned the same way, in
+`tests/schema/playback-status-vectors.json`. Every state in it is reachable:
+the Rust suite asserts `video_states` is exactly what `video_name` produces and
+the Python suite asserts `PUBLIC_STATES` is total over `receiver_states`, so a
+state cannot be added on one side alone, nor left behind once no producer emits
+it.
 
 The receiver is built with checksum-locked Cargo dependencies and Rust 1.97.1
 in a digest-pinned Alpine builder stage. A `scratch` stage contains only the

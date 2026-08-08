@@ -112,8 +112,70 @@ mod gates {
     }
 }
 
+/// The Activity view's backing log.
+///
+/// Outside the `desktop` module for the same reason as `gates`: "how many lines
+/// are kept" is a rule, not a widget, and one that only shows up after a long
+/// session. Compiled and tested without the feature so it cannot go unchecked.
+#[cfg_attr(not(feature = "desktop"), allow(dead_code))]
+mod activity {
+    /// Lines kept on screen. `Logs` alone appends up to 500 per press, and
+    /// nothing used to remove one, so a long session grew the log without
+    /// bound -- the last unbounded buffer in the deployer.
+    pub const LIMIT: usize = 2000;
+
+    /// A bounded, append-only view log that drops its oldest lines when full.
+    #[derive(Default)]
+    pub struct Log {
+        lines: Vec<String>,
+    }
+
+    impl Log {
+        pub fn push(&mut self, line: String) {
+            if self.lines.len() >= LIMIT {
+                // Keep the newest LIMIT - 1, so the arrival below lands inside
+                // the cap rather than one past it.
+                self.lines.drain(..=(self.lines.len() - LIMIT));
+            }
+            self.lines.push(line);
+        }
+
+        pub fn iter(&self) -> std::slice::Iter<'_, String> {
+            self.lines.iter()
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::{LIMIT, Log};
+
+        #[test]
+        fn the_log_keeps_the_newest_lines_and_never_exceeds_its_cap() {
+            let mut log = Log::default();
+            for index in 0..LIMIT + 500 {
+                log.push(index.to_string());
+            }
+            let lines: Vec<&String> = log.iter().collect();
+            assert_eq!(lines.len(), LIMIT);
+            // The oldest 500 were dropped; the newest is the last one pushed.
+            assert_eq!(lines[0], "500");
+            assert_eq!(lines[LIMIT - 1], &(LIMIT + 499).to_string());
+        }
+
+        #[test]
+        fn a_short_log_is_untouched() {
+            let mut log = Log::default();
+            log.push("first".into());
+            log.push("second".into());
+            assert_eq!(log.iter().count(), 2);
+            assert_eq!(log.iter().next().map(String::as_str), Some("first"));
+        }
+    }
+}
+
 #[cfg(feature = "desktop")]
 mod desktop {
+    use crate::activity::Log;
     use crate::gates::Form;
     use eframe::egui;
     use omt_deployer_core::{
@@ -167,7 +229,7 @@ mod desktop {
         project_root: String,
         remote_directory: String,
         reveal: bool,
-        activity: Vec<String>,
+        activity: Log,
         cancel: Arc<AtomicBool>,
         running: bool,
         events: Option<Receiver<WorkerEvent>>,
@@ -196,7 +258,7 @@ mod desktop {
                 project_root: project,
                 remote_directory: "/opt/omt-client".into(),
                 reveal: false,
-                activity: Vec::new(),
+                activity: Log::default(),
                 cancel: Arc::new(AtomicBool::new(false)),
                 running: false,
                 events: None,
@@ -253,7 +315,7 @@ mod desktop {
                 project_root: PathBuf::from(&self.project_root),
                 remote_directory: self.remote_directory.clone(),
                 wifi_ssid: self.wifi_ssid.clone(),
-                wifi_password: (*self.wifi_password).clone(),
+                wifi_password: self.wifi_password.clone(),
                 wifi_connect: self.wifi_connect,
             };
             let (tx, rx) = mpsc::channel();
@@ -301,13 +363,19 @@ mod desktop {
         }
     }
 
+    /// One queued operation, handed to the worker thread.
+    ///
+    /// `wifi_password` stays `Zeroizing` across the move: the form field it is
+    /// cloned from is zeroized, and copying it into a bare `String` for the
+    /// trip through the channel would defeat that for every request that is
+    /// built but never sent to `apply_wifi`.
     struct JobRequest {
         job: Job,
         connection: Connection,
         project_root: PathBuf,
         remote_directory: String,
         wifi_ssid: String,
-        wifi_password: String,
+        wifi_password: Zeroizing<String>,
         wifi_connect: bool,
     }
 
@@ -342,7 +410,7 @@ mod desktop {
             Job::Wifi => {
                 let settings = WifiSettings {
                     ssid: request.wifi_ssid,
-                    password: Secret::new(request.wifi_password)
+                    password: Secret::new((*request.wifi_password).clone())
                         .map_err(|error| error.to_string())?,
                     connect: request.wifi_connect,
                 };
@@ -448,7 +516,7 @@ mod desktop {
                         self.activity.push("Cancellation requested...".into());
                     }
                     egui::ScrollArea::vertical().show(ui, |ui| {
-                        for line in &self.activity {
+                        for line in self.activity.iter() {
                             ui.label(line);
                         }
                     });
