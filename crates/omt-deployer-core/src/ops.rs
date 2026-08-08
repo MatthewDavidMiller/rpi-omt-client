@@ -163,7 +163,33 @@ fn parse_sha256_line(output: &str) -> Option<String> {
     }
 }
 
-fn require_alpine_pi5(output: &str) -> io::Result<()> {
+/// The boards this appliance supports, as device-tree model prefixes.
+///
+/// This is the Rust half of the table in `deploy/lib/board-profile.sh`; the
+/// installer refuses the same set on the host itself. Each prefix ends at a
+/// word boundary, which is why the Pi 5 entry is not simply `Raspberry Pi 5`:
+/// that also matches `Raspberry Pi 500`. Two spellings are easy to get wrong --
+/// the Pi 3 B+ reports `Model B Plus`, and early Zero 2 W boards report
+/// `Zero 2` with no W.
+const SUPPORTED_BOARDS: [&str; 4] = [
+    "Raspberry Pi 5",
+    "Raspberry Pi 4 Model B",
+    "Raspberry Pi 3 Model ",
+    "Raspberry Pi Zero 2",
+];
+
+/// Whether a device-tree model names a board this appliance supports.
+fn is_supported_board(model: &str) -> bool {
+    SUPPORTED_BOARDS.iter().any(|prefix| {
+        model
+            .strip_prefix(prefix)
+            // A prefix that already ends in a space has consumed its own
+            // boundary; otherwise the next character must start a new word.
+            .is_some_and(|rest| prefix.ends_with(' ') || rest.is_empty() || rest.starts_with(' '))
+    })
+}
+
+fn require_supported_appliance(output: &str) -> io::Result<()> {
     let mut lines = output.lines();
     let architecture = lines.next().unwrap_or_default();
     let system = lines.next().unwrap_or_default();
@@ -172,14 +198,20 @@ fn require_alpine_pi5(output: &str) -> io::Result<()> {
     if architecture == "aarch64"
         && system == "alpine"
         && release.starts_with("3.23.")
-        && model.starts_with("Raspberry Pi 5")
+        && is_supported_board(model)
     {
         Ok(())
     } else {
         Err(io::Error::other(
-            "remote host must be a Raspberry Pi 5 running Alpine Linux 3.23 aarch64",
+            "remote host must run Alpine Linux 3.23 aarch64 on a Raspberry Pi 5, \
+             Raspberry Pi 4 Model B, Raspberry Pi 3, or Raspberry Pi Zero 2 W",
         ))
     }
+}
+
+/// The board named by a platform probe, for progress reporting.
+fn probed_board(output: &str) -> Option<&str> {
+    output.lines().nth(3).filter(|model| !model.is_empty())
 }
 
 fn redact(message: &str, secrets: &[&str]) -> String {
@@ -238,7 +270,7 @@ pub fn connect(connection: &Connection) -> io::Result<SshSession> {
     SshSession::connect(connection)
 }
 
-/// Probe the remote platform and confirm Alpine 3.23 aarch64 on a Pi 5.
+/// Probe the remote platform and confirm Alpine 3.23 aarch64 on a supported Pi.
 pub fn test_connection(
     connection: &Connection,
     cancellation: &AtomicBool,
@@ -249,8 +281,11 @@ pub fn test_connection(
     let mut session = connect(connection)?;
     let result = session.run(PLATFORM_PROBE, "", cancellation)?;
     require_success(&result, "Remote platform probe")?;
-    require_alpine_pi5(&result.stdout)?;
-    progress("SSH connection succeeded.");
+    require_supported_appliance(&result.stdout)?;
+    match probed_board(&result.stdout) {
+        Some(board) => progress(&format!("SSH connection succeeded. Detected {board}.")),
+        None => progress("SSH connection succeeded."),
+    }
     Ok(())
 }
 
@@ -470,7 +505,10 @@ pub fn deploy(
     let mut session = connect(connection)?;
     let probe = session.run(PLATFORM_PROBE, "", cancellation)?;
     require_success(&probe, "Remote platform probe")?;
-    require_alpine_pi5(&probe.stdout)?;
+    require_supported_appliance(&probe.stdout)?;
+    if let Some(board) = probed_board(&probe.stdout) {
+        progress(&format!("Deploying to {board}."));
+    }
 
     let remote_directory = options.remote_directory.trim_end_matches('/').to_owned();
     let remote_q = shell_quote(&remote_directory);
@@ -555,6 +593,80 @@ pub fn deploy(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn probe(model: &str) -> String {
+        format!("aarch64\nalpine\n3.23.5\n{model}\n")
+    }
+
+    /// The same matrix as `tests/unit/test_board_profile.sh`. These two gates
+    /// run on different machines -- this one on the operator's workstation
+    /// before upload, the shell one on the Pi -- so a board either passes both
+    /// or the deployment fails halfway.
+    #[test]
+    fn accepts_every_supported_board() {
+        for model in [
+            "Raspberry Pi 5 Model B Rev 1.0",
+            "Raspberry Pi 4 Model B Rev 1.4",
+            "Raspberry Pi 3 Model B Rev 1.2",
+            "Raspberry Pi 3 Model B Plus Rev 1.3",
+            "Raspberry Pi 3 Model A Plus Rev 1.0",
+            "Raspberry Pi Zero 2 W Rev 1.0",
+            "Raspberry Pi Zero 2 Rev 1.0",
+        ] {
+            assert!(
+                require_supported_appliance(&probe(model)).is_ok(),
+                "rejected a supported board: {model}"
+            );
+        }
+    }
+
+    /// The near misses matter most: a `Raspberry Pi 5` prefix without a word
+    /// boundary also matches the Pi 500, and a loosened Zero prefix would
+    /// catch the 32-bit-only original Zero W.
+    #[test]
+    fn refuses_unsupported_boards_and_near_misses() {
+        for model in [
+            "Raspberry Pi 500 Rev 1.0",
+            "Raspberry Pi 400 Rev 1.0",
+            "Raspberry Pi 2 Model B Rev 1.1",
+            "Raspberry Pi Zero W Rev 1.1",
+            "Raspberry Pi Model B Plus Rev 1.2",
+            "Raspberry Pi Compute Module 4 Rev 1.0",
+            "Raspberry Pi Compute Module 5 Rev 1.0",
+            "Orange Pi 5",
+            "",
+        ] {
+            assert!(
+                require_supported_appliance(&probe(model)).is_err(),
+                "accepted an unsupported board: {model}"
+            );
+        }
+    }
+
+    #[test]
+    fn still_refuses_the_wrong_architecture_or_distribution() {
+        let model = "Raspberry Pi 5 Model B Rev 1.0";
+        for output in [
+            format!("armv7l\nalpine\n3.23.5\n{model}\n"),
+            format!("aarch64\ndebian\n3.23.5\n{model}\n"),
+            format!("aarch64\nalpine\n3.22.1\n{model}\n"),
+            "aarch64\nalpine\n3.23.5\n".to_owned(),
+        ] {
+            assert!(
+                require_supported_appliance(&output).is_err(),
+                "accepted an unsupported platform: {output:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn reports_the_detected_board_for_progress() {
+        assert_eq!(
+            probed_board(&probe("Raspberry Pi 4 Model B Rev 1.4")),
+            Some("Raspberry Pi 4 Model B Rev 1.4")
+        );
+        assert_eq!(probed_board("aarch64\nalpine\n3.23.5\n"), None);
+    }
 
     #[test]
     fn digest_parser_accepts_sha256sum_output() {

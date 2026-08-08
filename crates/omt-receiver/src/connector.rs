@@ -11,7 +11,12 @@ use std::path::{Path, PathBuf};
 
 const SYSFS_ROOT: &str = "/sys/class/drm";
 const DEVICE_ROOT: &str = "/dev/dri";
+const SOUND_ROOT: &str = "/sys/class/sound";
 /// Connector names the appliance supports, in auto-selection order.
+///
+/// The Pi 3 and Zero 2 W expose only `HDMI-A-1`; on those boards `HDMI-A-2`
+/// simply never resolves, which the play loop already reads as "no display
+/// connected" rather than as an error.
 pub const SUPPORTED: [&str; 2] = ["HDMI-A-1", "HDMI-A-2"];
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -24,15 +29,6 @@ pub struct Connector {
 }
 
 impl Connector {
-    /// The Pi 5's two HDMI outputs each carry their own ALSA card.
-    fn alsa_device_for(name: &str) -> &'static str {
-        if name == "HDMI-A-1" {
-            "plughw:CARD=vc4hdmi0,DEV=0"
-        } else {
-            "plughw:CARD=vc4hdmi1,DEV=0"
-        }
-    }
-
     /// Re-reads sysfs to confirm the display is still attached and still has
     /// the connector id this binding was built from.
     #[must_use]
@@ -63,7 +59,12 @@ pub fn find(preference: &str) -> Option<Connector> {
 }
 
 fn named(name: &str) -> Option<Connector> {
-    named_in(Path::new(SYSFS_ROOT), Path::new(DEVICE_ROOT), name)
+    named_in(
+        Path::new(SYSFS_ROOT),
+        Path::new(DEVICE_ROOT),
+        Path::new(SOUND_ROOT),
+        name,
+    )
 }
 
 /// The selection itself, over the two directory trees it reads rather than over
@@ -74,7 +75,12 @@ fn named(name: &str) -> Option<Connector> {
 /// still the display the operator has plugged in. Returning from the whole
 /// function on one unreadable `status` reported "no display connected" for a
 /// connector that was attached to a later card.
-fn named_in(sysfs_root: &Path, device_root: &Path, name: &str) -> Option<Connector> {
+fn named_in(
+    sysfs_root: &Path,
+    device_root: &Path,
+    sound_root: &Path,
+    name: &str,
+) -> Option<Connector> {
     let suffix = format!("-{name}");
     // Several cards can expose the same connector name; the lowest-numbered
     // card that is actually connected wins, which keeps selection stable.
@@ -110,10 +116,58 @@ fn named_in(sysfs_root: &Path, device_root: &Path, name: &str) -> Option<Connect
             card_path,
             sysfs_path,
             id,
-            alsa_device: Connector::alsa_device_for(name).to_owned(),
+            alsa_device: alsa_device_in(sound_root, name),
         });
     }
     None
+}
+
+/// Resolves the HDMI output's ALSA card by reading the registered card ids.
+///
+/// The card layout is not the same on every supported board, and guessing it
+/// from the connector name alone is what made HDMI audio fail silently on the
+/// single-output boards:
+///
+/// * Pi 4 and Pi 5 register one card per output, `vc4hdmi0` and `vc4hdmi1`.
+/// * Pi 3 and Zero 2 W have one HDMI and register a single card, `vc4hdmi`,
+///   with no index at all.
+///
+/// So the id the connector would like is looked for first, and a lone
+/// `vc4hdmi` is accepted for either connector name -- on a board that has only
+/// one output, it is the output. The indexed name is still the fallback when
+/// the tree cannot be read, because a wrong device name that ALSA then refuses
+/// degrades audio while video keeps playing, which is the same outcome as
+/// returning nothing but leaves the attempted name in the status document.
+fn alsa_device_in(sound_root: &Path, name: &str) -> String {
+    let preferred = if name == "HDMI-A-1" {
+        "vc4hdmi0"
+    } else {
+        "vc4hdmi1"
+    };
+    let mut single = false;
+    if let Ok(entries) = fs::read_dir(sound_root) {
+        let mut ids = Vec::new();
+        for entry in entries.flatten() {
+            let file_name = entry.file_name();
+            let Some(file_name) = file_name.to_str() else {
+                continue;
+            };
+            if !file_name.starts_with("card") {
+                continue;
+            }
+            if let Some(id) = read_line(&entry.path().join("id")) {
+                ids.push(id);
+            }
+        }
+        if ids.iter().any(|id| id == preferred) {
+            return format!("plughw:CARD={preferred},DEV=0");
+        }
+        single = ids.iter().any(|id| id == "vc4hdmi");
+    }
+    if single {
+        return "plughw:CARD=vc4hdmi,DEV=0".to_owned();
+    }
+    format!("plughw:CARD={preferred},DEV=0")
 }
 
 fn read_line(path: &Path) -> Option<String> {
@@ -128,8 +182,8 @@ fn read_line(path: &Path) -> Option<String> {
 mod tests {
     use super::*;
 
-    /// A disposable pair of roots standing in for `/sys/class/drm` and
-    /// `/dev/dri`, removed when the test ends however it ends.
+    /// A disposable set of roots standing in for `/sys/class/drm`, `/dev/dri`,
+    /// and `/sys/class/sound`, removed when the test ends however it ends.
     struct Tree {
         root: PathBuf,
     }
@@ -145,6 +199,7 @@ mod tests {
             let tree = Self { root };
             fs::create_dir_all(tree.sysfs()).unwrap_or_else(|error| panic!("{error}"));
             fs::create_dir_all(tree.devices()).unwrap_or_else(|error| panic!("{error}"));
+            fs::create_dir_all(tree.sound()).unwrap_or_else(|error| panic!("{error}"));
             tree
         }
 
@@ -154,6 +209,18 @@ mod tests {
 
         fn devices(&self) -> PathBuf {
             self.root.join("dev")
+        }
+
+        fn sound(&self) -> PathBuf {
+            self.root.join("sound")
+        }
+
+        /// Registers one ALSA card with the given id, as the kernel does.
+        fn sound_card(&self, card: &str, id: &str) -> &Self {
+            let entry = self.sound().join(card);
+            fs::create_dir_all(&entry).unwrap_or_else(|error| panic!("{error}"));
+            fs::write(entry.join("id"), id).unwrap_or_else(|error| panic!("{error}"));
+            self
         }
 
         /// Adds one `cardN-NAME` entry. `status`/`connector_id` of `None` means
@@ -176,7 +243,11 @@ mod tests {
         }
 
         fn find(&self, name: &str) -> Option<Connector> {
-            named_in(&self.sysfs(), &self.devices(), name)
+            named_in(&self.sysfs(), &self.devices(), &self.sound(), name)
+        }
+
+        fn alsa(&self, name: &str) -> String {
+            alsa_device_in(&self.sound(), name)
         }
     }
 
@@ -267,14 +338,50 @@ mod tests {
         assert!(!selected.is_connected());
     }
 
+    /// Pi 4 and Pi 5: one ALSA card per HDMI output.
     #[test]
     fn maps_each_output_to_its_own_audio_card() {
+        let tree = Tree::new("audio-dual");
+        tree.sound_card("card0", "vc4hdmi0")
+            .sound_card("card1", "vc4hdmi1");
+        assert_eq!(tree.alsa("HDMI-A-1"), "plughw:CARD=vc4hdmi0,DEV=0");
+        assert_eq!(tree.alsa("HDMI-A-2"), "plughw:CARD=vc4hdmi1,DEV=0");
+    }
+
+    /// The Pi 3 and Zero 2 W have one HDMI and register a single, unindexed
+    /// `vc4hdmi` card. Asking for `vc4hdmi0` there is a device ALSA cannot
+    /// open, which is what made HDMI audio fail silently on those boards while
+    /// video kept playing.
+    #[test]
+    fn a_single_hdmi_board_uses_its_unindexed_card() {
+        let tree = Tree::new("audio-single");
+        tree.sound_card("card0", "vc4hdmi");
+        assert_eq!(tree.alsa("HDMI-A-1"), "plughw:CARD=vc4hdmi,DEV=0");
+        // Never selected on such a board, but it must not resolve to an
+        // indexed card that does not exist either.
+        assert_eq!(tree.alsa("HDMI-A-2"), "plughw:CARD=vc4hdmi,DEV=0");
+    }
+
+    /// An indexed card is preferred over a lone `vc4hdmi` when both somehow
+    /// appear, and unrelated cards are ignored rather than matched by position.
+    #[test]
+    fn unrelated_audio_cards_are_ignored() {
+        let tree = Tree::new("audio-mixed");
+        tree.sound_card("card0", "Headphones")
+            .sound_card("card1", "vc4hdmi0")
+            .sound_card("card2", "vc4hdmi1");
+        assert_eq!(tree.alsa("HDMI-A-1"), "plughw:CARD=vc4hdmi0,DEV=0");
+        assert_eq!(tree.alsa("HDMI-A-2"), "plughw:CARD=vc4hdmi1,DEV=0");
+    }
+
+    /// With no readable sound tree the indexed name is still reported, so the
+    /// status document names the device that was attempted.
+    #[test]
+    fn an_unreadable_sound_tree_falls_back_to_the_indexed_card() {
+        let tree = Tree::new("audio-empty");
+        assert_eq!(tree.alsa("HDMI-A-1"), "plughw:CARD=vc4hdmi0,DEV=0");
         assert_eq!(
-            Connector::alsa_device_for("HDMI-A-1"),
-            "plughw:CARD=vc4hdmi0,DEV=0"
-        );
-        assert_eq!(
-            Connector::alsa_device_for("HDMI-A-2"),
+            alsa_device_in(Path::new("/nonexistent-omt-sound-root"), "HDMI-A-2"),
             "plughw:CARD=vc4hdmi1,DEV=0"
         );
     }

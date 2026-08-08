@@ -24,6 +24,11 @@ services:
     environment:
       DBUS_SYSTEM_BUS_ADDRESS: unix:path=/host-avahi/system-bus
       OMT_HDMI_CONNECTOR: "${OMT_HDMI_CONNECTOR:-auto}"
+      # The detected board and what it may attempt to decode. The installer
+      # always writes both; the defaults are the Pi 5 tier so that a missing
+      # variable never silently degrades an installed appliance.
+      OMT_BOARD_LABEL: "${OMT_BOARD_LABEL:-Raspberry Pi}"
+      OMT_VIDEO_CEILING: "${OMT_VIDEO_CEILING:-1920x1080@60}"
       OMT_DIAGNOSTICS_HOST_REPORT_FILE: /host-diagnostics/host-report.txt
       OMT_DIAGNOSTICS_HOST_REQUEST_FILE: /host-diagnostics/request
       OMT_DIAGNOSTICS_HOST_PCAP_FILE: /host-diagnostics/host-network.pcap

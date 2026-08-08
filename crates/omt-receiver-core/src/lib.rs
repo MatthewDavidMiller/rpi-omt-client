@@ -29,6 +29,132 @@ pub enum AudioState {
     Failed,
 }
 
+/// The decode ceiling this board is allowed to attempt.
+///
+/// A ceiling is a list of shapes and a frame is admitted when it fits inside
+/// any one of them, which is what lets a Pi 4 take either 1080p30 or 720p60
+/// without a pixel-rate budget nobody can explain to an operator. The
+/// installer derives the default from the board (`deploy/lib/board-profile.sh`)
+/// and passes it as `--video-ceiling`; the operator may override it.
+///
+/// This is policy, not safety. `omt_protocol::parse_video_header` still refuses
+/// anything above 1920x1080@60 outright, because that bound is what sizes the
+/// decoder's allocations. A ceiling can only ever be at or below it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VideoCeiling {
+    shapes: Vec<Shape>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct Shape {
+    width: i32,
+    height: i32,
+    fps: i32,
+}
+
+/// Absolute limits, mirroring `omt_protocol::parse_video_header`. A ceiling
+/// above these would promise what the fixed allocations cannot deliver.
+const CEILING_MAX_WIDTH: i32 = 1920;
+const CEILING_MAX_HEIGHT: i32 = 1080;
+const CEILING_MAX_FPS: i32 = 60;
+const CEILING_MIN_DIMENSION: i32 = 16;
+/// More than any board profile needs, which bounds the parse.
+const CEILING_MAX_SHAPES: usize = 4;
+
+impl Shape {
+    fn admits(self, width: i32, height: i32, rate: f64) -> bool {
+        // The rate is compared with a tolerance because 59.94 arrives as
+        // 60000/1001 and must not be refused by a 60 fps ceiling.
+        width <= self.width && height <= self.height && rate <= f64::from(self.fps) + 0.01
+    }
+
+    fn describe(self) -> String {
+        format!("{}x{} at {} fps", self.width, self.height, self.fps)
+    }
+}
+
+impl VideoCeiling {
+    /// Parses `WIDTHxHEIGHT@FPS[,WIDTHxHEIGHT@FPS...]`.
+    ///
+    /// Every rejection is a named error rather than a fallback: the ceiling
+    /// comes from the installer and from operator input, and silently
+    /// substituting a default for a malformed one would present a board as
+    /// capable of something nobody chose.
+    pub fn parse(text: &str) -> Result<Self, String> {
+        let mut shapes = Vec::new();
+        for field in text.split(',') {
+            if shapes.len() == CEILING_MAX_SHAPES {
+                return Err(format!(
+                    "A video ceiling may list at most {CEILING_MAX_SHAPES} resolutions."
+                ));
+            }
+            shapes.push(Self::shape(field)?);
+        }
+        if shapes.is_empty() {
+            return Err("A video ceiling must list at least one resolution.".into());
+        }
+        Ok(Self { shapes })
+    }
+
+    fn shape(field: &str) -> Result<Shape, String> {
+        let invalid = || format!("Invalid video ceiling: {field}. Expected WIDTHxHEIGHT@FPS.");
+        let (dimensions, rate) = field.split_once('@').ok_or_else(invalid)?;
+        let (width, height) = dimensions.split_once('x').ok_or_else(invalid)?;
+        let shape = Shape {
+            width: Self::number(width).ok_or_else(invalid)?,
+            height: Self::number(height).ok_or_else(invalid)?,
+            fps: Self::number(rate).ok_or_else(invalid)?,
+        };
+        if !(CEILING_MIN_DIMENSION..=CEILING_MAX_WIDTH).contains(&shape.width)
+            || !(CEILING_MIN_DIMENSION..=CEILING_MAX_HEIGHT).contains(&shape.height)
+            || !(1..=CEILING_MAX_FPS).contains(&shape.fps)
+        {
+            return Err(format!(
+                "Video ceiling {field} is outside the supported {CEILING_MAX_WIDTH}x{CEILING_MAX_HEIGHT} at {CEILING_MAX_FPS} fps maximum."
+            ));
+        }
+        Ok(shape)
+    }
+
+    /// Digits only, so a leading `+`, a leading zero, or surrounding space is a
+    /// rejection rather than something `str::parse` would quietly accept.
+    fn number(text: &str) -> Option<i32> {
+        if text.is_empty()
+            || text.len() > 4
+            || !text.bytes().all(|byte| byte.is_ascii_digit())
+            || text.starts_with('0')
+        {
+            return None;
+        }
+        text.parse().ok()
+    }
+
+    /// Whether this board may attempt the format, and why not when it may not.
+    ///
+    /// The detail is what the operator reads on the dashboard next to
+    /// `unsupported-format`, so it names both the stream and the ceiling.
+    pub fn admits(&self, width: i32, height: i32, rate: f64) -> Result<(), String> {
+        if self
+            .shapes
+            .iter()
+            .any(|shape| shape.admits(width, height, rate))
+        {
+            return Ok(());
+        }
+        Err(format!(
+            "{width}x{height} at {rate:.2} fps exceeds this appliance's limit of {}.",
+            self.describe()
+        ))
+    }
+
+    /// The ceiling as operator-facing prose, for status and the Web UI.
+    #[must_use]
+    pub fn describe(&self) -> String {
+        let shapes: Vec<String> = self.shapes.iter().map(|shape| shape.describe()).collect();
+        shapes.join(", or ")
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Connector {
     pub name: String,
@@ -353,6 +479,125 @@ pub fn sanitize_detail(value: &str) -> String {
 mod tests {
     use super::*;
     use serde::Deserialize;
+
+    fn ceiling(text: &str) -> VideoCeiling {
+        VideoCeiling::parse(text).unwrap_or_else(|error| panic!("{error}"))
+    }
+
+    /// The four board tiers from `deploy/lib/board-profile.sh`. This test and
+    /// `tests/unit/test_board_profile.sh` are the two ends of that contract:
+    /// the shell owns which board gets which string, this owns what the string
+    /// then admits.
+    #[test]
+    fn board_tiers_admit_their_intended_formats() {
+        let pi5 = ceiling("1920x1080@60");
+        let pi4 = ceiling("1920x1080@30,1280x720@60");
+        let pi3 = ceiling("1280x720@60");
+
+        assert!(pi5.admits(1920, 1080, 60.0).is_ok());
+        assert!(pi5.admits(1280, 720, 60.0).is_ok());
+
+        // The Pi 4 tier is the reason a ceiling is a list: neither shape alone
+        // expresses "1080p30 or 720p60".
+        assert!(pi4.admits(1920, 1080, 30.0).is_ok());
+        assert!(pi4.admits(1280, 720, 60.0).is_ok());
+        assert!(pi4.admits(1920, 1080, 60.0).is_err());
+
+        assert!(pi3.admits(1280, 720, 60.0).is_ok());
+        assert!(pi3.admits(1280, 720, 30.0).is_ok());
+        assert!(pi3.admits(1920, 1080, 30.0).is_err());
+        assert!(pi3.admits(1920, 1080, 60.0).is_err());
+    }
+
+    /// 59.94 arrives as 60000/1001 and is what most broadcast senders emit. A
+    /// 60 fps ceiling that refused it would report `unsupported-format` for the
+    /// single most common input on every board.
+    #[test]
+    fn a_sixty_fps_ceiling_admits_59_94() {
+        let tier = ceiling("1280x720@60");
+        assert!(tier.admits(1280, 720, 60_000.0 / 1001.0).is_ok());
+        assert!(tier.admits(1280, 720, 60.0).is_ok());
+        assert!(tier.admits(1280, 720, 60.5).is_err());
+    }
+
+    /// Smaller-than-ceiling input is admitted in both dimensions
+    /// independently, so an unusual aspect ratio is not refused for being
+    /// narrow.
+    #[test]
+    fn smaller_formats_fit_inside_a_shape() {
+        let tier = ceiling("1920x1080@30");
+        assert!(tier.admits(640, 480, 25.0).is_ok());
+        assert!(tier.admits(1920, 240, 30.0).is_ok());
+        assert!(tier.admits(16, 16, 1.0).is_ok());
+    }
+
+    #[test]
+    fn a_refusal_names_the_stream_and_the_ceiling() {
+        let Err(detail) = ceiling("1280x720@60").admits(1920, 1080, 59.94) else {
+            panic!("1080p must not fit a 720p ceiling")
+        };
+        assert!(detail.contains("1920x1080"), "{detail}");
+        assert!(detail.contains("1280x720 at 60 fps"), "{detail}");
+    }
+
+    #[test]
+    fn describes_every_shape_for_the_operator() {
+        assert_eq!(ceiling("1920x1080@60").describe(), "1920x1080 at 60 fps");
+        assert_eq!(
+            ceiling("1920x1080@30,1280x720@60").describe(),
+            "1920x1080 at 30 fps, or 1280x720 at 60 fps"
+        );
+    }
+
+    /// A ceiling above the protocol's own limits would promise what the fixed
+    /// allocations cannot deliver, so it is refused however it is spelled.
+    #[test]
+    fn rejects_malformed_and_out_of_range_ceilings() {
+        for text in [
+            "",
+            "1920x1080",
+            "1920X1080@60",
+            "1920x1080@60Hz",
+            "1921x1080@60",
+            "1920x1081@60",
+            "1920x1080@61",
+            "3840x2160@30",
+            "15x15@60",
+            "1920x1080@0",
+            "0x1080@60",
+            "0640x480@30",
+            "+640x480@30",
+            " 640x480@30",
+            "640x480@30 ",
+            "1920x1080@60,",
+            ",1920x1080@60",
+            "1920x1080@60,,1280x720@30",
+            "1920x1080@60 1280x720@30",
+            "12345x1080@60",
+            "640x480@25,800x600@30,1280x720@50,1920x1080@30,640x360@24",
+        ] {
+            assert!(
+                VideoCeiling::parse(text).is_err(),
+                "accepted an unsupported ceiling: [{text}]"
+            );
+        }
+    }
+
+    #[test]
+    fn accepts_every_shipped_board_profile() {
+        for text in [
+            "1920x1080@60",
+            "1920x1080@30,1280x720@60",
+            "1280x720@60",
+            "640x480@25,800x600@30,1280x720@50,1920x1080@30",
+        ] {
+            assert!(
+                VideoCeiling::parse(text).is_ok(),
+                "rejected a supported ceiling: [{text}]"
+            );
+        }
+    }
+
     #[test]
     fn detail_contract() {
         assert_eq!(sanitize_detail("  a\nb  "), "ab");

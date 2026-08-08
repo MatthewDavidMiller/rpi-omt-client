@@ -22,6 +22,7 @@ def dashboard() -> ResponseReturnValue:
         current_source=playback.source,
         current_direct_target=playback.direct_address,
         playback=playback,
+        video_limit=source.video_limit(),
     )
 
 

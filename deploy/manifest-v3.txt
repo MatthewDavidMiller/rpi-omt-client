@@ -7,6 +7,7 @@ deploy/host/host-diagnostics.sh
 deploy/host/host-event-watcher.sh
 deploy/host/host-reboot.sh
 deploy/lib/reboot-request.sh
+deploy/lib/board-profile.sh
 deploy/lib/hdmi-config.sh
 deploy/lib/host-validation.sh
 deploy/lib/publication.sh

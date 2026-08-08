@@ -2,15 +2,26 @@
 
 ## Supported host
 
-- Raspberry Pi 5 only;
+- Raspberry Pi 5, Raspberry Pi 4 Model B, Raspberry Pi 3 Model A+/B/B+, or
+  Raspberry Pi Zero 2 W;
 - Alpine Linux 3.23 aarch64;
 - persistent `sys` mode on SD, eMMC, or USB storage;
 - connected DRM/KMS HDMI and ALSA HDMI playback devices;
 - network reachability to OMT senders.
 
+Each board has its own decode ceiling; see the video limit table in
+[CONFIGURATION.md](CONFIGURATION.md). The Pi 5 and Pi 4 have two HDMI outputs;
+the Pi 3 and Zero 2 W have one, so only `HDMI-A-1` resolves there.
+
 Diskless/data-mode Alpine is rejected because its RAM-backed root competes
 with video decoding. Raspberry Pi OS, other distributions, 32-bit userspace,
-and older Pi boards are rejected before installer mutation.
+the Pi 400/500, Compute Modules, and every earlier board are rejected before
+installer mutation.
+
+The Zero 2 W needs one step before the installer can run at all: Alpine's
+aarch64 `config.txt` ships sections for the Pi 3, 4, and 5 but none for the
+Zero 2 W, so add a `[pi02]` (or `[all]`) section mirroring the Pi 3 kernel and
+initramfs entries before first boot.
 
 Flash the official Alpine Raspberry Pi aarch64 image, complete `setup-alpine`,
 and install to disk in `sys` mode. Create a non-root administrator with `sudo`,
@@ -49,7 +60,7 @@ still runs entirely in the pinned Linux containers.
 Run `.build/deployer-publish/bin/rpi-omt-deployer` (or the `.exe` produced on
 Windows) with Docker, a Pi key already trusted in `~/.ssh/known_hosts`,
 administrator SSH/sudo credentials, and this source tree. Connect validates
-Alpine 3.23 aarch64 and the Pi 5 device-tree model.
+Alpine 3.23 aarch64 and a supported device-tree model.
 Deploy builds, verifies, uploads, and installs the capsule. Manage reads
 container status/logs or restarts it. Wi-Fi updates the running
 `wpa_supplicant` through its control socket and stores a derived WPA PSK rather
@@ -121,6 +132,7 @@ deploy/host/host-diagnostics.sh
 deploy/host/host-event-watcher.sh
 deploy/host/host-reboot.sh
 deploy/lib/reboot-request.sh
+deploy/lib/board-profile.sh
 deploy/lib/hdmi-config.sh
 deploy/lib/host-validation.sh
 deploy/lib/publication.sh
@@ -139,8 +151,12 @@ THIRD_PARTY_SOURCE.md
 ## Installer behavior
 
 Run `sudo ./deploy/host/install.sh`. Before mutation it verifies Alpine 3.23,
-aarch64, the Pi 5 model, a persistent root filesystem, safe paths, and the
-complete capsule. It expects a clean Alpine installation.
+aarch64, a supported board model, a persistent root filesystem, safe paths, and
+the complete capsule. It expects a clean Alpine installation.
+
+`--max-video` overrides the board's decode ceiling and `--hdmi-video` forces a
+connector mode; both are retained in `/etc/omt-client/installer.conf` and
+`auto` restores the default. Run `install.sh --help` for the accepted forms.
 
 The installer then:
 

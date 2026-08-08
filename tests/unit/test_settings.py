@@ -171,3 +171,24 @@ def test_host_timeout_cannot_exhaust_the_bundle_budget_alone():
                 "OMT_DIAGNOSTICS_HOST_TIMEOUT_SECONDS": "41",
             }
         )
+
+
+def test_board_identity_comes_from_the_installer_environment():
+    """`deploy/host/install.sh` writes both from the detected board into the
+    compose env file. The defaults are the Pi 5 tier so that a missing variable
+    never silently degrades an installed appliance."""
+    default = load_settings({})
+    assert default.board_label == "Raspberry Pi"
+    assert default.board_video_ceiling == "1920x1080@60"
+
+    pi4 = load_settings(
+        {
+            "OMT_BOARD_LABEL": "Raspberry Pi 4 Model B",
+            "OMT_VIDEO_CEILING": "1920x1080@30,1280x720@60",
+        }
+    )
+    assert pi4.board_label == "Raspberry Pi 4 Model B"
+    assert pi4.board_video_ceiling == "1920x1080@30,1280x720@60"
+    # Support bundles must record which board the appliance believed it was.
+    assert "board_label=Raspberry Pi 4 Model B" in pi4.diagnostic_lines()
+    assert "board_video_ceiling=1920x1080@30,1280x720@60" in pi4.diagnostic_lines()

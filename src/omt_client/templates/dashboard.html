@@ -12,6 +12,15 @@
     <span class="state-token">{{ playback.state }}</span>
 </section>
 
+{% if playback.state == "unsupported-format" %}
+<p class="notice notice-warning" role="status">
+    This {{ video_limit.board_label }} accepts video up to
+    {{ video_limit.effective_description }}. Configure the sender within that
+    limit, or raise it on the <a href="{{ url_for('system.system') }}">System</a>
+    page.
+</p>
+{% endif %}
+
 <div class="content-grid">
     <section class="card" aria-labelledby="current-heading">
         <h2 id="current-heading">Current source</h2>

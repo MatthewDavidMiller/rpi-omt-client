@@ -12,15 +12,26 @@ from ..discovery import (
     parse_omt_sources,
     parse_source_selection,
 )
-from ..models import ActionResult, CommandResult, PlaybackSummary, SourceConfigurationView
+from ..models import (
+    ActionResult,
+    CommandResult,
+    PlaybackSummary,
+    SourceConfigurationView,
+    VideoLimitView,
+)
 from ..playback_status import STATUS_FILE_LIMIT, PlaybackStatusRecord
 from ..safe_io import read_bytes
 from ..settings import AppSettings
 from ..state_store import (
     SourceConfigurationError,
     SourceTarget,
+    VideoCeilingError,
+    describe_video_ceiling,
+    effective_video_ceiling,
+    parse_video_ceiling,
     read_source_target,
     save_source_target,
+    save_video_ceiling,
 )
 from .command import run_command
 
@@ -107,6 +118,51 @@ class RuntimeSourcePlayback:
         if target.kind == "discovered":
             return SourceConfigurationView(source=target.value)
         return SourceConfigurationView(source=target.value, direct_address=target.value)
+
+    def video_limit(self) -> VideoLimitView:
+        """The decode ceiling in force, and the board default behind it."""
+        board_default = self._settings.board_video_ceiling
+        try:
+            effective = effective_video_ceiling(self._settings.video_ceiling_file, board_default)
+        except VideoCeilingError as exc:
+            return VideoLimitView(
+                board_label=self._settings.board_label,
+                effective=board_default,
+                board_default=board_default,
+                error=str(exc),
+            )
+        return VideoLimitView(
+            board_label=self._settings.board_label,
+            effective=effective,
+            board_default=board_default,
+        )
+
+    def save_video_limit(self, ceiling: str) -> ActionResult:
+        """Set or clear the operator's ceiling override and restart playback.
+
+        An empty value clears the override rather than saving one, so returning
+        to the board default is the same control the operator used to leave it.
+        The limit is not clamped to the board default: raising it is the
+        operator's call, and the system page says what that costs.
+        """
+        requested = ceiling.strip()
+        try:
+            normalized = None if not requested else parse_video_ceiling(requested)
+            save_video_ceiling(self._settings.video_ceiling_file, normalized)
+        except VideoCeilingError as exc:
+            return ActionResult(False, error=str(exc))
+        label = (
+            "Video limit cleared"
+            if normalized is None
+            else f"Video limit set to {describe_video_ceiling(normalized)}"
+        )
+        restarted = self._control("restart")
+        if restarted.returncode == 0:
+            return ActionResult(True, message=f"{label} and playback restarted.")
+        return ActionResult(
+            False,
+            error=(f"{label}, but playback could not be restarted. {restarted.failure_detail}"),
+        )
 
     def _control(self, action: str) -> CommandResult:
         return run_command(

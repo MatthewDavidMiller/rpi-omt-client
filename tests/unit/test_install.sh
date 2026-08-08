@@ -24,7 +24,10 @@ forbid() {
 require 'uname -m.*aarch64' "installer must require aarch64"
 require 'ID:-.*alpine' "installer must require Alpine"
 require 'alpine-release.*3\.23' "installer must pin the validated Alpine branch"
-require 'PI_MODEL.*Raspberry.*Pi.*5' "installer must require Raspberry Pi 5"
+require 'host_board_profile "\$\{PI_MODEL\}"' "installer must gate on the shared board table"
+require 'host_supported_boards' "an unsupported board must be told what is supported"
+require 'BOARD_HDMI_CONNECTORS.*==.*"1".*HDMI-A-2' \
+    "a single-output board must refuse a forced HDMI-A-2 mode"
 require 'tmpfs\|overlay\|squashfs\|ramfs' "diskless roots must be rejected"
 require 'persistent sys mode' "low-memory sys-mode policy must be explained"
 require 'command -v sshd' "installer must require a hardenable OpenSSH service"
@@ -47,7 +50,7 @@ grep -Fq 'update_config=1' "${SERVICE_HELPERS}" || {
     exit 1
 }
 require 'rc-update add wpa_supplicant boot' "wpa_supplicant must start through OpenRC"
-forbid 'OMT_ALLOW_EMULATED_PI' "production Pi 5 validation must not have an environment bypass"
+forbid 'OMT_ALLOW_EMULATED_PI' "production board validation must not have an environment bypass"
 
 require '90-omt-client-hardening\.conf' "sysctl and SSH hardening must be managed"
 require 'kernel\.unprivileged_bpf_disabled=1' "unprivileged BPF must be disabled"
@@ -78,8 +81,11 @@ forbid 'systemctl' "Alpine host integration must not call systemd"
 forbid 'apt-get' "Alpine host integration must not call apt"
 
 require 'usercfg\.txt' "Alpine boot customization must use usercfg.txt"
-require 'host_hdmi_config_txt' "KMS configuration must use tested rules"
+require 'host_hdmi_config_txt "\$\{BOARD_ID\}"' "KMS configuration must be board-aware"
 require 'host_hdmi_cmdline_line' "forced connector mode must use tested rules"
+require 'host_validate_video_ceiling' "the decode ceiling must use tested rules"
+require 'OMT_VIDEO_CEILING=%s' "the effective decode ceiling must reach the container"
+require 'MAX_VIDEO=\$\{MAX_VIDEO\}' "the operator's ceiling choice must be retained"
 require 'OMT_CONTAINER_MEMORY_LIMIT=256m' "low-RAM container cap must be explicit"
 require 'STABLE_VOLUME="omt-config-v3"' "the persistent volume name must be fixed"
 require 'chmod 0600.*HOST_REBOOT_REQUEST_FILE' "reboot request must be mode 0600"

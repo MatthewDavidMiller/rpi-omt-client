@@ -10,6 +10,10 @@ HOST="${1:-}"
 REMOTE_DIR="${2:-/opt/omt-client}"
 MANIFEST="${PROJECT_ROOT}/deploy/manifest-v3.txt"
 TRANSACTION_HELPER="${PROJECT_ROOT}/deploy/transaction.sh"
+# The supported-board table, shared with the installer rather than restated, so
+# this path and the appliance can never disagree about what will install.
+# shellcheck source=deploy/lib/board-profile.sh
+source "${PROJECT_ROOT}/deploy/lib/board-profile.sh"
 
 if [[ -z "${HOST}" || "${HOST}" == -* || \
       ! "${HOST}" =~ ^([A-Za-z0-9._-]+@)?(\[[0-9A-Fa-f:]+\]|[A-Za-z0-9][A-Za-z0-9.-]*)$ ]]; then
@@ -79,16 +83,19 @@ for name in "${ARTIFACT_NAMES[@]}"; do
     LOCAL_DIGESTS["${name}"]="$(sha256sum -- "${path}" | awk '{print $1}')"
 done
 
-echo "Checking Alpine Raspberry Pi 5 target on ${HOST}..."
+echo "Checking the Alpine Raspberry Pi target on ${HOST}..."
 remote_platform="$(ssh "${HOST}" 'uname -m; . /etc/os-release; printf "%s\n" "$ID"; cat /etc/alpine-release; tr -d "\000" < /proc/device-tree/model; printf "\n"')"
 mapfile -t platform_lines <<< "${remote_platform}"
 if [[ "${platform_lines[0]:-}" != "aarch64" || \
       "${platform_lines[1]:-}" != "alpine" || \
-      "${platform_lines[2]:-}" != 3.23.* || \
-      "${platform_lines[3]:-}" != Raspberry\ Pi\ 5* ]]; then
-    echo "ERROR: remote host must be a Raspberry Pi 5 running Alpine Linux 3.23 aarch64." >&2
+      "${platform_lines[2]:-}" != 3.23.* ]] || \
+   ! host_board_profile "${platform_lines[3]:-}" >/dev/null; then
+    echo "ERROR: remote host must run Alpine Linux 3.23 aarch64 on one of:" >&2
+    host_supported_boards | sed 's/^/  - /' >&2
+    echo "Detected: ${platform_lines[3]:-unknown}" >&2
     exit 1
 fi
+echo "Deploying to ${platform_lines[3]}."
 
 token="$(od -An -N12 -tx1 /dev/urandom | tr -d '[:space:]')"
 [[ "${token}" =~ ^[0-9a-f]{24}$ ]] || {

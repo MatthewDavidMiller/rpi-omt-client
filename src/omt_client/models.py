@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from .state_store import describe_video_ceiling
+
 
 @dataclass(frozen=True)
 class SourceConfigurationView:
@@ -16,6 +18,50 @@ class SourceConfigurationView:
     @property
     def configured(self) -> bool:
         return bool(self.source) and not self.error
+
+
+@dataclass(frozen=True)
+class VideoLimitView:
+    """The decode ceiling as the system page should present it."""
+
+    board_label: str
+    effective: str
+    board_default: str
+    error: str = ""
+
+    @property
+    def effective_description(self) -> str:
+        return describe_video_ceiling(self.effective)
+
+    @property
+    def board_default_description(self) -> str:
+        return describe_video_ceiling(self.board_default)
+
+    @property
+    def overridden(self) -> bool:
+        return not self.error and self.effective != self.board_default
+
+    @property
+    def above_board_default(self) -> bool:
+        """Whether the operator raised the limit past what the board is rated for.
+
+        Allowed, but worth saying: an over-rated board drops frames rather than
+        reporting `unsupported-format`, which looks like a network fault.
+        """
+        return self.overridden and _pixel_rate(self.effective) > _pixel_rate(self.board_default)
+
+
+def _pixel_rate(ceiling: str) -> int:
+    """Peak pixels per second a ceiling permits, for comparison only."""
+    peak = 0
+    for shape in ceiling.split(","):
+        dimensions, _, rate = shape.partition("@")
+        width, _, height = dimensions.partition("x")
+        try:
+            peak = max(peak, int(width) * int(height) * int(rate))
+        except ValueError:
+            return 0
+    return peak
 
 
 @dataclass(frozen=True)

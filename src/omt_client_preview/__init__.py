@@ -28,12 +28,14 @@ from omt_client.models import (
     DiagnosticResult,
     PlaybackSummary,
     SourceConfigurationView,
+    VideoLimitView,
 )
 from omt_client.network_config import (
     OmtNetworkConfigurationError,
     normalize_discovery_server,
 )
 from omt_client.services import ServiceContainer
+from omt_client.state_store import VideoCeilingError, parse_video_ceiling
 
 
 class PreviewAuthentication:
@@ -80,6 +82,7 @@ class PreviewSourcePlayback:
         self._source = "STUDIO-PC (OBS Studio)"
         self._address = ""
         self._playing = True
+        self._ceiling = "1920x1080@60"
         # The real discovery type, so the preview renders the production labels.
         self._sources = [
             OmtSourceChoice("STUDIO-PC (OBS Studio)"),
@@ -155,6 +158,24 @@ class PreviewSourcePlayback:
             return ActionResult(False, error="Invalid direct-connect source or address.")
         self._source, self._address, self._playing = address, address, True
         return ActionResult(True, message="Preview direct source saved and running.")
+
+    def video_limit(self) -> VideoLimitView:
+        return VideoLimitView(
+            board_label="Raspberry Pi 5",
+            effective=self._ceiling,
+            board_default="1920x1080@60",
+        )
+
+    def save_video_limit(self, ceiling: str) -> ActionResult:
+        requested = ceiling.strip()
+        if not requested:
+            self._ceiling = "1920x1080@60"
+            return ActionResult(True, message="Preview video limit cleared.")
+        try:
+            self._ceiling = parse_video_ceiling(requested)
+        except VideoCeilingError as exc:
+            return ActionResult(False, error=str(exc))
+        return ActionResult(True, message="Preview video limit saved.")
 
 
 class PreviewNetwork:

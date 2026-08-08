@@ -18,7 +18,7 @@ mod xml;
 use channel::{Channel, Endpoint};
 use cli::{Options, usage};
 use omt_protocol::{FrameType, is_valid_target};
-use omt_receiver_core::{PlaybackStatus, sanitize_detail};
+use omt_receiver_core::{PlaybackStatus, VideoCeiling, sanitize_detail};
 use serde::Serialize;
 use std::env;
 use std::path::PathBuf;
@@ -204,11 +204,16 @@ fn play(options: &Options) -> Result<i32, String> {
         "--connector",
         "--status-file",
         "--retry-seconds",
+        "--video-ceiling",
     ])?;
     let target = options.required("--target")?.to_owned();
     let path = PathBuf::from(options.required("--status-file")?);
     let retry = options.number("--retry-seconds", 2, 1, 30)?;
     let preference = options.value("--connector").unwrap_or("auto").to_owned();
+    // The default is the Pi 5 tier. The installer always passes an explicit
+    // ceiling for the detected board, so this only applies to a hand-run
+    // receiver, where silently capping below the hardware would be surprising.
+    let ceiling = VideoCeiling::parse(options.value("--video-ceiling").unwrap_or("1920x1080@60"))?;
     if !is_valid_target(&target) || !matches!(preference.as_str(), "auto" | "HDMI-A-1" | "HDMI-A-2")
     {
         return Err("Invalid play options.".into());
@@ -228,6 +233,7 @@ fn play(options: &Options) -> Result<i32, String> {
             target,
             preference,
             retry: Duration::from_secs(retry),
+            ceiling,
         },
         &status,
         &stop,

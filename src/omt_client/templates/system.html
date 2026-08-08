@@ -2,6 +2,44 @@
 {% block title %}System — {{ hostname }} OMT Client{% endblock %}
 {% block content %}
 <h1>System</h1>
+<section class="card" aria-labelledby="video-limit-heading">
+    <h2 id="video-limit-heading">Video limit</h2>
+    <p>This appliance is a {{ video_limit.board_label }}. It accepts video up to
+       <strong>{{ video_limit.effective_description }}</strong>.
+       Anything larger or faster is reported as an unsupported format rather than
+       being converted.</p>
+    {% if video_limit.error %}
+    <p class="notice notice-warning" role="status">Saved video limit is invalid: {{ video_limit.error }}</p>
+    {% endif %}
+    {% if video_limit.above_board_default %}
+    <p class="notice notice-warning" role="status">
+        This limit is above the {{ video_limit.board_label }} default of
+        {{ video_limit.board_default_description }}. This board may drop
+        frames instead of reporting an unsupported format.
+    </p>
+    {% elif video_limit.overridden %}
+    <p class="notice" role="status">
+        Overrides the {{ video_limit.board_label }} default of
+        {{ video_limit.board_default_description }}.
+    </p>
+    {% endif %}
+    <form method="POST" action="{{ url_for('system.save_video_limit') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="field">
+            <label for="video_limit">Decode limit</label>
+            <input id="video_limit" name="video_limit"
+                   aria-describedby="video_limit_help"
+                   placeholder="{{ video_limit.board_default }}"
+                   value="{{ video_limit.effective if video_limit.overridden else '' }}">
+            <p class="field-help" id="video_limit_help">One or more WIDTHxHEIGHT@FPS
+               limits, separated by commas, such as
+               <code>1920x1080@30,1280x720@60</code>. Video is accepted when it fits
+               within any one of them. Leave empty to use this board's default of
+               {{ video_limit.board_default }}.</p>
+        </div>
+        <button type="submit" class="button">Save video limit</button>
+    </form>
+</section>
 <section class="card danger-zone" aria-labelledby="reboot-heading">
     <p class="eyebrow">Danger zone</p>
     <h2 id="reboot-heading">Reboot operating system</h2>

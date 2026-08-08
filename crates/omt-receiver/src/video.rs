@@ -12,6 +12,7 @@ use drm::buffer::Buffer;
 use drm::control::{Device as ControlDevice, Mode, PageFlipFlags, connector, crtc, framebuffer};
 use drm::{Device, buffer::DrmFourcc};
 use omt_protocol::{VIDEO_HEADER_SIZE, VideoHeader};
+use omt_receiver_core::VideoCeiling;
 use std::fs::{File, OpenOptions};
 use std::os::fd::{AsFd, BorrowedFd};
 use std::os::unix::fs::OpenOptionsExt;
@@ -32,7 +33,8 @@ const FLIP_TIMEOUT: Duration = Duration::from_millis(500);
 /// for a descriptor that returns rather than waits -- could never take effect,
 /// and a lost flip would park the play loop instead of ending the session.
 const O_NONBLOCK: i32 = 0o4000;
-/// Decode workers. The Pi 5 has four cores and the audio worker needs one.
+/// Decode workers. Every supported board -- Pi 3, Pi 4, Pi 5, and Zero 2 W --
+/// is quad-core, and the audio worker needs one of those cores.
 const DECODE_WORKERS: usize = 3;
 
 #[derive(Debug, Eq, PartialEq)]
@@ -99,11 +101,14 @@ pub struct Output {
     /// unsupported stream keeps arriving at its own frame rate, so the answer
     /// is remembered until the incoming format changes.
     rejected: Option<(VideoFormat, String)>,
+    /// What this board is allowed to attempt, independent of what the attached
+    /// display advertises.
+    ceiling: VideoCeiling,
 }
 
 impl Output {
     /// Opens the connector's card and confirms it can allocate dumb buffers.
-    pub fn open(device: &Path, connector_id: u32) -> Result<Self, String> {
+    pub fn open(device: &Path, connector_id: u32, ceiling: VideoCeiling) -> Result<Self, String> {
         let file = OpenOptions::new()
             .read(true)
             .write(true)
@@ -120,6 +125,7 @@ impl Output {
             connector_id,
             active: None,
             rejected: None,
+            ceiling,
         })
     }
 
@@ -250,6 +256,21 @@ impl Output {
 
     /// Selects a mode for the incoming format and rebuilds the flip chain.
     fn configure(&mut self, header: &VideoHeader) -> Result<(), Present> {
+        // The board's ceiling is checked before anything is released. A
+        // display that can show 1080p60 says nothing about whether this SoC can
+        // decode it, so an over-ceiling stream is refused here rather than
+        // accepted by `select_mode` and then dropped frames; and refusing it
+        // without tearing down the flip chain leaves a working session intact
+        // when a sender changes format mid-stream.
+        let rate = if header.frame_rate_d > 0 {
+            f64::from(header.frame_rate_n) / f64::from(header.frame_rate_d)
+        } else {
+            0.0
+        };
+        if let Err(detail) = self.ceiling.admits(header.width, header.height, rate) {
+            return Err(Present::UnsupportedFormat(detail));
+        }
+
         // Releasing the previous chain first keeps peak allocation to one
         // mode's worth of buffers.
         self.release();

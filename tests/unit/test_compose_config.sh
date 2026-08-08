@@ -71,6 +71,10 @@ assert_contains '^[[:space:]]+DBUS_SYSTEM_BUS_ADDRESS:[[:space:]]+unix:path=/hos
     "container discovery points at the filtered Avahi proxy"
 assert_contains '^[[:space:]]+OMT_HDMI_CONNECTOR:[[:space:]]+"\$\{OMT_HDMI_CONNECTOR:-auto\}"[[:space:]]*$' \
     "installer-managed HDMI connector policy is propagated"
+assert_contains '^[[:space:]]+OMT_VIDEO_CEILING:[[:space:]]+"\$\{OMT_VIDEO_CEILING:-1920x1080@60\}"[[:space:]]*$' \
+    "installer-detected decode ceiling is propagated"
+assert_contains '^[[:space:]]+OMT_BOARD_LABEL:[[:space:]]+"\$\{OMT_BOARD_LABEL:-Raspberry Pi\}"[[:space:]]*$' \
+    "detected board label is propagated for the operator UI"
 assert_contains '^[[:space:]]+OMT_REBOOT_REQUEST_FILE:[[:space:]]+/host-actions/reboot.request[[:space:]]*$' \
     "Web reboot request uses the fixed action file"
 assert_contains '^[[:space:]]+OMT_REBOOT_RESULT_FILE:[[:space:]]+/host-actions/reboot.result[[:space:]]*$' \

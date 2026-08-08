@@ -1,17 +1,21 @@
 # Raspberry Pi OMT Client
 
 Raspberry Pi OMT Client receives Open Media Transport (OMT) video and audio on
-a Raspberry Pi 5 and presents it directly on HDMI. It combines a bounded
+a Raspberry Pi and presents it directly on HDMI. It combines a bounded
 Rust 2024 OMT receiver, direct DRM/KMS video output, ALSA audio, a hardened
 Flask Web GUI, and a portable native deployment GUI.
 
-The only supported appliance host is a Raspberry Pi 5 running Alpine Linux
-3.23 aarch64 in persistent `sys` mode. Diskless Alpine and Raspberry Pi OS are
-not supported.
+The supported appliance hosts are the Raspberry Pi 5, Raspberry Pi 4 Model B,
+Raspberry Pi 3 Model A+/B/B+, and Raspberry Pi Zero 2 W, each running Alpine
+Linux 3.23 aarch64 in persistent `sys` mode. Diskless Alpine, Raspberry Pi OS,
+32-bit userspace, and every other board are not supported.
 
-The receiver supports discovered source names and explicit
-`omt://host:port` targets. Video is limited to 1920×1080 at 60 fps; larger or
+The receiver supports discovered source names and explicit `omt://host:port`
+targets. Because it decodes VMX in software, each board has its own decode
+ceiling — 1080p60 on a Pi 5, down to 720p60 on a Pi 3 or Zero 2 W. Larger or
 faster input is reported as unsupported instead of being silently converted.
+See [docs/CONFIGURATION.md](docs/CONFIGURATION.md) for the table and how to
+override it.
 
 ## Build and test
 

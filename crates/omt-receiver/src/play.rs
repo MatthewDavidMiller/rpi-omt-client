@@ -11,7 +11,7 @@ use crate::connector::{self, Connector};
 use crate::discovery;
 use crate::video::{self, Present};
 use omt_protocol::FrameType;
-use omt_receiver_core::{AudioState, PlaybackStatus, VideoState, sanitize_detail};
+use omt_receiver_core::{AudioState, PlaybackStatus, VideoCeiling, VideoState, sanitize_detail};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
@@ -32,6 +32,9 @@ pub struct Options {
     pub target: String,
     pub preference: String,
     pub retry: Duration,
+    /// What this board is allowed to attempt, from the installer's board
+    /// profile or the operator's override.
+    pub ceiling: VideoCeiling,
 }
 
 /// Runs until `stop` is raised by a signal, then reports a stopped document.
@@ -107,7 +110,8 @@ fn session(
 ) -> Result<(), String> {
     let endpoint = discovery::resolve(&options.target, RESOLVE_TIMEOUT)
         .ok_or_else(|| "OMT target was not discovered.".to_owned())?;
-    let mut output = video::Output::open(&connector.card_path, connector.id)?;
+    let mut output =
+        video::Output::open(&connector.card_path, connector.id, options.ceiling.clone())?;
     let mut video = Channel::new();
     video
         .connect(

@@ -9,9 +9,15 @@ from omt_client.safe_io import ReadStatus, read_bytes, read_text
 from omt_client.state_store import (
     SourceConfigurationError,
     SourceTarget,
+    VideoCeilingError,
+    describe_video_ceiling,
+    effective_video_ceiling,
+    parse_video_ceiling,
     play_target_value,
     read_source_target,
+    read_video_ceiling,
     save_source_target,
+    save_video_ceiling,
 )
 
 
@@ -197,3 +203,160 @@ def test_state_store_cli_prints_play_targets_and_rejects_bad_usage(tmp_path, cap
     assert main(["play-target", str(path)]) == 0
     assert capsys.readouterr().out.strip() == "Camera"
     assert main(["wrong"]) == 2
+
+
+# ─── Decode ceiling ──────────────────────────────────────────────────────────
+
+
+def test_ceiling_grammar_matches_the_board_profile_table(tmp_path):
+    """The four shipped tiers from `deploy/lib/board-profile.sh`.
+
+    Three implementations parse this string -- the shell table, this module, and
+    `omt_receiver_core::VideoCeiling` -- so each shipped default is asserted in
+    all three. A tier that one of them rejects is an appliance that will not
+    start.
+    """
+    for ceiling in (
+        "1920x1080@60",
+        "1920x1080@30,1280x720@60",
+        "1280x720@60",
+    ):
+        assert parse_video_ceiling(ceiling) == ceiling
+
+
+@pytest.mark.parametrize(
+    "ceiling",
+    [
+        "",
+        "1920x1080",
+        "1920X1080@60",
+        "1920x1080@60Hz",
+        "1921x1080@60",
+        "1920x1081@60",
+        "1920x1080@61",
+        "3840x2160@30",
+        "15x15@60",
+        "1920x1080@0",
+        "0x1080@60",
+        "0640x480@30",
+        " 640x480@30",
+        "1920x1080@60,",
+        ",1920x1080@60",
+        "1920x1080@60,,1280x720@30",
+        "1920x1080@60 1280x720@30",
+        "640x480@25,800x600@30,1280x720@50,1920x1080@30,640x360@24",
+    ],
+)
+def test_ceiling_grammar_refuses_out_of_range_and_malformed_values(ceiling):
+    """Nothing above 1920x1080@60 is representable, however it is spelled: that
+    bound is what sizes the decoder's fixed allocations, and the operator
+    override reaches this validator too."""
+    with pytest.raises(VideoCeilingError):
+        parse_video_ceiling(ceiling)
+
+
+def test_ceiling_round_trips_and_clears(tmp_path):
+    path = tmp_path / "video_ceiling.json"
+    assert read_video_ceiling(path) is None
+
+    save_video_ceiling(path, "1280x720@30")
+    assert read_video_ceiling(path) == "1280x720@30"
+    assert oct(path.stat().st_mode & 0o777) == "0o600"
+
+    save_video_ceiling(path, None)
+    assert read_video_ceiling(path) is None
+    assert not path.exists()
+
+
+def test_effective_ceiling_prefers_the_override_over_the_board_default(tmp_path):
+    path = tmp_path / "video_ceiling.json"
+    assert effective_video_ceiling(path, "1920x1080@30,1280x720@60") == ("1920x1080@30,1280x720@60")
+    save_video_ceiling(path, "1280x720@30")
+    assert effective_video_ceiling(path, "1920x1080@60") == "1280x720@30"
+
+
+def test_corrupt_saved_ceiling_is_refused_rather_than_defaulted(tmp_path):
+    """Falling back to a board default here would present the appliance as
+    capable of something nobody chose, so every corruption is an exception."""
+    path = tmp_path / "video_ceiling.json"
+
+    path.write_text("not json at all", encoding="utf-8")
+    with pytest.raises(VideoCeilingError, match="invalid JSON"):
+        read_video_ceiling(path)
+
+    path.write_text('{"schema":2,"ceiling":"1280x720@30"}\n', encoding="utf-8")
+    with pytest.raises(VideoCeilingError, match="invalid schema"):
+        read_video_ceiling(path)
+
+    path.write_text('{"schema":1}\n', encoding="utf-8")
+    with pytest.raises(VideoCeilingError, match="invalid schema"):
+        read_video_ceiling(path)
+
+    path.write_text('{"schema":1,"ceiling":3}\n', encoding="utf-8")
+    with pytest.raises(VideoCeilingError, match="not a string"):
+        read_video_ceiling(path)
+
+    # A value that was valid when written but is out of range now.
+    path.write_text('{"schema":1,"ceiling":"3840x2160@60"}\n', encoding="utf-8")
+    with pytest.raises(VideoCeilingError):
+        read_video_ceiling(path)
+
+
+def test_an_unparseable_board_default_fails_rather_than_launching(tmp_path):
+    """It arrives from the installer through the container environment. Failing
+    here names the cause; the receiver's argument parser would not."""
+    path = tmp_path / "video_ceiling.json"
+    with pytest.raises(VideoCeilingError):
+        effective_video_ceiling(path, "not-a-ceiling")
+
+
+def test_ceiling_description_matches_the_receiver_wording():
+    """`omt_receiver_core::VideoCeiling::describe` renders the same prose, so
+    the dashboard and the status detail agree about what the limit is."""
+    assert describe_video_ceiling("1920x1080@60") == "1920x1080 at 60 fps"
+    assert describe_video_ceiling("1920x1080@30,1280x720@60") == (
+        "1920x1080 at 30 fps, or 1280x720 at 60 fps"
+    )
+
+
+def test_state_store_cli_prints_the_effective_ceiling(tmp_path, capsys):
+    from omt_client.state_store import main
+
+    path = tmp_path / "video_ceiling.json"
+    assert main(["video-ceiling", str(path), "1280x720@60"]) == 0
+    assert capsys.readouterr().out.strip() == "1280x720@60"
+
+    save_video_ceiling(path, "1280x720@30")
+    assert main(["video-ceiling", str(path), "1280x720@60"]) == 0
+    assert capsys.readouterr().out.strip() == "1280x720@30"
+
+    assert main(["video-ceiling", str(path)]) == 2
+
+
+def test_ceiling_description_degrades_rather_than_raising(tmp_path):
+    """Rendering is used on a page that may be showing a corrupt saved value,
+    so an unparseable ceiling is echoed rather than raised through the view."""
+    assert describe_video_ceiling("nonsense") == "nonsense"
+    assert describe_video_ceiling("1920x1080@60,broken") == "1920x1080@60,broken"
+
+
+def test_unreadable_ceiling_file_is_an_error_not_an_absent_override(tmp_path):
+    """A directory where the record should be reads as unreadable, not as
+    'no override saved' -- otherwise a broken volume silently restores the
+    board default."""
+    path = tmp_path / "video_ceiling.json"
+    path.mkdir()
+    with pytest.raises(VideoCeilingError, match="unable to read"):
+        read_video_ceiling(path)
+
+
+def test_effective_ceiling_cli_helper_exits_with_the_reason(tmp_path):
+    """`deploy/container/start-omt.sh` execs the receiver with whatever this
+    prints, so a corrupt record has to abort the launch with the reason on
+    stderr rather than print an error message as if it were a ceiling."""
+    from omt_client.state_store import effective_ceiling_value
+
+    path = tmp_path / "video_ceiling.json"
+    path.write_text('{"schema":1,"ceiling":"3840x2160@60"}\n', encoding="utf-8")
+    with pytest.raises(SystemExit, match="outside"):
+        effective_ceiling_value(path, "1920x1080@60")

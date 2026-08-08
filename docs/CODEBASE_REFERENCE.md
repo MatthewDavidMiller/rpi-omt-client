@@ -115,6 +115,7 @@ are POST and CSRF protected.
 | Reboot validator | `deploy/host/host-reboot.sh`, `deploy/lib/reboot-request.sh` |
 | Shared host helpers | `deploy/lib/host-validation.sh`, `deploy/lib/publication.sh`, `deploy/lib/service-install.sh` |
 | HDMI boot-configuration rules | `deploy/lib/hdmi-config.sh` |
+| Supported boards and decode ceilings | `deploy/lib/board-profile.sh` |
 | Deployment contract | `deploy/manifest-v3.txt`, `deploy/transaction.sh` |
 | CLI deployment | `scripts/deploy.sh` |
 | Deployer validation, fixed actions, SSH/SFTP, deploy, and Wi-Fi | `crates/omt-deployer-core/src/lib.rs`, `crates/omt-deployer-core/src/ssh.rs`, `crates/omt-deployer-core/src/ops.rs` |

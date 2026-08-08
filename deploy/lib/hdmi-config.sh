@@ -25,8 +25,21 @@ host_validate_hdmi_video_mode() {
 }
 
 # Rewrite config.txt on stdin, replacing this product's managed block.
+#
+#   $1 board id, as printed by host_board_profile; defaults to pi5
+#
+# `dtoverlay=vc4-kms-v3d` is correct on every supported board: the firmware
+# substitutes the Pi 5 variant itself. `gpu_mem` is emitted only for the
+# pre-Pi-5 boards, which still split RAM with the VideoCore -- under full KMS
+# the V3D driver allocates from CMA instead, so the split is wasted RAM, and it
+# is worth the most on the 512 MiB Zero 2 W. The Pi 5 has no such split and
+# ignores the setting, so it is left out there rather than written and ignored.
 host_hdmi_config_txt() {
-    awk '
+    local board_id="${1:-pi5}"
+    local gpu_mem=""
+    [[ "${board_id}" == "pi5" ]] || gpu_mem="gpu_mem=64"
+
+    awk -v gpu_mem="${gpu_mem}" '
         function flush_pending_blanks() {
             while (pending_blanks > 0) {
                 print ""
@@ -69,6 +82,9 @@ host_hdmi_config_txt() {
             print "dtoverlay=vc4-kms-v3d"
             print "max_framebuffers=2"
             print "disable_fw_kms_setup=1"
+            if (gpu_mem != "") {
+                print gpu_mem
+            }
             print "# END OMT Client HDMI configuration"
         }
     '

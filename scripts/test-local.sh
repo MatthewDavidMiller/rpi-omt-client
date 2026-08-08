@@ -87,6 +87,7 @@ run_test "Host Event Watcher" "${PROJECT_ROOT}/tests/unit/test_host_event_watche
 run_test "Host Reboot Bridge" "${PROJECT_ROOT}/tests/unit/test_host_reboot.sh"
 run_test "Host Reboot Behavior" "${PROJECT_ROOT}/tests/unit/test_host_reboot_behavior.sh"
 run_test "Host Install Helpers" "${PROJECT_ROOT}/tests/unit/test_host_install_helpers.sh"
+run_test "Board Profiles" "${PROJECT_ROOT}/tests/unit/test_board_profile.sh"
 run_test "HDMI Boot Configuration" "${PROJECT_ROOT}/tests/unit/test_hdmi_config.sh"
 run_test "Deployment Transactions" "${PROJECT_ROOT}/tests/unit/test_deployment_transactions.sh"
 run_test "Compose Config" "${PROJECT_ROOT}/tests/unit/test_compose_config.sh"

@@ -127,6 +127,9 @@ class AppSettings:
     control_timeout_seconds: float
     source_cache_ttl_seconds: float
     source_target_file: str
+    video_ceiling_file: str
+    board_label: str
+    board_video_ceiling: str
     playback_status_file: str
     sdk_config_dir: str
     runtime_config_file: str
@@ -166,6 +169,8 @@ class AppSettings:
             f"diagnostics_download_limit={self.diagnostics_download_limit}",
             f"diagnostics_action_limit={self.diagnostics_action_limit}",
             f"reboot_action_limit={self.reboot_action_limit}",
+            f"board_label={self.board_label}",
+            f"board_video_ceiling={self.board_video_ceiling}",
             f"sdk_config_dir={self.sdk_config_dir}",
             f"runtime_config_file={self.runtime_config_file}",
             f"reboot_ack_timeout_seconds={self.reboot_ack_timeout_seconds:g}",
@@ -236,6 +241,14 @@ def load_settings(environment: Mapping[str, str] | None = None) -> AppSettings:
         source_target_file=env.get(
             "OMT_SOURCE_TARGET_FILE", os.path.join(config_dir, "source_target.json")
         ),
+        video_ceiling_file=env.get(
+            "OMT_VIDEO_CEILING_FILE", os.path.join(config_dir, "video_ceiling.json")
+        ),
+        # Both are written by the installer from the detected board. The
+        # defaults are the Pi 5 tier so a missing variable never silently
+        # degrades an installed appliance.
+        board_label=env.get("OMT_BOARD_LABEL", "Raspberry Pi"),
+        board_video_ceiling=env.get("OMT_VIDEO_CEILING", "1920x1080@60"),
         playback_status_file=env.get(
             "OMT_PLAYBACK_STATUS_FILE", os.path.join(runtime_dir, "playback-status.json")
         ),

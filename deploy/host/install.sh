@@ -1,7 +1,8 @@
 #!/bin/bash
-# Raspberry Pi 5 Alpine Linux appliance installer.
+# Raspberry Pi Alpine Linux appliance installer.
 # Usage: sudo /absolute/path/to/omt-client/deploy/host/install.sh \
-#            [--hdmi-video auto|HDMI-A-[12]:WIDTHxHEIGHT@HZ]
+#            [--hdmi-video auto|HDMI-A-[12]:WIDTHxHEIGHT@HZ] \
+#            [--max-video auto|WIDTHxHEIGHT@FPS[,...]]
 
 set -euo pipefail
 export LC_ALL=C
@@ -9,15 +10,22 @@ umask 022
 
 usage() {
     cat <<'EOF'
-Usage: install.sh [--hdmi-video MODE]
+Usage: install.sh [--hdmi-video MODE] [--max-video CEILING]
 
 MODE is "auto" or a KMS connector and mode such as:
   HDMI-A-1:1920x1080@60
   HDMI-A-2:1280x720@60
 
-The host must be a Raspberry Pi 5 running Alpine Linux 3.23 aarch64 in
-persistent sys mode. With no option, a saved choice is preserved; first
-installs use auto.
+CEILING is "auto" for this board's default, or one or more decode limits:
+  1280x720@60
+  1920x1080@30,1280x720@60
+
+The host must run Alpine Linux 3.23 aarch64 in persistent sys mode on a
+Raspberry Pi 5, Raspberry Pi 4 Model B, Raspberry Pi 3, or Raspberry Pi
+Zero 2 W. With no option, a saved choice is preserved; first installs use auto.
+
+Raising the ceiling above the board default is allowed but not validated: a
+board that cannot decode the format will drop frames rather than refuse them.
 EOF
 }
 
@@ -26,6 +34,8 @@ INSTALL_DIR="$(cd -- "${SCRIPT_DIR}/../.." && pwd -P)"
 LIB_DIR="${INSTALL_DIR}/deploy/lib"
 # shellcheck source=deploy/lib/host-validation.sh
 source "${LIB_DIR}/host-validation.sh"
+# shellcheck source=deploy/lib/board-profile.sh
+source "${LIB_DIR}/board-profile.sh"
 # shellcheck source=deploy/lib/hdmi-config.sh
 source "${LIB_DIR}/hdmi-config.sh"
 # shellcheck source=deploy/lib/publication.sh
@@ -35,8 +45,28 @@ source "${LIB_DIR}/service-install.sh"
 
 HDMI_VIDEO_EXPLICIT=false
 HDMI_VIDEO_REQUEST=""
+MAX_VIDEO_EXPLICIT=false
+MAX_VIDEO_REQUEST=""
 while (($#)); do
     case "$1" in
+        --max-video)
+            [[ $# -ge 2 && "${MAX_VIDEO_EXPLICIT}" == "false" ]] || {
+                echo "ERROR: --max-video requires one value and may be used once." >&2
+                exit 2
+            }
+            MAX_VIDEO_EXPLICIT=true
+            MAX_VIDEO_REQUEST="$2"
+            shift 2
+            ;;
+        --max-video=*)
+            [[ "${MAX_VIDEO_EXPLICIT}" == "false" ]] || {
+                echo "ERROR: --max-video may only be specified once." >&2
+                exit 2
+            }
+            MAX_VIDEO_EXPLICIT=true
+            MAX_VIDEO_REQUEST="${1#*=}"
+            shift
+            ;;
         --hdmi-video)
             [[ $# -ge 2 && "${HDMI_VIDEO_EXPLICIT}" == "false" ]] || {
                 echo "ERROR: --hdmi-video requires one value and may be used once." >&2
@@ -69,6 +99,12 @@ done
 if [[ "${HDMI_VIDEO_EXPLICIT}" == "true" ]] && \
    ! host_validate_hdmi_video_mode "${HDMI_VIDEO_REQUEST}"; then
     echo "ERROR: Invalid --hdmi-video mode: ${HDMI_VIDEO_REQUEST}" >&2
+    exit 2
+fi
+if [[ "${MAX_VIDEO_EXPLICIT}" == "true" && "${MAX_VIDEO_REQUEST}" != auto ]] && \
+   ! host_validate_video_ceiling "${MAX_VIDEO_REQUEST}"; then
+    echo "ERROR: Invalid --max-video ceiling: ${MAX_VIDEO_REQUEST}" >&2
+    echo "Expected auto, or WIDTHxHEIGHT@FPS values within 1920x1080@60." >&2
     exit 2
 fi
 host_validate_safe_absolute_path "${INSTALL_DIR}" || {
@@ -116,7 +152,7 @@ OPENRC_SERVICES=(
     omt-client-reboot
 )
 
-echo "=== Raspberry Pi 5 Alpine OMT Client Installer ==="
+echo "=== Raspberry Pi Alpine OMT Client Installer ==="
 
 # Preflight is deliberately complete before the first host mutation.
 [[ "${EUID}" -eq 0 ]] || {
@@ -142,10 +178,21 @@ source /etc/os-release
     exit 1
 }
 PI_MODEL="$(tr -d '\000' < /proc/device-tree/model 2>/dev/null || true)"
-if [[ "${PI_MODEL}" != Raspberry\ Pi\ 5* ]]; then
-    echo "ERROR: Raspberry Pi 5 hardware is required; detected ${PI_MODEL:-unknown}." >&2
+BOARD_PROFILE="$(host_board_profile "${PI_MODEL}")" || {
+    echo "ERROR: Unsupported hardware; detected ${PI_MODEL:-unknown}." >&2
+    echo "This appliance supports:" >&2
+    host_supported_boards | sed 's/^/  - /' >&2
     exit 1
-fi
+}
+BOARD_ID="$(sed -n 's/^BOARD_ID=//p' <<< "${BOARD_PROFILE}")"
+BOARD_LABEL="$(sed -n 's/^BOARD_LABEL=//p' <<< "${BOARD_PROFILE}")"
+BOARD_HDMI_CONNECTORS="$(sed -n 's/^HDMI_CONNECTORS=//p' <<< "${BOARD_PROFILE}")"
+BOARD_VIDEO_CEILING="$(sed -n 's/^VIDEO_CEILING=//p' <<< "${BOARD_PROFILE}")"
+[[ -n "${BOARD_ID}" && -n "${BOARD_LABEL}" && -n "${BOARD_VIDEO_CEILING}" && \
+   "${BOARD_HDMI_CONNECTORS}" =~ ^[12]$ ]] || {
+    echo "ERROR: Board profile for ${PI_MODEL} is incomplete." >&2
+    exit 1
+}
 ROOT_FS_TYPE="$(awk '$2 == "/" { print $3; exit }' /proc/mounts)"
 case "${ROOT_FS_TYPE}" in
     tmpfs|overlay|squashfs|ramfs|"")
@@ -172,29 +219,72 @@ for required_file in "${required_files[@]}"; do
     }
 done
 
+# Installer state is a fixed, ordered two-key record. Anything else is a
+# rejection rather than a partial read: these values decide whether the
+# appliance comes back with a picture after an upgrade.
 SAVED_HDMI_VIDEO_MODE=auto
+SAVED_MAX_VIDEO=auto
 if [[ -f "${INSTALLER_CONFIG_FILE}" ]]; then
     mapfile -t installer_config_lines < "${INSTALLER_CONFIG_FILE}"
-    [[ "${#installer_config_lines[@]}" -eq 1 && \
-       "${installer_config_lines[0]}" == HDMI_VIDEO_MODE=* ]] || {
-        echo "ERROR: Invalid installer state in ${INSTALLER_CONFIG_FILE}." >&2
-        exit 1
-    }
+    # A v0.9.38 or earlier file has only the HDMI line; it predates --max-video
+    # and reads as an unset ceiling rather than as corruption.
+    case "${#installer_config_lines[@]}" in
+        1)
+            [[ "${installer_config_lines[0]}" == HDMI_VIDEO_MODE=* ]] || {
+                echo "ERROR: Invalid installer state in ${INSTALLER_CONFIG_FILE}." >&2
+                exit 1
+            }
+            ;;
+        2)
+            [[ "${installer_config_lines[0]}" == HDMI_VIDEO_MODE=* && \
+               "${installer_config_lines[1]}" == MAX_VIDEO=* ]] || {
+                echo "ERROR: Invalid installer state in ${INSTALLER_CONFIG_FILE}." >&2
+                exit 1
+            }
+            SAVED_MAX_VIDEO="${installer_config_lines[1]#MAX_VIDEO=}"
+            ;;
+        *)
+            echo "ERROR: Invalid installer state in ${INSTALLER_CONFIG_FILE}." >&2
+            exit 1
+            ;;
+    esac
     SAVED_HDMI_VIDEO_MODE="${installer_config_lines[0]#HDMI_VIDEO_MODE=}"
     host_validate_hdmi_video_mode "${SAVED_HDMI_VIDEO_MODE}" || {
         echo "ERROR: Invalid saved HDMI mode." >&2
         exit 1
     }
+    [[ "${SAVED_MAX_VIDEO}" == auto ]] || \
+        host_validate_video_ceiling "${SAVED_MAX_VIDEO}" || {
+            echo "ERROR: Invalid saved video ceiling." >&2
+            exit 1
+        }
 fi
 if [[ "${HDMI_VIDEO_EXPLICIT}" == "true" ]]; then
     HDMI_VIDEO_MODE="${HDMI_VIDEO_REQUEST}"
 else
     HDMI_VIDEO_MODE="${SAVED_HDMI_VIDEO_MODE}"
 fi
+if [[ "${MAX_VIDEO_EXPLICIT}" == "true" ]]; then
+    MAX_VIDEO="${MAX_VIDEO_REQUEST}"
+else
+    MAX_VIDEO="${SAVED_MAX_VIDEO}"
+fi
 OMT_HDMI_CONNECTOR=auto
 [[ "${HDMI_VIDEO_MODE}" == auto ]] || OMT_HDMI_CONNECTOR="${HDMI_VIDEO_MODE%%:*}"
+# A single-output board has no HDMI-A-2, and a forced mode for it would leave
+# the operator with a boot argument for a connector that never appears.
+if [[ "${BOARD_HDMI_CONNECTORS}" == "1" && "${OMT_HDMI_CONNECTOR}" == "HDMI-A-2" ]]; then
+    echo "ERROR: ${BOARD_LABEL} has one HDMI output; HDMI-A-2 is not available." >&2
+    exit 2
+fi
+# "auto" resolves to the board's tier; an explicit ceiling is the operator's.
+OMT_VIDEO_CEILING="${BOARD_VIDEO_CEILING}"
+[[ "${MAX_VIDEO}" == auto ]] || OMT_VIDEO_CEILING="${MAX_VIDEO}"
+if [[ "${OMT_VIDEO_CEILING}" != "${BOARD_VIDEO_CEILING}" ]]; then
+    echo "NOTE: Video ceiling ${OMT_VIDEO_CEILING} overrides the ${BOARD_LABEL} default of ${BOARD_VIDEO_CEILING}."
+fi
 
-echo "Updating Alpine packages and installing the Pi 5 appliance dependencies..."
+echo "Updating Alpine packages and installing the appliance dependencies..."
 if ! grep -Eq '^[^#[:space:]].*/v3\.23/community/?$' /etc/apk/repositories; then
     MAIN_REPOSITORY="$(sed -n 's|/main/*$||p' /etc/apk/repositories | head -n 1)"
     [[ "${MAIN_REPOSITORY}" == https://* || "${MAIN_REPOSITORY}" == http://* ]] || {
@@ -423,6 +513,9 @@ COMPOSE_ENV_TMP="$(mktemp "${COMPOSE_ENV_FILE}.tmp.XXXXXX")"
     printf 'OMT_RENDER_GID=%s\n' "${OMT_RENDER_GID}"
     printf 'OMT_AUDIO_GID=%s\n' "${OMT_AUDIO_GID}"
     printf 'OMT_HDMI_CONNECTOR=%s\n' "${OMT_HDMI_CONNECTOR}"
+    printf 'OMT_BOARD_ID=%s\n' "${BOARD_ID}"
+    printf 'OMT_BOARD_LABEL=%s\n' "${BOARD_LABEL}"
+    printf 'OMT_VIDEO_CEILING=%s\n' "${OMT_VIDEO_CEILING}"
     printf 'OMT_CONTAINER_MEMORY_LIMIT=256m\n'
 } > "${COMPOSE_ENV_TMP}"
 chmod 0644 "${COMPOSE_ENV_TMP}"
@@ -507,7 +600,7 @@ touch "${USERCFG_FILE}"
     exit 1
 }
 HDMI_TMP="$(mktemp "${USERCFG_FILE}.omt-client.XXXXXX")"
-host_hdmi_config_txt < "${USERCFG_FILE}" > "${HDMI_TMP}"
+host_hdmi_config_txt "${BOARD_ID}" < "${USERCFG_FILE}" > "${HDMI_TMP}"
 chmod --reference="${USERCFG_FILE}" "${HDMI_TMP}"
 chown --reference="${USERCFG_FILE}" "${HDMI_TMP}"
 mv -fT "${HDMI_TMP}" "${USERCFG_FILE}"
@@ -552,6 +645,7 @@ fi
 install -d -m 0755 "${INSTALLER_CONFIG_DIR}"
 host_publish_file "${INSTALLER_CONFIG_FILE}" 0644 root root <<EOF
 HDMI_VIDEO_MODE=${HDMI_VIDEO_MODE}
+MAX_VIDEO=${MAX_VIDEO}
 EOF
 
 echo "Enabling the appliance firewall..."
@@ -612,7 +706,8 @@ echo "=== Installation Complete ==="
 echo "Platform: Alpine Linux 3.23 aarch64 on ${PI_MODEL}"
 echo "Install:  ${INSTALL_DIR}"
 echo "Web UI:   https://${IP_ADDR}:${WEB_PORT}$([[ "${STARTUP_DEFERRED}" == true ]] && echo ' (after reboot)')"
-echo "HDMI:     ${HDMI_VIDEO_MODE}"
+echo "HDMI:     ${HDMI_VIDEO_MODE} (${BOARD_HDMI_CONNECTORS} output(s))"
+echo "Video:    up to ${OMT_VIDEO_CEILING}"
 echo "Security: nftables, SSH safeguards, kernel hardening, bounded Docker logs"
 echo "Memory:   ${ZRAM_MIB} MiB zram swap, 256 MiB container cap, bounded tmpfs"
 echo

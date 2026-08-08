@@ -23,7 +23,10 @@
 | `OMT_SOURCE_TARGET_FILE` | `$OMT_CONFIG_DIR/source_target.json` |
 | `OMT_PLAYBACK_STATUS_FILE` | `$OMT_RUNTIME_DIR/playback-status.json` |
 | `OMT_PLAYBACK_STATUS_STALE_SECONDS` | `5`, minimum `1`; must stay above the receiver's 500 ms status heartbeat |
-| `OMT_HDMI_CONNECTOR` | `auto`, `HDMI-A-1`, or `HDMI-A-2` |
+| `OMT_HDMI_CONNECTOR` | `auto`, `HDMI-A-1`, or `HDMI-A-2`. The Pi 3 and Zero 2 W have one output, so only `HDMI-A-1` ever resolves there |
+| `OMT_BOARD_LABEL` | Detected board, written by the installer; defaults to `Raspberry Pi` |
+| `OMT_VIDEO_CEILING` | The board's decode ceiling, written by the installer; defaults to `1920x1080@60` |
+| `OMT_VIDEO_CEILING_FILE` | `$OMT_CONFIG_DIR/video_ceiling.json`, the operator's override of `OMT_VIDEO_CEILING` |
 | `OMT_DIAGNOSTICS_HOST_REPORT_FILE` | `/host-diagnostics/host-report.txt` |
 | `OMT_DIAGNOSTICS_HOST_REQUEST_FILE` | `/host-diagnostics/request` |
 | `OMT_DIAGNOSTICS_HOST_PCAP_FILE` | `/host-diagnostics/host-network.pcap` |
@@ -102,3 +105,43 @@ and optional Discovery Server traffic selected for that installation.
 installer owns a block in Alpine's active `usercfg.txt`. A forced value has
 the form `HDMI-A-1:1920x1080@60`. Connector/mode state is retained in
 `/etc/omt-client/installer.conf`.
+
+The managed block sets `dtoverlay=vc4-kms-v3d`, which is correct on every
+supported board — the firmware substitutes the Pi 5 variant itself. On the
+pre-Pi-5 boards it also sets `gpu_mem=64`: those boards still split RAM with
+the VideoCore, and under full KMS the V3D driver allocates from CMA instead, so
+the split is wasted RAM. The Pi 5 has no such split and the setting is omitted
+there rather than written and ignored.
+
+Single-output boards have no `HDMI-A-2`. The installer refuses a forced mode
+for it rather than writing a boot argument for a connector that never appears.
+
+## Video limit
+
+Each board has a decode ceiling, since the receiver decodes VMX in software and
+a Cortex-A53 is not a Cortex-A76. `deploy/lib/board-profile.sh` is the table:
+
+| Board | HDMI | Default ceiling |
+|-------|------|-----------------|
+| Raspberry Pi 5 | 2 | `1920x1080@60` |
+| Raspberry Pi 4 Model B | 2 | `1920x1080@30,1280x720@60` |
+| Raspberry Pi 3 Model A+/B/B+ | 1 | `1280x720@60` |
+| Raspberry Pi Zero 2 W | 1 | `1280x720@60` |
+
+A ceiling is a comma-separated list of `WIDTHxHEIGHT@FPS` shapes, and video is
+accepted when it fits inside any one of them — which is how the Pi 4 takes
+either 1080p30 or 720p60. Video above the ceiling is reported as
+`unsupported-format`; it is never downscaled or frame-dropped to fit.
+
+Override it with `install.sh --max-video 1280x720@30`, or from the Web GUI's
+System page. `auto` restores the board default. No ceiling may exceed
+1920×1080 at 60 fps, which is what sizes the decoder's fixed allocations.
+Raising a ceiling above the board default is permitted and is not validated:
+a board that cannot decode the format will drop frames rather than refuse them.
+
+**These ceilings are engineering targets derived from core count and clock, not
+measurements.** Confirm one on the board with
+`cargo test --release -p vmx-decoder --test decode_bench -- --ignored` and lower
+the profile if it does not hold. The Zero 2 W is the most optimistic entry: four
+Cortex-A53 cores at 1.0 GHz is roughly a quarter of a Pi 5's per-core NEON
+throughput, so 720p60 there may need to become 720p30.

@@ -75,3 +75,71 @@ def test_every_layer_accepts_the_same_hdmi_connector_names():
     # "none" is the receiver's answer when no display is attached, so the
     # status contract carries it and the selectable names besides.
     assert CONNECTORS == launcher_names | {"none"}
+
+
+BOARD_PROFILE = REPO_ROOT / "deploy" / "lib" / "board-profile.sh"
+RECEIVER_CORE = REPO_ROOT / "crates" / "omt-receiver-core" / "src" / "lib.rs"
+DEPLOYER_OPS = REPO_ROOT / "crates" / "omt-deployer-core" / "src" / "ops.rs"
+
+
+def _shell_ceilings() -> list[str]:
+    """The literal tiers from the board table, not the validator's own `$1`."""
+    return re.findall(
+        r'ceiling="(\d[^"]*)"',
+        BOARD_PROFILE.read_text(encoding="utf-8"),
+    )
+
+
+def test_every_shipped_board_ceiling_parses_in_the_python_layer():
+    """The shell table is the source of truth, but the ceiling it emits is read
+    twice more: by this module on the way to the receiver, and by the receiver
+    itself. A tier only one of them accepts is an appliance that installs and
+    then fails to start playback."""
+    from omt_client.state_store import parse_video_ceiling
+
+    ceilings = _shell_ceilings()
+    assert len(ceilings) == 4, "board-profile.sh no longer defines four board tiers"
+    for ceiling in ceilings:
+        assert parse_video_ceiling(ceiling) == ceiling
+
+
+def test_the_absolute_video_limits_agree_across_all_three_implementations():
+    """Shell, Python, and Rust each bound a ceiling independently. They are what
+    `omt-protocol` sizes its allocations for, so a layer that allowed more would
+    promise what the decoder cannot deliver."""
+    from omt_client import state_store
+
+    shell = BOARD_PROFILE.read_text(encoding="utf-8")
+    rust = RECEIVER_CORE.read_text(encoding="utf-8")
+    for name, value in (
+        ("WIDTH", state_store.CEILING_MAX_WIDTH),
+        ("HEIGHT", state_store.CEILING_MAX_HEIGHT),
+        ("FPS", state_store.CEILING_MAX_FPS),
+    ):
+        assert f"HOST_ABSOLUTE_MAX_{name}={value}" in shell
+        assert f"const CEILING_MAX_{name}: i32 = {value};" in rust
+    assert f"HOST_MAX_CEILING_SHAPES={state_store.CEILING_MAX_SHAPES}" in shell
+    assert f"const CEILING_MAX_SHAPES: usize = {state_store.CEILING_MAX_SHAPES};" in rust
+    assert f"CEILING_MIN_DIMENSION: i32 = {state_store.CEILING_MIN_DIMENSION};" in rust
+
+
+def test_the_supported_board_table_agrees_between_the_host_and_the_deployer():
+    """`board-profile.sh` gates the install on the Pi; `ops.rs` and `deploy.sh`
+    gate the upload from the workstation. A board only one of them accepts is a
+    deployment that either refuses a supported Pi or uploads to a board the
+    installer will then reject."""
+    shell = BOARD_PROFILE.read_text(encoding="utf-8")
+    rust_prefixes = re.search(
+        r"const SUPPORTED_BOARDS: \[&str; 4\] = \[(.*?)\];",
+        DEPLOYER_OPS.read_text(encoding="utf-8"),
+        re.DOTALL,
+    )
+    assert rust_prefixes is not None, "ops.rs no longer lists the supported boards"
+    for prefix in re.findall(r'"([^"]+)"', rust_prefixes.group(1)):
+        assert f'"{prefix}"' in shell, f"{prefix} is accepted by the deployer but not the installer"
+
+    # `make deploy` reuses the shell table rather than restating it, which is
+    # what keeps that third gate from drifting on its own.
+    deploy_script = (REPO_ROOT / "scripts" / "deploy.sh").read_text(encoding="utf-8")
+    assert "board-profile.sh" in deploy_script
+    assert "host_board_profile" in deploy_script

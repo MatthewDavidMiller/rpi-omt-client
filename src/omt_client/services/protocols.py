@@ -6,7 +6,13 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import IO, Any, Protocol
 
-from ..models import ActionResult, DiagnosticResult, PlaybackSummary, SourceConfigurationView
+from ..models import (
+    ActionResult,
+    DiagnosticResult,
+    PlaybackSummary,
+    SourceConfigurationView,
+    VideoLimitView,
+)
 
 
 class SourceChoice(Protocol):
@@ -62,6 +68,8 @@ class SourcePlaybackService(Protocol):
     def restart(self) -> ActionResult: ...
     def clear(self) -> ActionResult: ...
     def save_direct(self, address: str) -> ActionResult: ...
+    def video_limit(self) -> VideoLimitView: ...
+    def save_video_limit(self, ceiling: str) -> ActionResult: ...
 
 
 class NetworkService(Protocol):

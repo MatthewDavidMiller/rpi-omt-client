@@ -49,6 +49,16 @@ requested and successfully validated.
 license, and shipped dependency notices. Legal files are bounded,
 non-symlinked reads from the image.
 
+## Video limit
+
+`/system` shows the detected board and the decode limit in force. Video above
+it is reported as `unsupported-format` rather than downscaled. POST
+`/system/video-limit` with one or more comma-separated `WIDTHxHEIGHT@FPS`
+values to override the board default, or an empty value to restore it; the
+change restarts playback. Raising the limit past the board default is allowed
+and is flagged on the page: a board that cannot decode the format drops frames
+instead of refusing it, which on the dashboard looks like a network fault.
+
 ## Reboot OS
 
 Open `/system`, choose Reboot OS, review `/system/reboot`, and press Confirm
@@ -90,7 +100,9 @@ receiver.
   and the optional Discovery Server.
 - Direct target fails: use the full `omt://host:port` form and run Direct Check.
 - Waiting for HDMI: verify `/sys/class/drm/*/status` and the selected connector.
-- Unsupported format: configure the sender for at most 1920×1080 at 60 fps.
+- Unsupported format: the dashboard names this appliance's limit. Configure
+  the sender within it, or raise it on `/system`. Limits are per board; see
+  the video limit table in [CONFIGURATION.md](CONFIGURATION.md).
 - Video without audio: inspect ALSA devices and ELD; video remains degraded.
 - Service does not start after install: confirm Alpine loaded `linux-rpi`, then
   inspect `/dev/dri`, `/dev/snd`, `dmesg`, and `rc-service omt-client status`.

@@ -97,7 +97,7 @@ impl Options {
 
 pub fn usage() -> i32 {
     eprintln!(
-        "Usage: omt-receiver --version | discover --wait-ms N --json | probe --target TARGET --timeout-ms N --json | play --target TARGET --connector auto|HDMI-A-1|HDMI-A-2 --status-file PATH"
+        "Usage: omt-receiver --version | discover --wait-ms N --json | probe --target TARGET --timeout-ms N --json | play --target TARGET --connector auto|HDMI-A-1|HDMI-A-2 --status-file PATH --video-ceiling WIDTHxHEIGHT@FPS[,...]"
     );
     2
 }

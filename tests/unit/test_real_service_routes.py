@@ -13,6 +13,7 @@ import importlib
 import os
 import stat
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -340,3 +341,114 @@ def test_revoked_session_shows_no_nav_on_login(real_app):
     assert response.status_code == 200
     assert b"nav-strip" not in response.data
     assert b'name="password"' in response.data
+
+
+def test_video_limit_override_persists_and_restores_the_board_default(mutable_real_app, tmp_path):
+    """The System page limit against the real state store, not the preview fake.
+
+    The override lands on the config volume, and clearing it has to return to
+    the board default rather than to a hardcoded one.
+    """
+    ceiling_file = tmp_path / "config" / "video_ceiling.json"
+    client = mutable_real_app.test_client()
+    assert _login(client).status_code == 302
+
+    page = client.get("/system").get_data(as_text=True)
+    assert "1920x1080 at 60 fps" in page
+
+    saved = client.post(
+        "/system/video-limit",
+        data={"video_limit": "1280x720@30"},
+        follow_redirects=True,
+    )
+    assert saved.status_code == 200
+    assert ceiling_file.is_file()
+    assert "1280x720 at 30 fps" in client.get("/system").get_data(as_text=True)
+
+    rejected = client.post(
+        "/system/video-limit",
+        data={"video_limit": "3840x2160@60"},
+        follow_redirects=True,
+    )
+    assert rejected.status_code == 200
+    # The refused value must not have replaced the saved one.
+    assert "1280x720 at 30 fps" in client.get("/system").get_data(as_text=True)
+
+    cleared = client.post(
+        "/system/video-limit",
+        data={"video_limit": ""},
+        follow_redirects=True,
+    )
+    assert cleared.status_code == 200
+    assert not ceiling_file.exists()
+
+
+def test_raising_the_limit_above_the_board_default_is_allowed_but_flagged(tmp_path):
+    """A Pi 3 operator may ask for 1080p. It is their call, but the page has to
+    say that the board will drop frames rather than report an unsupported
+    format -- which on the dashboard looks like a network fault."""
+    from omt_client.models import VideoLimitView
+
+    raised = VideoLimitView(
+        board_label="Raspberry Pi 3",
+        effective="1920x1080@60",
+        board_default="1280x720@60",
+    )
+    assert raised.overridden
+    assert raised.above_board_default
+
+    lowered = VideoLimitView(
+        board_label="Raspberry Pi 5",
+        effective="1280x720@30",
+        board_default="1920x1080@60",
+    )
+    assert lowered.overridden
+    assert not lowered.above_board_default
+
+    default = VideoLimitView(
+        board_label="Raspberry Pi 5",
+        effective="1920x1080@60",
+        board_default="1920x1080@60",
+    )
+    assert not default.overridden
+    assert not default.above_board_default
+
+
+def test_corrupt_video_limit_shows_the_reason_and_falls_back_to_the_board(
+    mutable_real_app, tmp_path
+):
+    """A hand-edited limit on the config volume must surface on the page rather
+    than 500 it, and playback must keep the board default in the meantime."""
+    ceiling_file = tmp_path / "config" / "video_ceiling.json"
+    ceiling_file.write_text('{"schema":1,"ceiling":"3840x2160@60"}\n', encoding="utf-8")
+    client = mutable_real_app.test_client()
+    assert _login(client).status_code == 302
+
+    page = client.get("/system")
+    assert page.status_code == 200
+    body = page.get_data(as_text=True)
+    assert "Saved video limit is invalid" in body
+    assert "1920x1080 at 60 fps" in body
+
+
+def test_video_limit_save_reports_a_failed_playback_restart(mutable_real_app, tmp_path):
+    """The limit is committed before playback is restarted, so a restart that
+    fails has to say the limit was saved anyway -- otherwise the operator
+    retries a change that already took effect."""
+    control = tmp_path / "failing-control"
+    _stub_command(control, exit_code=1, stdout="")
+    services = mutable_real_app.extensions["omt_client.services"]
+    services.source._settings = replace(services.source._settings, control_command=str(control))
+
+    client = mutable_real_app.test_client()
+    assert _login(client).status_code == 302
+    response = client.post(
+        "/system/video-limit",
+        data={"video_limit": "1280x720@30"},
+        follow_redirects=True,
+    )
+    assert response.status_code == 200
+    body = response.get_data(as_text=True)
+    assert "could not be restarted" in body
+    # Committed before the restart was attempted, and still committed after.
+    assert (tmp_path / "config" / "video_ceiling.json").is_file()

@@ -1097,3 +1097,19 @@ def test_a_refresh_before_a_discovery_starts_still_caches_it(tmp_path, monkeypat
     assert [choice.name for choice in service.sources()] == ["Camera"]
     assert [choice.name for choice in service.sources()] == ["Camera"]
     assert attempts == 1
+
+
+def test_video_limit_badge_degrades_on_a_malformed_ceiling():
+    """`above_board_default` compares two limits numerically. Both are validated
+    before they reach the view, but a comparison that raised would take down a
+    page whose whole job is reporting that a saved value is wrong."""
+    from omt_client.models import VideoLimitView
+
+    malformed = VideoLimitView(
+        board_label="Raspberry Pi 3",
+        effective="not-a-ceiling",
+        board_default="1280x720@60",
+    )
+    assert malformed.overridden
+    assert not malformed.above_board_default
+    assert malformed.effective_description == "not-a-ceiling"

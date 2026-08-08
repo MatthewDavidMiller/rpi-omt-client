@@ -113,25 +113,45 @@ and the Trivy scans.
 
 ## Hardware validation boundary
 
-There is intentionally no full-system Raspberry Pi VM tier. QEMU has no
-Raspberry Pi 5 model, so a raspi3/raspi4 guest cannot validate RP1, the Pi 5
-device tree, vc4 KMS/HDMI audio, device groups, or the supported board preflight.
-The previous Raspberry Pi OS VM was also the wrong host OS and has been removed.
+There is intentionally no full-system Raspberry Pi VM tier. QEMU models none of
+the supported SoCs, so a guest cannot validate RP1, any board's device tree, vc4
+KMS/HDMI audio, device groups, or the supported board preflight. The previous
+Raspberry Pi OS VM was also the wrong host OS and has been removed.
 
-Before release, validate on a physical low-RAM Pi 5 running a clean Alpine 3.23
-aarch64 `sys` installation:
+Before release, validate on a clean Alpine 3.23 aarch64 `sys` installation on
+**each supported board** — Pi 5, Pi 4 Model B, Pi 3, and Zero 2 W. The boards
+differ in HDMI count, ALSA card layout, RAM, and decode throughput, so a pass on
+one is not evidence for another:
 
-1. deploy through both CLI and native app and confirm non-Alpine/non-Pi-5
-   targets fail before upload;
+1. deploy through both CLI and native app and confirm unsupported boards fail
+   before upload. Include a near miss if one is available: a Pi 400 or Pi 500
+   must be refused, since its model string starts with a supported prefix;
 2. reboot, then verify all four `omt-client*` OpenRC services and nftables;
-3. verify both HDMI connectors, hotplug, EDID, 1080p60 video, and HDMI audio.
-   Include the multi-card fallback: the unit suite drives it against a fake
-   sysfs tree, but selecting the second physical connector after the first
-   card's attributes fail to read is not reproducible off the board;
+3. verify HDMI connectors, hotplug, EDID, video at the board's ceiling, and
+   HDMI audio. On the Pi 4 and Pi 5 verify both connectors; on the Pi 3 and
+   Zero 2 W verify that the single output works and that its unindexed
+   `vc4hdmi` ALSA card is the one opened. Include the multi-card fallback: the
+   unit suite drives it against a fake sysfs tree, but selecting the second
+   physical connector after the first card's attributes fail to read is not
+   reproducible off the board;
 4. verify zram, the 256 MiB memory limit, 64 PID limit, bounded Docker logs,
    and stable operation under memory pressure;
 5. verify discovery/direct playback, support bundle correlation/PCAP opt-in,
-   Wi-Fi mutation, and a Web-acknowledged reboot.
+   Wi-Fi mutation, and a Web-acknowledged reboot;
+6. confirm the board's decode ceiling with
+
+   ```bash
+   cargo test --release -p vmx-decoder --test decode_bench -- --ignored --nocapture
+   ```
+
+   The 3-worker row is the one that decides a tier, because the receiver gives
+   the decoder three of the four cores. The shipped ceilings in
+   `deploy/lib/board-profile.sh` are derived from core count and clock rather
+   than measured; if a board cannot sustain the frame interval its ceiling
+   promises, lower that board's profile rather than shipping a limit it cannot
+   hold. The Zero 2 W's 720p60 is the most optimistic entry and 720p30 may be
+   what it actually sustains. Then confirm that over-ceiling input reports
+   `unsupported-format` rather than stuttering.
 
 Useful commands are in `docs/OPERATIONS.md`. Any release not completing this
 physical tier must state the skipped Pi-specific checks.

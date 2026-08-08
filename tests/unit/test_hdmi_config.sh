@@ -86,6 +86,35 @@ empty="$(printf '' | host_hdmi_config_txt)"
 expect_equal "an empty config still gets the managed block" \
     $'\n'"${managed_block}" "${empty}"
 
+# ─── Board-specific boot settings ────────────────────────────────────────────
+
+# The pre-Pi-5 boards still split RAM with the VideoCore. Under full KMS the
+# V3D driver allocates from CMA, so the split is wasted RAM -- worth the most on
+# the 512 MiB Zero 2 W. The Pi 5 has no such split and must not be given the
+# setting at all.
+gpu_mem_block=$'# BEGIN OMT Client HDMI configuration\ndtoverlay=vc4-kms-v3d\nmax_framebuffers=2\ndisable_fw_kms_setup=1\ngpu_mem=64\n# END OMT Client HDMI configuration'
+
+for board in pi4 pi3 pizero2w; do
+    expect_equal "${board} reserves the minimum GPU split" \
+        $'\n'"${gpu_mem_block}" "$(printf '' | host_hdmi_config_txt "${board}")"
+done
+expect_equal "pi5 gets no GPU split setting" \
+    $'\n'"${managed_block}" "$(printf '' | host_hdmi_config_txt pi5)"
+
+# The overlay is deliberately the same on every board: the firmware substitutes
+# the Pi 5 variant itself, so a board-specific overlay name would be wrong.
+for board in pi5 pi4 pi3 pizero2w; do
+    rendered="$(printf '' | host_hdmi_config_txt "${board}")"
+    grep -Fqx 'dtoverlay=vc4-kms-v3d' <<< "${rendered}" ||
+        fail "${board} must use the portable KMS overlay"
+done
+
+# Switching boards replaces the managed block rather than accumulating both
+# spellings of it, which is what an SD card moved between Pis would produce.
+migrated="$(printf '' | host_hdmi_config_txt pizero2w | host_hdmi_config_txt pi5)"
+expect_equal "moving a card to a Pi 5 drops the GPU split" \
+    $'\n'"${managed_block}" "${migrated}"
+
 # ─── cmdline.txt video token ─────────────────────────────────────────────────
 
 base="console=serial0,115200 root=/dev/mmcblk0p2 rootwait"

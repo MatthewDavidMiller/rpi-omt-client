@@ -50,18 +50,40 @@ disqualifies that card and the search continues to the next, because several
 cards can expose the same connector name and the attached display may be behind
 any of them.
 
-The runtime is capped at 256 MiB and 64 processes. At 1080p it uses three DRM
-scanout buffers, bounded network frames, and a persistent pool of VMX workers
-with 512 KiB stacks (created once per decoder, not per frame). A 512 MiB Pi
-Zero 2 W is the memory-design floor, but remains outside the supported hardware
-matrix because the installer, DRM integration, and 1080p60 performance target
-are Pi 5-specific.
+The runtime is capped at 256 MiB and 64 processes on every board. At 1080p it
+uses three DRM scanout buffers, bounded network frames, and a persistent pool of
+VMX workers with 512 KiB stacks (created once per decoder, not per frame). The
+512 MiB Pi Zero 2 W is the memory-design floor and is inside the supported
+matrix at that cap.
 
-Playback supports either Pi HDMI connector. A missing, unreadable, or
-half-populated DRM tree reads as "no display connected", so the play loop
-reports `waiting-for-hdmi` and retries instead of exiting. Frames over
-1920×1080 or 60 fps are reported as `unsupported-format`. Interlaced input is
-presented progressively without deinterlacing.
+Memory is not what separates the boards; decode throughput is. VMX is decoded in
+software on three of the four cores every supported board has, and a 1.0 GHz
+Cortex-A53 is not a 2.4 GHz Cortex-A76. So each board carries a decode ceiling
+from `deploy/lib/board-profile.sh`, which the installer resolves once and passes
+to the receiver as `--video-ceiling`. A ceiling is a list of shapes and a frame
+is admitted when it fits inside any one of them, which is how a Pi 4 takes
+either 1080p30 or 720p60 without a pixel-rate budget nobody could explain to an
+operator. The ceiling is policy layered above `omt-protocol`'s absolute
+1920x1080@60 limit, which still bounds every allocation, so no ceiling and no
+operator override can change what the decoder is sized for. The ceilings are
+targets derived from core count and clock rather than measurements, and sit on
+the hardware boundary described under trust and legal surfaces until
+`crates/vmx-decoder/tests/decode_bench.rs` has been run on each board.
+
+Playback supports either HDMI connector on the two-output boards; the Pi 3 and
+Zero 2 W expose only `HDMI-A-1`, where `HDMI-A-2` simply never resolves and
+already reads as no display. A missing, unreadable, or half-populated DRM tree
+reads the same way, so the play loop reports `waiting-for-hdmi` and retries
+instead of exiting. Frames above the board's ceiling are reported as
+`unsupported-format`. Interlaced input is presented progressively without
+deinterlacing.
+
+HDMI audio is resolved rather than assumed. The Pi 4 and Pi 5 register one ALSA
+card per output, `vc4hdmi0` and `vc4hdmi1`; the Pi 3 and Zero 2 W have one
+output and register a single unindexed `vc4hdmi`. The receiver reads
+`/sys/class/sound/card*/id` and takes the indexed card when it exists, a lone
+`vc4hdmi` otherwise. Deriving the name from the connector alone is what made
+HDMI audio fail silently on the single-output boards while video kept playing.
 
 The presenter returns a typed `PresentOutcome`, so the play loop distinguishes a
 stream this display cannot show — which keeps the session and reports
@@ -195,12 +217,18 @@ with `include_str!` rather than reading files beside it, so a
 relocated binary still states its terms. The container and deployer publishers generate
 CycloneDX inventories from `Cargo.lock` and the Python lock.
 
-The host is Alpine Linux 3.23 aarch64 in persistent sys mode. The installer
-rejects other distributions, other Pi generations, and RAM-backed diskless
-roots. OpenRC supervises the filtered Avahi proxy and two inotify watchers;
+The host is Alpine Linux 3.23 aarch64 in persistent sys mode on a Raspberry Pi
+5, Pi 4 Model B, Pi 3 Model A+/B/B+, or Zero 2 W. One `linux-rpi` kernel covers
+all four. The installer rejects other distributions, every other board, and
+RAM-backed diskless roots; `deploy/lib/board-profile.sh` and
+`crates/omt-deployer-core/src/ops.rs` hold the same table for the host-side and
+workstation-side gates. OpenRC supervises the filtered Avahi proxy and two inotify watchers;
 the Docker workload remains detached with its own restart policy.
 
 Pi DRM, ALSA, HDMI hotplug, OpenRC boot ordering, nftables, and live OMT media
 remain hardware validation boundaries after local unit and amd64 image checks
-pass. QEMU has no Raspberry Pi 5 model, so the retired Raspberry Pi OS/raspi3
-VM tier could not validate the supported platform and has been removed.
+pass, now once per supported board rather than once. Per-board decode ceilings
+join that list: they are reasoned from core count and clock and are confirmed or
+refuted only by running the decode bench on the hardware. QEMU models none of
+these SoCs, so the retired Raspberry Pi OS/raspi3 VM tier could not validate the
+supported platform and has been removed.
