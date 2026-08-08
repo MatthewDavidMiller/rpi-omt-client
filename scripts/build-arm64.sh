@@ -7,6 +7,11 @@ export LC_ALL=C
 umask 022
 
 PROJECT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
+# `make install` provisions Podman, not Docker, so this build has to accept
+# whichever engine the workstation actually has -- the same detection the live
+# container tests use rather than a second, stricter rule.
+# shellcheck source=scripts/docker-test-env.sh
+source "${PROJECT_ROOT}/scripts/docker-test-env.sh"
 IMAGE_NAME="${IMAGE_NAME:-omt-client}"
 ARM64_TARBALL="${ARM64_TARBALL:-${PROJECT_ROOT}/omt-client-arm64.tar.gz}"
 BUILD_METADATA_DIR="${BUILD_METADATA_DIR:-${PROJECT_ROOT}/.build}"
@@ -29,26 +34,46 @@ cleanup() {
 }
 trap cleanup EXIT
 
+ensure_test_container_engine || exit 1
 "${PROJECT_ROOT}/scripts/check-arm64-emulation.sh"
 echo "Building ARM64 image..."
-docker buildx build --platform linux/arm64 \
-    --file "${PROJECT_ROOT}/deploy/Dockerfile" \
-    --build-arg "RPI_OMT_CLIENT_VERSION=${RPI_OMT_CLIENT_VERSION}" \
-    --iidfile "${staged_iid}" \
-    --output "type=docker,dest=${staged_artifact}" \
-    -t "${IMAGE_NAME}" "${PROJECT_ROOT}"
+if [[ "${CONTAINER_ENGINE_KIND}" == "podman" ]]; then
+    # Podman has no buildx `--output type=docker`, so the archive is exported in
+    # a second step. `--format docker` keeps the Dockerfile SHELL contract that
+    # OCI metadata would drop, matching container_engine_build.
+    # Podman normalizes a bare `-t omt-client` to `localhost/omt-client:latest`
+    # and writes that into the archive, so `docker load` on the Pi produces a
+    # tag that neither `docker run omt-client` nor compose.yml's `image:
+    # omt-client` resolves. Tagging with the Docker Hub library prefix instead
+    # makes Docker normalize it straight back to a bare `omt-client:latest`.
+    podman_reference="docker.io/library/${IMAGE_NAME}:latest"
+    "${CONTAINER_ENGINE}" build --format docker --platform linux/arm64 \
+        --file "${PROJECT_ROOT}/deploy/Dockerfile" \
+        --build-arg "RPI_OMT_CLIENT_VERSION=${RPI_OMT_CLIENT_VERSION}" \
+        --iidfile "${staged_iid}" \
+        -t "${podman_reference}" "${PROJECT_ROOT}"
+    "${CONTAINER_ENGINE}" save --format docker-archive \
+        --output "${staged_artifact}" "${podman_reference}"
+else
+    "${CONTAINER_ENGINE}" buildx build --platform linux/arm64 \
+        --file "${PROJECT_ROOT}/deploy/Dockerfile" \
+        --build-arg "RPI_OMT_CLIENT_VERSION=${RPI_OMT_CLIENT_VERSION}" \
+        --iidfile "${staged_iid}" \
+        --output "type=docker,dest=${staged_artifact}" \
+        -t "${IMAGE_NAME}" "${PROJECT_ROOT}"
+fi
 
 if [[ ! -f "${staged_artifact}" || -L "${staged_artifact}" || \
       ! -s "${staged_artifact}" ]]; then
-    echo "ERROR: Docker did not produce a non-empty regular ARM64 archive." >&2
+    echo "ERROR: The container engine did not produce a non-empty regular ARM64 archive." >&2
     exit 1
 fi
 if ! tar -tf "${staged_artifact}" >/dev/null; then
-    echo "ERROR: Docker produced an invalid or incomplete ARM64 archive." >&2
+    echo "ERROR: The container engine produced an invalid or incomplete ARM64 archive." >&2
     exit 1
 fi
 if [[ ! -f "${staged_iid}" || ! -s "${staged_iid}" ]]; then
-    echo "ERROR: Docker did not publish the ARM64 image identity." >&2
+    echo "ERROR: The container engine did not publish the ARM64 image identity." >&2
     exit 1
 fi
 

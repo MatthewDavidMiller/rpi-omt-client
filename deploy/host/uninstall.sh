@@ -57,6 +57,10 @@ rm -f -- /etc/nftables.d/omt-client.nft \
     /etc/ssh/sshd_config.d/90-omt-client-hardening.conf \
     /etc/sysctl.d/90-omt-client-hardening.conf
 if command -v nft >/dev/null 2>&1 && [[ -f /etc/nftables.nft ]]; then
+    # Flush before reloading: the appliance appends its accepts into the host's
+    # own input chain, so re-reading the file alone would leave those rules live
+    # and duplicate every stock rule beside them.
+    nft flush ruleset || true
     nft -f /etc/nftables.nft || true
 fi
 if command -v sysctl >/dev/null 2>&1; then

@@ -1,6 +1,7 @@
 version=3
 omt-client-arm64.tar.gz
 deploy/compose.yml
+deploy/host/bootstrap.sh
 deploy/host/install.sh
 deploy/host/uninstall.sh
 deploy/host/host-diagnostics.sh

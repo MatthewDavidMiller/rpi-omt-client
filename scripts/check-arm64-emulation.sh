@@ -1,5 +1,5 @@
 #!/bin/bash
-# Verify that Docker can execute ARM64 containers on the current build host.
+# Verify the container engine can execute ARM64 containers on this build host.
 
 set -euo pipefail
 
@@ -9,24 +9,27 @@ source "${PROJECT_ROOT}/scripts/docker-test-env.sh"
 CHECK_IMAGE="docker.io/library/debian:bookworm-slim@sha256:4724b8cc51e33e398f0e2e15e18d5ec2851ff0c2280647e1310bc1642182655d"
 
 # shellcheck disable=SC2310
-if ! ensure_docker_daemon; then
+if ! ensure_test_container_engine; then
     exit 1
 fi
 
-if ! docker buildx version >/dev/null 2>&1; then
+# buildx is a Docker-only prerequisite; Podman builds multi-arch natively once
+# the binfmt handler is registered.
+if [[ "${CONTAINER_ENGINE_KIND}" == "docker" ]] && \
+   ! "${CONTAINER_ENGINE}" buildx version >/dev/null 2>&1; then
     echo "ERROR: Docker buildx is not available." >&2
     exit 1
 fi
 
-if docker run --rm --platform linux/arm64 --entrypoint /bin/sh "${CHECK_IMAGE}" -c 'test "$(uname -m)" = "aarch64"' >/dev/null 2>&1; then
+if "${CONTAINER_ENGINE}" run --rm --platform linux/arm64 --entrypoint /bin/sh "${CHECK_IMAGE}" -c 'test "$(uname -m)" = "aarch64"' >/dev/null 2>&1; then
     exit 0
 fi
 
-cat >&2 <<'EOF'
-ERROR: Docker cannot execute linux/arm64 containers on this build host.
+cat >&2 <<EOF
+ERROR: ${CONTAINER_ENGINE_KIND} cannot execute linux/arm64 containers on this build host.
 
-The ARM64 runtime image runs package installation steps during the Docker build,
-so buildx needs ARM64 emulation registered. Install it once, then rerun the
+The ARM64 runtime image runs package installation steps during the container
+build, so ARM64 emulation must be registered. Install it once, then rerun the
 build:
 
   make setup-arm64-emulation

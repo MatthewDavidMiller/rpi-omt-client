@@ -82,31 +82,31 @@ echo "Detected OS: ${OS}${OS_LIKE:+ (${OS_LIKE})}"
 
 case "${OS}" in
     ubuntu|debian)
-        install_apt_packages alsa-utils curl gcc libasound2-dev \
+        install_apt_packages alsa-utils curl dash gcc libasound2-dev \
             libssl-dev libx11-dev openssh-client pkg-config \
             podman python3-venv shellcheck tar xz-utils
         ;;
     fedora)
         sudo dnf install -y --setopt=install_weak_deps=False \
-            alsa-lib-devel curl gcc libX11-devel openssl-devel \
+            alsa-lib-devel curl dash gcc libX11-devel openssl-devel \
             openssh-clients pkgconf-pkg-config podman python3 \
             ShellCheck tar xz
         ;;
     rocky|almalinux|rhel|centos)
-        install_dnf_packages alsa-lib-devel curl gcc \
+        install_dnf_packages alsa-lib-devel curl dash gcc \
             libX11-devel openssh-clients openssl-devel pkgconf-pkg-config podman \
             python3 ShellCheck tar xz
         ;;
     arch)
-        install_pacman_packages alsa-lib curl gcc libx11 \
+        install_pacman_packages alsa-lib curl dash gcc libx11 \
             openssh openssl pkgconf podman python shellcheck tar
         ;;
     darwin)
-        install_brew_packages coreutils curl openssl pkg-config python shellcheck
+        install_brew_packages coreutils curl dash openssl pkg-config python shellcheck
         ;;
     *)
         if [[ " ${OS_LIKE} " == *" debian "* ]]; then
-            install_apt_packages alsa-utils curl gcc libasound2-dev \
+            install_apt_packages alsa-utils curl dash gcc libasound2-dev \
                 libssl-dev libx11-dev openssh-client pkg-config \
                 podman python3-venv shellcheck tar xz-utils
         elif [[ " ${OS_LIKE} " == *" fedora "* ]] || \
@@ -192,7 +192,7 @@ fi
 
 echo ""
 echo "=== Development Dependency Summary ==="
-summary_tools=(cargo cargo-deny cargo-vet curl pkg-config python3 rustc rustfmt sha512sum shellcheck tar hadolint trivy)
+summary_tools=(cargo cargo-deny cargo-vet curl dash pkg-config python3 rustc rustfmt sha512sum shellcheck tar hadolint trivy)
 if [[ "$(uname -s)" == "Linux" ]]; then
     # Podman or Docker runs the image gates; the mingw toolchain cross-builds
     # the Windows deployer that ships alongside the Linux one.

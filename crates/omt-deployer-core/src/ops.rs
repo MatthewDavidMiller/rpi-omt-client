@@ -111,6 +111,83 @@ fn sudo_input(connection: &Connection) -> Zeroizing<String> {
     )
 }
 
+/// Probe output describing how, and whether, this host can run the installer.
+struct HostTooling {
+    uid: String,
+    has_bash: bool,
+    has_sudo: bool,
+    has_doas: bool,
+}
+
+const TOOLING_PROBE: &str = "id -u; for tool in bash sudo doas; do \
+     if command -v \"$tool\" >/dev/null 2>&1; then echo yes; else echo no; fi; done";
+
+fn parse_host_tooling(output: &str) -> HostTooling {
+    let mut lines = output.lines();
+    HostTooling {
+        uid: lines.next().unwrap_or_default().trim().to_owned(),
+        has_bash: lines.next().unwrap_or_default().trim() == "yes",
+        has_sudo: lines.next().unwrap_or_default().trim() == "yes",
+        has_doas: lines.next().unwrap_or_default().trim() == "yes",
+    }
+}
+
+/// How to become root on a host that does not have sudo yet.
+///
+/// A stock Alpine image has neither bash nor sudo, so the escalation used for
+/// the bootstrap cannot be the sudo prefix the rest of this module relies on.
+fn bootstrap_escalation(tooling: &HostTooling) -> io::Result<&'static str> {
+    if tooling.uid == "0" {
+        Ok("")
+    } else if tooling.has_sudo {
+        Ok("sudo -S -p ''")
+    } else if tooling.has_doas {
+        Ok("doas")
+    } else {
+        Err(io::Error::other(
+            "this Raspberry Pi has no sudo, no doas, and the deploy account is \
+             not root, so the appliance cannot be bootstrapped remotely. Alpine \
+             ships neither by default. Connect as root, or run \
+             `su -c '/bin/sh bootstrap.sh'` once on the Pi with \
+             deploy/host/bootstrap.sh copied across.",
+        ))
+    }
+}
+
+/// Install bash and sudo when the target is a stock Alpine image.
+///
+/// `install.sh` and `transaction.sh` are both bash scripts invoked through
+/// sudo, so on an untouched Alpine host every later step of this deployment
+/// would fail on a missing interpreter rather than on anything to do with the
+/// appliance.
+fn ensure_host_bootstrapped(
+    session: &mut SshSession,
+    connection: &Connection,
+    project_root: &Path,
+    cancellation: &AtomicBool,
+    progress: &mut dyn FnMut(&str),
+) -> io::Result<()> {
+    let probe = session.run(TOOLING_PROBE, "", cancellation)?;
+    require_success(&probe, "Remote tooling probe")?;
+    let tooling = parse_host_tooling(&probe.stdout);
+    if tooling.has_bash && tooling.has_sudo {
+        return Ok(());
+    }
+
+    progress("Bootstrapping bash and sudo on the Raspberry Pi...");
+    let escalation = bootstrap_escalation(&tooling)?;
+    let local = secure_relative(project_root, "deploy/host/bootstrap.sh")?;
+    let remote = format!("/tmp/omt-bootstrap-{}.sh", random_token(8)?);
+    let remote_q = shell_quote(&remote);
+    session.upload(&local, &remote, cancellation)?;
+
+    // /bin/sh explicitly: this is the one script that must run before bash does.
+    let command = format!("{escalation} /bin/sh {remote_q}; rc=$?; rm -f -- {remote_q}; exit $rc");
+    let result = session.run(&command, &sudo_input(connection), cancellation)?;
+    require_success(&result, "Alpine bootstrap")?;
+    Ok(())
+}
+
 fn file_fingerprint(path: &Path) -> io::Result<String> {
     let metadata = fs::symlink_metadata(path)?;
     if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
@@ -197,13 +274,13 @@ fn require_supported_appliance(output: &str) -> io::Result<()> {
     let model = lines.next().unwrap_or_default();
     if architecture == "aarch64"
         && system == "alpine"
-        && release.starts_with("3.23.")
+        && release.starts_with("3.24.")
         && is_supported_board(model)
     {
         Ok(())
     } else {
         Err(io::Error::other(
-            "remote host must run Alpine Linux 3.23 aarch64 on a Raspberry Pi 5, \
+            "remote host must run Alpine Linux 3.24 aarch64 on a Raspberry Pi 5, \
              Raspberry Pi 4 Model B, Raspberry Pi 3, or Raspberry Pi Zero 2 W",
         ))
     }
@@ -270,7 +347,7 @@ pub fn connect(connection: &Connection) -> io::Result<SshSession> {
     SshSession::connect(connection)
 }
 
-/// Probe the remote platform and confirm Alpine 3.23 aarch64 on a supported Pi.
+/// Probe the remote platform and confirm Alpine 3.24 aarch64 on a supported Pi.
 pub fn test_connection(
     connection: &Connection,
     cancellation: &AtomicBool,
@@ -510,6 +587,14 @@ pub fn deploy(
         progress(&format!("Deploying to {board}."));
     }
 
+    ensure_host_bootstrapped(
+        &mut session,
+        connection,
+        &options.project_root,
+        cancellation,
+        progress,
+    )?;
+
     let remote_directory = options.remote_directory.trim_end_matches('/').to_owned();
     let remote_q = shell_quote(&remote_directory);
     let sudo = sudo_prefix(connection);
@@ -567,6 +652,7 @@ pub fn deploy(
     staged?;
 
     let executable_paths = [
+        "deploy/host/bootstrap.sh",
         "deploy/host/install.sh",
         "deploy/host/uninstall.sh",
         "deploy/host/host-diagnostics.sh",
@@ -595,7 +681,7 @@ mod tests {
     use super::*;
 
     fn probe(model: &str) -> String {
-        format!("aarch64\nalpine\n3.23.5\n{model}\n")
+        format!("aarch64\nalpine\n3.24.1\n{model}\n")
     }
 
     /// The same matrix as `tests/unit/test_board_profile.sh`. These two gates
@@ -647,10 +733,14 @@ mod tests {
     fn still_refuses_the_wrong_architecture_or_distribution() {
         let model = "Raspberry Pi 5 Model B Rev 1.0";
         for output in [
-            format!("armv7l\nalpine\n3.23.5\n{model}\n"),
-            format!("aarch64\ndebian\n3.23.5\n{model}\n"),
+            format!("armv7l\nalpine\n3.24.1\n{model}\n"),
+            format!("aarch64\ndebian\n3.24.1\n{model}\n"),
             format!("aarch64\nalpine\n3.22.1\n{model}\n"),
-            "aarch64\nalpine\n3.23.5\n".to_owned(),
+            // 3.23 was the previously pinned series. Package names moved in
+            // 3.24, so an older host must fail the probe rather than reach an
+            // installer whose apk list it cannot resolve.
+            format!("aarch64\nalpine\n3.23.5\n{model}\n"),
+            "aarch64\nalpine\n3.24.1\n".to_owned(),
         ] {
             assert!(
                 require_supported_appliance(&output).is_err(),
@@ -659,13 +749,50 @@ mod tests {
         }
     }
 
+    /// A stock Alpine image is the case this has to get right: no bash, no
+    /// sudo, and a non-root deploy account is not a deployable host.
+    #[test]
+    fn picks_an_escalation_for_each_stock_alpine_shape() {
+        let tooling = |uid: &str, bash, sudo, doas| HostTooling {
+            uid: uid.to_owned(),
+            has_bash: bash,
+            has_sudo: sudo,
+            has_doas: doas,
+        };
+
+        // Already root: escalating again would only add a failure mode.
+        assert_eq!(
+            bootstrap_escalation(&tooling("0", false, false, false)).ok(),
+            Some("")
+        );
+        assert_eq!(
+            bootstrap_escalation(&tooling("1000", false, true, false)).ok(),
+            Some("sudo -S -p ''")
+        );
+        // doas is the only escalation a hand-bootstrapped Alpine host has.
+        assert_eq!(
+            bootstrap_escalation(&tooling("1000", false, false, true)).ok(),
+            Some("doas")
+        );
+        assert!(bootstrap_escalation(&tooling("1000", false, false, false)).is_err());
+    }
+
+    #[test]
+    fn parses_the_tooling_probe() {
+        let tooling = parse_host_tooling("1000\nno\nno\nyes\n");
+        assert_eq!(tooling.uid, "1000");
+        assert!(!tooling.has_bash);
+        assert!(!tooling.has_sudo);
+        assert!(tooling.has_doas);
+    }
+
     #[test]
     fn reports_the_detected_board_for_progress() {
         assert_eq!(
             probed_board(&probe("Raspberry Pi 4 Model B Rev 1.4")),
             Some("Raspberry Pi 4 Model B Rev 1.4")
         );
-        assert_eq!(probed_board("aarch64\nalpine\n3.23.5\n"), None);
+        assert_eq!(probed_board("aarch64\nalpine\n3.24.1\n"), None);
     }
 
     #[test]

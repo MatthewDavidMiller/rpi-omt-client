@@ -151,6 +151,26 @@ expect_equal "repeated runs of the same forced mode do not duplicate it" \
     "$(host_hdmi_cmdline_line "${base} video=HDMI-A-1:1920x1080@60D" \
         "video=HDMI-A-1:1920x1080@60D" "video=HDMI-A-1:1920x1080@60D" "HDMI-A-1")"
 
+# The Raspberry Pi firmware injects cgroup_disable=memory on every boot, which
+# removes the memory controller from /proc/cgroups and silently turns the
+# appliance's advertised 256 MiB container cap into no cap at all.
+expect_equal "the firmware's cgroup_disable=memory is replaced, not argued with" \
+    "root=/dev/mmcblk0p2 quiet cgroup_enable=memory" \
+    "$(host_cmdline_memory_cgroup "root=/dev/mmcblk0p2 cgroup_disable=memory quiet")"
+
+expect_equal "the memory cgroup is enabled when the firmware said nothing" \
+    "root=/dev/mmcblk0p2 quiet cgroup_enable=memory" \
+    "$(host_cmdline_memory_cgroup "root=/dev/mmcblk0p2 quiet")"
+
+expect_equal "an already-correct cmdline is left byte-identical" \
+    "root=/dev/mmcblk0p2 cgroup_enable=memory quiet" \
+    "$(host_cmdline_memory_cgroup "root=/dev/mmcblk0p2 cgroup_enable=memory quiet")"
+
+expect_equal "repeated installs do not accumulate the token" \
+    "root=/dev/mmcblk0p2 quiet cgroup_enable=memory" \
+    "$(host_cmdline_memory_cgroup \
+        "$(host_cmdline_memory_cgroup "root=/dev/mmcblk0p2 cgroup_disable=memory quiet")")"
+
 if ((failures > 0)); then
     echo "${failures} HDMI configuration test(s) failed" >&2
     exit 1

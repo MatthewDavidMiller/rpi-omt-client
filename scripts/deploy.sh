@@ -10,6 +10,9 @@ HOST="${1:-}"
 REMOTE_DIR="${2:-/opt/omt-client}"
 MANIFEST="${PROJECT_ROOT}/deploy/manifest-v3.txt"
 TRANSACTION_HELPER="${PROJECT_ROOT}/deploy/transaction.sh"
+BOOTSTRAP_SCRIPT="${PROJECT_ROOT}/deploy/host/bootstrap.sh"
+# Kept in step with deploy/host/install.sh, which refuses any other series.
+SUPPORTED_ALPINE_SERIES=3.24
 # The supported-board table, shared with the installer rather than restated, so
 # this path and the appliance can never disagree about what will install.
 # shellcheck source=deploy/lib/board-profile.sh
@@ -88,14 +91,67 @@ remote_platform="$(ssh "${HOST}" 'uname -m; . /etc/os-release; printf "%s\n" "$I
 mapfile -t platform_lines <<< "${remote_platform}"
 if [[ "${platform_lines[0]:-}" != "aarch64" || \
       "${platform_lines[1]:-}" != "alpine" || \
-      "${platform_lines[2]:-}" != 3.23.* ]] || \
+      "${platform_lines[2]:-}" != "${SUPPORTED_ALPINE_SERIES}".* ]] || \
    ! host_board_profile "${platform_lines[3]:-}" >/dev/null; then
-    echo "ERROR: remote host must run Alpine Linux 3.23 aarch64 on one of:" >&2
+    echo "ERROR: remote host must run Alpine Linux ${SUPPORTED_ALPINE_SERIES} aarch64 on one of:" >&2
     host_supported_boards | sed 's/^/  - /' >&2
     echo "Detected: ${platform_lines[3]:-unknown}" >&2
     exit 1
 fi
 echo "Deploying to ${platform_lines[3]}."
+
+# A stock Alpine image has neither bash nor sudo, yet the transaction helper and
+# the installer are both bash scripts run through sudo. Probe for the pieces and
+# bootstrap them before anything downstream assumes they exist.
+remote_capabilities="$(ssh "${HOST}" '
+    id -u
+    for tool in bash sudo doas; do
+        if command -v "$tool" >/dev/null 2>&1; then echo yes; else echo no; fi
+    done')"
+mapfile -t capability_lines <<< "${remote_capabilities}"
+REMOTE_UID="${capability_lines[0]:-}"
+HAS_BASH="${capability_lines[1]:-no}"
+HAS_SUDO="${capability_lines[2]:-no}"
+HAS_DOAS="${capability_lines[3]:-no}"
+[[ "${REMOTE_UID}" =~ ^[0-9]+$ ]] || {
+    echo "ERROR: could not determine the remote user id." >&2
+    exit 1
+}
+
+# Prefer no escalation at all when the deploy account is already root; sudo is
+# only the fallback, and doas covers a host bootstrapped by hand.
+if [[ "${REMOTE_UID}" == 0 ]]; then
+    ESCALATE=""
+elif [[ "${HAS_SUDO}" == yes ]]; then
+    ESCALATE="sudo"
+elif [[ "${HAS_DOAS}" == yes ]]; then
+    ESCALATE="doas"
+else
+    echo "ERROR: ${HOST} has no way to become root: no sudo, no doas, and the" >&2
+    echo "deploy account is not root. Alpine ships neither by default." >&2
+    echo "Fix by running the bootstrap once as root on the Pi:" >&2
+    echo "  su -c '/bin/sh /tmp/bootstrap.sh'   # after copying deploy/host/bootstrap.sh" >&2
+    echo "or re-run this deploy against the root account: make deploy HOST=root@<ip>" >&2
+    exit 1
+fi
+
+if [[ "${HAS_BASH}" != yes || "${HAS_SUDO}" != yes ]]; then
+    echo "Bootstrapping bash and sudo on ${HOST}..."
+    if [[ ! -f "${BOOTSTRAP_SCRIPT}" || -L "${BOOTSTRAP_SCRIPT}" ]]; then
+        echo "ERROR: missing or unsafe bootstrap script: ${BOOTSTRAP_SCRIPT}" >&2
+        exit 1
+    fi
+    # /bin/sh explicitly: this is the one script that must run before bash does.
+    remote_bootstrap="$(ssh "${HOST}" 'mktemp /tmp/omt-bootstrap.XXXXXX')"
+    [[ "${remote_bootstrap}" =~ ^/tmp/omt-bootstrap\.[A-Za-z0-9]+$ ]] || {
+        echo "ERROR: could not stage the bootstrap script on ${HOST}." >&2
+        exit 1
+    }
+    scp "${BOOTSTRAP_SCRIPT}" "${HOST}:${remote_bootstrap}"
+    ssh -t "${HOST}" "${ESCALATE} /bin/sh '${remote_bootstrap}'; rc=\$?; rm -f -- '${remote_bootstrap}'; exit \$rc"
+    # sudo only exists from here on, so an account that had to use doas can stop.
+    [[ "${REMOTE_UID}" == 0 ]] || ESCALATE="sudo"
+fi
 
 token="$(od -An -N12 -tx1 /dev/urandom | tr -d '[:space:]')"
 [[ "${token}" =~ ^[0-9a-f]{24}$ ]] || {
@@ -116,7 +172,7 @@ trap cleanup EXIT
 
 echo "Preparing ${REMOTE_DIR} on ${HOST}..."
 ssh -t "${HOST}" \
-    "sudo install -d -m 755 -o \"\$(id -u)\" -g \"\$(id -g)\" '${REMOTE_DIR}'"
+    "${ESCALATE} install -d -m 755 -o \"\$(id -u)\" -g \"\$(id -g)\" '${REMOTE_DIR}'"
 
 # Settle journals with the helper and manifest that created them. This must
 # happen before v3 can create nested-path state.
@@ -164,5 +220,5 @@ ssh "${HOST}" bash "${REMOTE_STAGE}/deploy/transaction.sh" \
 
 cleanup_required=false
 ssh -t "${HOST}" \
-    "chmod +x '${REMOTE_DIR}/deploy/host/install.sh' '${REMOTE_DIR}/deploy/host/uninstall.sh' '${REMOTE_DIR}/deploy/host/host-diagnostics.sh' '${REMOTE_DIR}/deploy/host/host-event-watcher.sh' '${REMOTE_DIR}/deploy/host/host-reboot.sh' '${REMOTE_DIR}/deploy/transaction.sh' && sudo '${REMOTE_DIR}/deploy/host/install.sh'"
+    "chmod +x '${REMOTE_DIR}/deploy/host/bootstrap.sh' '${REMOTE_DIR}/deploy/host/install.sh' '${REMOTE_DIR}/deploy/host/uninstall.sh' '${REMOTE_DIR}/deploy/host/host-diagnostics.sh' '${REMOTE_DIR}/deploy/host/host-event-watcher.sh' '${REMOTE_DIR}/deploy/host/host-reboot.sh' '${REMOTE_DIR}/deploy/transaction.sh' && ${ESCALATE} '${REMOTE_DIR}/deploy/host/install.sh'"
 echo "Deployed. Use the authoritative Web UI URL printed by install.sh above."

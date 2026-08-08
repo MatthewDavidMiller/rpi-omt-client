@@ -8,6 +8,12 @@ set -euo pipefail
 export LC_ALL=C
 umask 022
 
+# The one Alpine series this appliance is validated against. Package names move
+# between releases -- rfkill folded into util-linux-misc in 3.24 -- so the
+# series is pinned rather than ranged, and the apk repository URLs below are
+# derived from it instead of being spelled out a second time.
+SUPPORTED_ALPINE_SERIES=3.24
+
 usage() {
     cat <<'EOF'
 Usage: install.sh [--hdmi-video MODE] [--max-video CEILING]
@@ -20,9 +26,12 @@ CEILING is "auto" for this board's default, or one or more decode limits:
   1280x720@60
   1920x1080@30,1280x720@60
 
-The host must run Alpine Linux 3.23 aarch64 in persistent sys mode on a
+The host must run Alpine Linux 3.24 aarch64 in persistent sys mode on a
 Raspberry Pi 5, Raspberry Pi 4 Model B, Raspberry Pi 3, or Raspberry Pi
 Zero 2 W. With no option, a saved choice is preserved; first installs use auto.
+
+Run deploy/host/bootstrap.sh as root first on a stock Alpine image: this
+script needs bash and sudo, and Alpine ships neither.
 
 Raising the ceiling above the board default is allowed but not validated: a
 board that cannot decode the format will drop frames rather than refuse them.
@@ -156,7 +165,8 @@ echo "=== Raspberry Pi Alpine OMT Client Installer ==="
 
 # Preflight is deliberately complete before the first host mutation.
 [[ "${EUID}" -eq 0 ]] || {
-    echo "ERROR: Run this installer as root through sudo." >&2
+    echo "ERROR: Run this installer as root (sudo, doas, or su -c)." >&2
+    echo "Stock Alpine has no sudo; deploy/host/bootstrap.sh installs it." >&2
     exit 1
 }
 command -v sshd >/dev/null 2>&1 || {
@@ -173,8 +183,8 @@ command -v sshd >/dev/null 2>&1 || {
 }
 # shellcheck source=/etc/os-release
 source /etc/os-release
-[[ "${ID:-}" == "alpine" && "$(</etc/alpine-release)" == 3.23.* ]] || {
-    echo "ERROR: Alpine Linux 3.23.x is required; detected ${PRETTY_NAME:-unknown}." >&2
+[[ "${ID:-}" == "alpine" && "$(</etc/alpine-release)" == "${SUPPORTED_ALPINE_SERIES}".* ]] || {
+    echo "ERROR: Alpine Linux ${SUPPORTED_ALPINE_SERIES}.x is required; detected ${PRETTY_NAME:-unknown}." >&2
     exit 1
 }
 PI_MODEL="$(tr -d '\000' < /proc/device-tree/model 2>/dev/null || true)"
@@ -285,10 +295,17 @@ if [[ "${OMT_VIDEO_CEILING}" != "${BOARD_VIDEO_CEILING}" ]]; then
 fi
 
 echo "Updating Alpine packages and installing the appliance dependencies..."
-if ! grep -Eq '^[^#[:space:]].*/v3\.23/community/?$' /etc/apk/repositories; then
-    MAIN_REPOSITORY="$(sed -n 's|/main/*$||p' /etc/apk/repositories | head -n 1)"
+# Match any live community line, not one spelled with a hardcoded series: a
+# series-specific pattern never matches after a bump and appends a duplicate
+# repository on every install.
+if ! grep -Eq '^[^#[:space:]]+/community/?$' /etc/apk/repositories; then
+    # Reads the whole file for the same reason the sshd -T pipeline below does:
+    # piping into a first-line filter closes the pipe early and trips pipefail.
+    MAIN_REPOSITORY="$(awk 'found { next } \
+        /^[^#[:space:]]+\/main\/?$/ { sub(/\/main\/?$/, ""); print; found = 1 }' \
+        /etc/apk/repositories)"
     [[ "${MAIN_REPOSITORY}" == https://* || "${MAIN_REPOSITORY}" == http://* ]] || {
-        echo "ERROR: Enable a trusted Alpine v3.23 main repository first." >&2
+        echo "ERROR: Enable a trusted Alpine v${SUPPORTED_ALPINE_SERIES} main repository first." >&2
         exit 1
     }
     printf '%s/community\n' "${MAIN_REPOSITORY}" >> /etc/apk/repositories
@@ -298,8 +315,8 @@ apk upgrade --available
 apk add --no-cache \
     alsa-utils avahi avahi-tools bash coreutils dbus docker docker-cli-compose \
     ethtool findutils inotify-tools iproute2 iw jq libdrm-tests linux-firmware-brcm \
-    linux-rpi nftables nftables-rulesets procps raspberrypi-bootloader rfkill \
-    tcpdump util-linux wpa_supplicant xdg-dbus-proxy zram-init
+    linux-rpi nftables nftables-rulesets procps raspberrypi-bootloader \
+    tcpdump util-linux util-linux-misc wpa_supplicant xdg-dbus-proxy zram-init
 
 # The Windows deployer manages Wi-Fi through wpa_cli. Preserve every existing
 # network block while making the control socket and durable save operation an
@@ -431,6 +448,23 @@ rc-service cgroups start >/dev/null 2>&1 || true
 rc-service dbus start
 rc-service avahi-daemon restart
 rc-service docker restart
+
+# OpenRC reports success once dockerd is spawned, not once it is serving. On a
+# Pi 4 the daemon still has to restore containers and initialize buildkit
+# before it opens /var/run/docker.sock, and every docker command below loses
+# that race on a cold install.
+DOCKER_READY=false
+for _ in $(seq 1 90); do
+    if docker info >/dev/null 2>&1; then
+        DOCKER_READY=true
+        break
+    fi
+    sleep 1
+done
+[[ "${DOCKER_READY}" == "true" ]] || {
+    echo "ERROR: Docker daemon did not become ready; see /var/log/docker.log." >&2
+    exit 1
+}
 
 echo "Loading OMT Client image..."
 docker load < "${TARBALL}"
@@ -631,6 +665,7 @@ if [[ -n "${CMDLINE_FILE}" ]]; then
         echo "ERROR: ${CMDLINE_FILE} contains an unmanaged connector mode." >&2
         exit 1
     }
+    UPDATED_CMDLINE="$(host_cmdline_memory_cgroup "${UPDATED_CMDLINE}")"
     if [[ "${UPDATED_CMDLINE}" != "${cmdline_lines[0]}" ]]; then
         CMDLINE_TMP="$(mktemp "${CMDLINE_FILE}.omt-client.XXXXXX")"
         printf '%s\n' "${UPDATED_CMDLINE}" > "${CMDLINE_TMP}"
@@ -649,12 +684,32 @@ MAX_VIDEO=${MAX_VIDEO}
 EOF
 
 echo "Enabling the appliance firewall..."
-SSH_PORT="$(sshd -T 2>/dev/null | awk '$1 == "port" { print $2; exit }')"
+# awk must drain sshd -T rather than `exit` on the first match: closing the pipe
+# early kills sshd with SIGPIPE, and under `set -o pipefail` that 141 propagates
+# out of the command substitution and aborts the installer with no message at
+# all, right after the last thing it printed.
+SSH_PORT="$(sshd -T 2>/dev/null | \
+    awk '$1 == "port" && !seen { port = $2; seen = 1 } END { if (seen) print port }')"
 [[ "${SSH_PORT}" =~ ^[0-9]+$ ]] || SSH_PORT=22
+# The appliance's rules go in the host's own input chain, not in a private
+# table. A separate table hooked at a lower priority does not work: netfilter
+# runs every base chain registered on a hook, an `accept` only ends the chain it
+# is in, and Alpine's stock /etc/nftables.nft ends its input chain with
+# `policy drop`. Hooking a second table at priority -20 therefore accepted SSH
+# and the web UI and then had them dropped at priority 0, leaving the appliance
+# unreachable on every port -- recoverable only with a console or the SD card.
+#
+# The first block creates the chain on a host that has no ruleset of its own and
+# is a no-op when Alpine's already exists. The second appends, so any rules the
+# host already had keep their position ahead of these.
 host_publish_file /etc/nftables.d/omt-client.nft 0600 root root <<EOF
-table inet omt_client {
+table inet filter {
     chain input {
-        type filter hook input priority -20; policy drop;
+        type filter hook input priority 0; policy drop;
+    }
+}
+table inet filter {
+    chain input {
         ct state established,related accept
         ct state invalid drop
         iifname "lo" accept
@@ -703,7 +758,7 @@ rm -f -- \
 IP_ADDR="$(hostname -i 2>/dev/null | awk '{print $1}')"
 echo
 echo "=== Installation Complete ==="
-echo "Platform: Alpine Linux 3.23 aarch64 on ${PI_MODEL}"
+echo "Platform: Alpine Linux ${SUPPORTED_ALPINE_SERIES} aarch64 on ${PI_MODEL}"
 echo "Install:  ${INSTALL_DIR}"
 echo "Web UI:   https://${IP_ADDR}:${WEB_PORT}$([[ "${STARTUP_DEFERRED}" == true ]] && echo ' (after reboot)')"
 echo "HDMI:     ${HDMI_VIDEO_MODE} (${BOARD_HDMI_CONNECTORS} output(s))"
@@ -717,7 +772,18 @@ echo "Status: sudo rc-service omt-client status"
 echo "Logs:   docker compose -f ${COMPOSE_FILE} logs -f"
 echo
 echo "A reboot is required to load the updated Pi kernel/firmware and KMS settings."
-read -r -p "Reboot now? (y/N): " REBOOT_CHOICE
+# `make deploy` and the egui deployer both run this over a non-interactive SSH
+# channel, where `read` sees EOF immediately and returns non-zero -- under
+# `set -e` that turned a fully successful install into a failed one.
+REBOOT_CHOICE=n
+if [[ -t 0 ]]; then
+    # `ssh -t` gives a tty even when no human is attached, so the read can still
+    # hit EOF. Defaulting on failure keeps that from aborting an install that
+    # has already fully succeeded.
+    read -r -p "Reboot now? (y/N): " REBOOT_CHOICE || REBOOT_CHOICE=n
+else
+    echo "Non-interactive install; reboot manually to finish: sudo reboot"
+fi
 if [[ "${REBOOT_CHOICE}" =~ ^[Yy] ]]; then
     /sbin/reboot
 fi

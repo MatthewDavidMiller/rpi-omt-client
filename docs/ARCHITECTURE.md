@@ -217,7 +217,7 @@ with `include_str!` rather than reading files beside it, so a
 relocated binary still states its terms. The container and deployer publishers generate
 CycloneDX inventories from `Cargo.lock` and the Python lock.
 
-The host is Alpine Linux 3.23 aarch64 in persistent sys mode on a Raspberry Pi
+The host is Alpine Linux 3.24 aarch64 in persistent sys mode on a Raspberry Pi
 5, Pi 4 Model B, Pi 3 Model A+/B/B+, or Zero 2 W. One `linux-rpi` kernel covers
 all four. The installer rejects other distributions, every other board, and
 RAM-backed diskless roots; `deploy/lib/board-profile.sh` and

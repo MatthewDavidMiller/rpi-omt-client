@@ -7,7 +7,7 @@ Flask Web GUI, and a portable native deployment GUI.
 
 The supported appliance hosts are the Raspberry Pi 5, Raspberry Pi 4 Model B,
 Raspberry Pi 3 Model A+/B/B+, and Raspberry Pi Zero 2 W, each running Alpine
-Linux 3.23 aarch64 in persistent `sys` mode. Diskless Alpine, Raspberry Pi OS,
+Linux 3.24 aarch64 in persistent `sys` mode. Diskless Alpine, Raspberry Pi OS,
 32-bit userspace, and every other board are not supported.
 
 The receiver supports discovered source names and explicit `omt://host:port`
@@ -37,17 +37,23 @@ full local toolchain, including persistent ARM64 emulation on Linux x86-64.
 
 ## Install
 
-Copy the nested files named in `deploy/manifest-v3.txt` to the Pi, then run:
-
-```bash
-sudo ./deploy/host/install.sh
-```
-
-Or deploy over SSH:
+A stock Alpine image has neither `bash` nor `sudo`, so it is bootstrapped once
+before the installer can run. Deploying over SSH does this automatically:
 
 ```bash
 make deploy HOST=admin@192.168.1.50
 ```
+
+To install on the Pi itself, copy the nested files named in
+`deploy/manifest-v3.txt` across, then run:
+
+```bash
+su -c '/bin/sh ./deploy/host/bootstrap.sh'   # once, on a stock image
+sudo ./deploy/host/install.sh
+```
+
+See [docs/SETUP.md](docs/SETUP.md) for headless first boot, which the Raspberry
+Pi Imager's presets do not cover for Alpine.
 
 The installer verifies the OS and board, installs Alpine's Pi kernel, firmware,
 DRM/ALSA tooling, Docker and OpenRC services, and applies appliance hardening

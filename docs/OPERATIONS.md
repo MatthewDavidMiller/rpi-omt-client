@@ -113,3 +113,32 @@ receiver.
   volume. Per-boot state (lock, PID record, published status) lives on a tmpfs
   at `/run/omt/state` and is gone after a restart; the log is kept on the volume
   precisely so it survives one.
+
+### Locked out after installing: no SSH and no web UI, but ping still replies
+
+A Pi that answers ICMP while refusing both `22` and the web port has a
+conflicting nftables ruleset. Netfilter runs **every** base chain registered on
+the `input` hook, and an `accept` only ends the chain it appears in — it does
+not stop a later chain from dropping the packet. So an appliance rule that
+accepts SSH in its own table is still discarded by any other table whose input
+chain ends in `policy drop`, such as the one Alpine's `nftables` package ships.
+
+Versions before this fix installed exactly that arrangement. Recovery needs the
+console or the SD card, because no network path survives:
+
+```bash
+# On the Pi's console, as root:
+nft flush ruleset                       # restores access immediately
+rm -f /etc/nftables.d/omt-client.nft    # stops it coming back at boot
+rc-update del nftables boot
+```
+
+With the card in another machine, delete `etc/nftables.d/omt-client.nft` from
+the root filesystem and remove the `nftables` symlink under
+`etc/runlevels/boot/`, then boot the Pi normally and re-deploy.
+
+The installer now appends its accepts to the host's own `inet filter input`
+chain instead of creating a second table, so they are evaluated in the same
+chain as the `policy drop` that would otherwise override them.
+`tests/unit/test_firewall_reachability.sh` proves this with real connections in
+a network namespace rather than by inspecting the ruleset text.

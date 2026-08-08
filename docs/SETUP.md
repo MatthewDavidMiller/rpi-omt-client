@@ -4,7 +4,7 @@
 
 - Raspberry Pi 5, Raspberry Pi 4 Model B, Raspberry Pi 3 Model A+/B/B+, or
   Raspberry Pi Zero 2 W;
-- Alpine Linux 3.23 aarch64;
+- Alpine Linux 3.24 aarch64;
 - persistent `sys` mode on SD, eMMC, or USB storage;
 - connected DRM/KMS HDMI and ALSA HDMI playback devices;
 - network reachability to OMT senders.
@@ -24,10 +24,41 @@ Zero 2 W, so add a `[pi02]` (or `[all]`) section mirroring the Pi 3 kernel and
 initramfs entries before first boot.
 
 Flash the official Alpine Raspberry Pi aarch64 image, complete `setup-alpine`,
-and install to disk in `sys` mode. Create a non-root administrator with `sudo`,
-keep OpenSSH reachable, enable the v3.23 `community` repository, and fully
-update the machine before deployment. Ethernet is strongly recommended for the
-first install. The installer applies its own current package update as well.
+and install to disk in `sys` mode. Create a non-root administrator in the
+`wheel` group and keep OpenSSH reachable. Ethernet is strongly recommended for
+the first install. The installer applies its own package update as well.
+
+### Headless first boot
+
+The Raspberry Pi Imager's headless presets do not apply to the Alpine image:
+they write Raspberry Pi OS `userconf`/`firstrun` files that Alpine never reads,
+so an Alpine card flashed that way still boots to a login prompt on the console
+with no network. To provision without a keyboard and monitor, use
+[macmpi/alpine-linux-headless-bootstrap](https://github.com/macmpi/alpine-linux-headless-bootstrap):
+drop its `headless.apkovl.tar.gz` onto the boot partition alongside a
+`wpa_supplicant.conf` for Wi-Fi, boot once, then SSH in and run `setup-alpine`.
+
+### Bootstrapping bash and sudo
+
+A stock Alpine image has **no `bash` and no `sudo`** — it ships busybox `ash`,
+and while the `wheel` group exists, nothing grants it escalation. Both the
+installer and the deploy transaction are bash scripts run through `sudo`, so
+they cannot run on an untouched image.
+
+`make deploy` and the deployer applications handle this automatically: they
+detect the gap and run `deploy/host/bootstrap.sh`, which enables the
+`community` repository, installs `bash` and `sudo`, and grants `wheel`
+escalation through both `sudoers` and `doas.conf`.
+
+Automatic bootstrap needs a way to become root. Deploy as `root@<ip>` for a
+hands-off first install, or run the bootstrap once by hand:
+
+```bash
+scp deploy/host/bootstrap.sh <admin>@<ip>:/tmp/
+ssh -t <admin>@<ip> "su -c '/bin/sh /tmp/bootstrap.sh'"
+```
+
+After that first run, `sudo` works and every later deploy is unattended.
 
 ## Rust deployment applications
 
@@ -60,7 +91,7 @@ still runs entirely in the pinned Linux containers.
 Run `.build/deployer-publish/bin/rpi-omt-deployer` (or the `.exe` produced on
 Windows) with Docker, a Pi key already trusted in `~/.ssh/known_hosts`,
 administrator SSH/sudo credentials, and this source tree. Connect validates
-Alpine 3.23 aarch64 and a supported device-tree model.
+Alpine 3.24 aarch64 and a supported device-tree model.
 Deploy builds, verifies, uploads, and installs the capsule. Manage reads
 container status/logs or restarts it. Wi-Fi updates the running
 `wpa_supplicant` through its control socket and stores a derived WPA PSK rather
@@ -126,6 +157,7 @@ Its nested-path boundary is:
 
 ```text
 deploy/compose.yml
+deploy/host/bootstrap.sh
 deploy/host/install.sh
 deploy/host/uninstall.sh
 deploy/host/host-diagnostics.sh
@@ -150,7 +182,7 @@ THIRD_PARTY_SOURCE.md
 
 ## Installer behavior
 
-Run `sudo ./deploy/host/install.sh`. Before mutation it verifies Alpine 3.23,
+Run `sudo ./deploy/host/install.sh`. Before mutation it verifies Alpine 3.24,
 aarch64, a supported board model, a persistent root filesystem, safe paths, and
 the complete capsule. It expects a clean Alpine installation.
 

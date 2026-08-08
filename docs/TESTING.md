@@ -118,10 +118,23 @@ the supported SoCs, so a guest cannot validate RP1, any board's device tree, vc4
 KMS/HDMI audio, device groups, or the supported board preflight. The previous
 Raspberry Pi OS VM was also the wrong host OS and has been removed.
 
-Before release, validate on a clean Alpine 3.23 aarch64 `sys` installation on
+"Clean Alpine" means genuinely untouched, and that is the state most likely to
+break a deployment: the image has no `bash`, no `sudo`, no `community`
+repository, no `/dev/dri`, and no `/dev/snd`. Validating against a host that was
+prepared by hand hides exactly the bugs this tier exists to catch, so reflash
+or reset the card rather than reusing a previously deployed one.
+
+Before release, validate on a clean Alpine 3.24 aarch64 `sys` installation on
 **each supported board** — Pi 5, Pi 4 Model B, Pi 3, and Zero 2 W. The boards
 differ in HDMI count, ALSA card layout, RAM, and decode throughput, so a pass on
 one is not evidence for another:
+
+0. deploy to an image on which nothing has been installed by hand, and confirm
+   `deploy/host/bootstrap.sh` installs bash and sudo before the installer runs.
+   Confirm the memory cgroup is live after the reboot (`grep memory
+   /proc/cgroups`): the Pi firmware injects `cgroup_disable=memory`, and
+   without the installer's `cgroup_enable=memory` the advertised container
+   memory cap is silently not enforced;
 
 1. deploy through both CLI and native app and confirm unsupported boards fail
    before upload. Include a near miss if one is available: a Pi 400 or Pi 500

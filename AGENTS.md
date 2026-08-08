@@ -10,7 +10,7 @@ Raspberry Pi OMT Client receives OMT video/audio streams on a Raspberry Pi 5 and
 - A Flask web UI for authentication and OMT source selection
 - Direct DRM/KMS video and ALSA audio playback inside the container
 
-Target platform: Raspberry Pi 5, Alpine Linux 3.23 aarch64 in persistent sys
+Target platform: Raspberry Pi 5, Alpine Linux 3.24 aarch64 in persistent sys
 mode. Raspberry Pi OS and Alpine diskless mode are unsupported. Local
 development usually happens on amd64.
 

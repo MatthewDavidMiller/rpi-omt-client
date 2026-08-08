@@ -23,8 +23,14 @@ forbid() {
 
 require 'uname -m.*aarch64' "installer must require aarch64"
 require 'ID:-.*alpine' "installer must require Alpine"
-require 'alpine-release.*3\.23' "installer must pin the validated Alpine branch"
+require 'alpine-release.*SUPPORTED_ALPINE_SERIES' "installer must pin the validated Alpine branch"
+require 'SUPPORTED_ALPINE_SERIES=3\.24' "the validated Alpine branch is 3.24"
 require 'host_board_profile "\$\{PI_MODEL\}"' "installer must gate on the shared board table"
+require 'docker info' "the installer must wait for dockerd to serve before using it"
+# `set -o pipefail` turns a writer's SIGPIPE into a script-killing 141 with no
+# message, which is how the firewall step died silently on a real Pi 4.
+forbid '\| *awk .*exit *\}' "a piped awk must drain its input, not exit on first match"
+forbid '\| *head -n' "head closes the pipe early; under pipefail that aborts the installer"
 require 'host_supported_boards' "an unsupported board must be told what is supported"
 require 'BOARD_HDMI_CONNECTORS.*==.*"1".*HDMI-A-2' \
     "a single-output board must refuse a forced HDMI-A-2 mode"
@@ -63,7 +69,12 @@ require 'rc-update add zram-init default' "zram must remain enabled across boots
 require 'no-new-privileges' "Docker daemon must default to no-new-privileges"
 require 'userland-proxy.*false' "Docker userland proxy must be disabled"
 require 'PermitRootLogin prohibit-password' "root password SSH must be disabled"
-require 'table inet omt_client' "nftables appliance policy must be installed"
+# The appliance's accepts must land in the host's own input chain. A private
+# table hooked at a lower priority is accepted there and then dropped by
+# Alpine's stock chain, which took SSH and the web UI down with it.
+require 'table inet filter' "nftables appliance policy must be installed"
+forbid 'table inet omt_client' \
+    "a private nftables table cannot override another table's drop policy"
 require 'policy drop' "firewall input must default deny"
 require 'tcp dport.*SSH_PORT.*WEB_PORT' "firewall must retain SSH and Web access"
 forbid 'usermod.*docker' "installer must not grant root-equivalent Docker group access"

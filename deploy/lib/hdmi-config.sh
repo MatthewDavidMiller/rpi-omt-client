@@ -121,3 +121,32 @@ host_hdmi_cmdline_line() {
     fi
     printf '%s\n' "${updated[*]}"
 }
+
+# Print the kernel command line with the memory cgroup forced on.
+#
+#   $1 current single-line cmdline
+#
+# The Raspberry Pi firmware injects `cgroup_disable=memory` into every boot,
+# which strips the memory controller out of /proc/cgroups entirely. Docker then
+# cannot honour the container memory cap this appliance advertises, and the
+# 256 MiB limit silently becomes no limit at all on a board where playback and
+# the web UI share the RAM. `cgroup_enable=memory` re-enables the controller;
+# the firmware token is dropped rather than left to argue with it, because the
+# kernel applies both in order and the result would depend on injection order.
+host_cmdline_memory_cgroup() {
+    local current="$1"
+    local token
+    local -a tokens=() updated=()
+    local enable_seen=false
+
+    read -r -a tokens <<< "${current}"
+    for token in "${tokens[@]}"; do
+        case "${token}" in
+            cgroup_disable=memory) continue ;;
+            cgroup_enable=memory) enable_seen=true ;;
+        esac
+        updated+=("${token}")
+    done
+    [[ "${enable_seen}" == true ]] || updated+=("cgroup_enable=memory")
+    printf '%s\n' "${updated[*]}"
+}
