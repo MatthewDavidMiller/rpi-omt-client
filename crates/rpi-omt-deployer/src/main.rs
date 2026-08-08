@@ -112,6 +112,228 @@ mod gates {
     }
 }
 
+/// How the window and its contents answer the display they land on.
+///
+/// Outside the `desktop` module for the same reason as `gates`: every rule here
+/// is only observable on a panel nobody can put in CI -- a 200%-scaled laptop,
+/// a 4K desktop, a window dragged to its minimum -- so the arithmetic is kept
+/// where it can be tested without one, and the view only calls it. The
+/// deployer's old fixed 960x640 window with a 720x480 floor did not fit a
+/// 1366x768 panel at 200% scaling at all, and nothing outside a display could
+/// have caught that.
+#[cfg_attr(not(feature = "desktop"), allow(dead_code))]
+mod layout {
+    /// The window asked for on a display large enough to grant it.
+    pub const DEFAULT_SIZE: [f32; 2] = [960.0, 640.0];
+
+    /// The smallest window the views still work in. Every view scrolls, the
+    /// navigation wraps, and labels stack above their fields at this size, so
+    /// the floor exists only to stop a window collapsing to nothing -- not to
+    /// reserve room for a layout. It has to stay small: a 1366x768 panel at
+    /// 200% scaling is 683x384 points in total.
+    pub const MIN_SIZE: [f32; 2] = [420.0, 320.0];
+
+    /// Share of the monitor an opening window may take. The remainder is for
+    /// the furniture no API reports here: task bars, docks, and the title bar
+    /// and border drawn outside the inner size this governs.
+    const FIT: [f32; 2] = [0.9, 0.85];
+
+    /// Widest a form column is allowed to become. Text fields that follow the
+    /// window put a host name in a 3000-point box on a 4K desktop.
+    pub const COLUMN_MAX: f32 = 640.0;
+
+    /// Narrowest column that still reads well with labels beside their fields.
+    pub const PAIRED_MIN: f32 = 520.0;
+
+    /// Label gutter in a paired row.
+    pub const LABEL_WIDTH: f32 = 132.0;
+
+    /// Zoom bounds. Tighter than egui's own 0.2 to 5.0, which reaches
+    /// illegible in both directions, and applied to the keyboard shortcuts as
+    /// well as the buttons so the two cannot disagree.
+    pub const ZOOM_MIN: f32 = 0.6;
+    pub const ZOOM_MAX: f32 = 3.0;
+    const ZOOM_STEP: f32 = 0.1;
+
+    /// The largest window that fits `monitor`, never larger than `desired`.
+    ///
+    /// Shrink-only by construction: a window already smaller than its share of
+    /// the monitor is returned untouched, so this cannot fight a display whose
+    /// size is unknown, misreported, or simply generous.
+    pub fn fit_to_monitor(desired: [f32; 2], monitor: Option<[f32; 2]>) -> [f32; 2] {
+        let Some([monitor_width, monitor_height]) = monitor else {
+            return desired;
+        };
+        let [width, height] = desired;
+        [
+            fit_axis(width, monitor_width, FIT[0], MIN_SIZE[0]),
+            fit_axis(height, monitor_height, FIT[1], MIN_SIZE[1]),
+        ]
+    }
+
+    /// One axis of `fit_to_monitor`. A monitor that reports nothing usable
+    /// leaves the request alone rather than guessing.
+    fn fit_axis(desired: f32, monitor: f32, fraction: f32, floor: f32) -> f32 {
+        if !desired.is_finite() {
+            return floor;
+        }
+        if monitor.is_finite() && monitor > 0.0 {
+            desired.min(floor.max(monitor * fraction))
+        } else {
+            desired
+        }
+    }
+
+    /// Width of the centred form column inside `available` points.
+    pub fn column_width(available: f32) -> f32 {
+        if available.is_finite() {
+            available.clamp(0.0, COLUMN_MAX)
+        } else {
+            COLUMN_MAX
+        }
+    }
+
+    /// Whether a column of this width puts labels beside their fields.
+    pub fn fields_paired(column: f32) -> bool {
+        column >= PAIRED_MIN
+    }
+
+    /// `current` moved `steps` notches, rounded to a whole percent-of-ten and
+    /// held inside the bounds. The one zoom rule: buttons and keyboard
+    /// shortcuts both go through it.
+    pub fn step_zoom(current: f32, steps: i8) -> f32 {
+        let base = if current.is_finite() { current } else { 1.0 };
+        let stepped = base + f32::from(steps) * ZOOM_STEP;
+        ((stepped * 10.0).round() / 10.0).clamp(ZOOM_MIN, ZOOM_MAX)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::{
+            COLUMN_MAX, DEFAULT_SIZE, LABEL_WIDTH, MIN_SIZE, PAIRED_MIN, ZOOM_MAX, ZOOM_MIN,
+            column_width, fields_paired, fit_to_monitor, step_zoom,
+        };
+
+        fn close(left: f32, right: f32) -> bool {
+            (left - right).abs() < 1e-6
+        }
+
+        fn same_size(left: [f32; 2], right: [f32; 2]) -> bool {
+            close(left[0], right[0]) && close(left[1], right[1])
+        }
+
+        /// The case the old 720x480 minimum could not express: a 1366x768
+        /// panel at 200% scaling is 683x384 points, and a window larger than
+        /// that puts its buttons off the screen with no way to shrink it.
+        #[test]
+        fn a_window_opens_inside_a_heavily_scaled_panel() {
+            let [width, height] = fit_to_monitor(DEFAULT_SIZE, Some([683.0, 384.0]));
+            assert!(width <= 683.0 && height <= 384.0);
+            assert!(width >= MIN_SIZE[0] && height >= MIN_SIZE[1]);
+        }
+
+        #[test]
+        fn fitting_only_ever_shrinks() {
+            for monitor in [
+                Some([3840.0, 2160.0]),
+                Some([1920.0, 1080.0]),
+                Some([683.0, 384.0]),
+                Some([320.0, 240.0]),
+                None,
+            ] {
+                let [width, height] = fit_to_monitor(DEFAULT_SIZE, monitor);
+                assert!(width <= DEFAULT_SIZE[0] && height <= DEFAULT_SIZE[1]);
+            }
+            // A desktop with room to spare gets the window as asked for.
+            assert!(same_size(
+                fit_to_monitor(DEFAULT_SIZE, Some([3840.0, 2160.0])),
+                DEFAULT_SIZE
+            ));
+        }
+
+        /// A monitor smaller than the floor still yields the floor, and a
+        /// window already below it is left alone rather than grown.
+        #[test]
+        fn the_floor_holds_without_growing_a_small_window() {
+            assert!(same_size(
+                fit_to_monitor(DEFAULT_SIZE, Some([300.0, 200.0])),
+                MIN_SIZE
+            ));
+            assert!(same_size(
+                fit_to_monitor([360.0, 300.0], Some([300.0, 200.0])),
+                [360.0, 300.0]
+            ));
+        }
+
+        #[test]
+        fn an_unreadable_monitor_size_changes_nothing() {
+            for monitor in [
+                None,
+                Some([0.0, 0.0]),
+                Some([f32::NAN, f32::NAN]),
+                Some([f32::INFINITY, f32::INFINITY]),
+                Some([-1920.0, -1080.0]),
+            ] {
+                assert!(same_size(
+                    fit_to_monitor(DEFAULT_SIZE, monitor),
+                    DEFAULT_SIZE
+                ));
+            }
+        }
+
+        #[test]
+        fn the_form_column_stops_growing_but_never_overflows() {
+            assert!(close(column_width(3840.0), COLUMN_MAX));
+            assert!(close(column_width(400.0), 400.0));
+            assert!(close(column_width(-10.0), 0.0));
+            assert!(close(column_width(f32::NAN), COLUMN_MAX));
+        }
+
+        /// The narrowest window and the paired layout have to agree: at
+        /// `MIN_SIZE` the labels stack, and a paired row leaves the field more
+        /// room than the label gutter it sits beside.
+        #[test]
+        fn labels_pair_only_where_there_is_room_for_both() {
+            assert!(fields_paired(COLUMN_MAX));
+            assert!(fields_paired(PAIRED_MIN));
+            assert!(!fields_paired(PAIRED_MIN - 1.0));
+            assert!(!fields_paired(column_width(MIN_SIZE[0])));
+            const { assert!(PAIRED_MIN - LABEL_WIDTH > LABEL_WIDTH) }
+        }
+
+        #[test]
+        fn zoom_steps_by_a_tenth_and_saturates_at_both_bounds() {
+            assert!(close(step_zoom(1.0, 1), 1.1));
+            assert!(close(step_zoom(1.0, -1), 0.9));
+            assert!(close(step_zoom(1.0, 5), 1.5));
+            let mut zoom = 1.0;
+            for _ in 0..100 {
+                zoom = step_zoom(zoom, -1);
+            }
+            assert!(close(zoom, ZOOM_MIN));
+            for _ in 0..100 {
+                zoom = step_zoom(zoom, 1);
+            }
+            assert!(close(zoom, ZOOM_MAX));
+        }
+
+        /// Repeated stepping has to land back on whole tenths, or the readout
+        /// drifts to "Zoom 110.000002%" over a session.
+        #[test]
+        fn zoom_returns_to_exactly_one() {
+            let mut zoom = 1.0;
+            for _ in 0..8 {
+                zoom = step_zoom(zoom, 1);
+            }
+            for _ in 0..8 {
+                zoom = step_zoom(zoom, -1);
+            }
+            assert!(close(zoom, 1.0));
+            assert!(close(step_zoom(f32::NAN, 1), 1.1));
+        }
+    }
+}
+
 /// The Activity view's backing log.
 ///
 /// Outside the `desktop` module for the same reason as `gates`: "how many lines
@@ -140,8 +362,18 @@ mod activity {
             self.lines.push(line);
         }
 
-        pub fn iter(&self) -> std::slice::Iter<'_, String> {
-            self.lines.iter()
+        /// Lines currently held, for the view's row count. Not `len`, which
+        /// would owe the type an `is_empty` no caller wants.
+        pub fn line_count(&self) -> usize {
+            self.lines.len()
+        }
+
+        /// The lines in `rows`, for a view that draws only what is on screen.
+        /// A range past the end yields nothing rather than panicking: the row
+        /// count the scroll area was given is a frame older than this call,
+        /// and a trim between the two must not take the window down.
+        pub fn rows(&self, rows: std::ops::Range<usize>) -> &[String] {
+            self.lines.get(rows).unwrap_or_default()
         }
     }
 
@@ -155,11 +387,14 @@ mod activity {
             for index in 0..LIMIT + 500 {
                 log.push(index.to_string());
             }
-            let lines: Vec<&String> = log.iter().collect();
+            let lines = log.rows(0..log.line_count());
             assert_eq!(lines.len(), LIMIT);
             // The oldest 500 were dropped; the newest is the last one pushed.
-            assert_eq!(lines[0], "500");
-            assert_eq!(lines[LIMIT - 1], &(LIMIT + 499).to_string());
+            assert_eq!(lines.first().map(String::as_str), Some("500"));
+            assert_eq!(
+                lines.last().map(String::as_str),
+                Some((LIMIT + 499).to_string().as_str())
+            );
         }
 
         #[test]
@@ -167,8 +402,25 @@ mod activity {
             let mut log = Log::default();
             log.push("first".into());
             log.push("second".into());
-            assert_eq!(log.iter().count(), 2);
-            assert_eq!(log.iter().next().map(String::as_str), Some("first"));
+            assert_eq!(log.line_count(), 2);
+            assert_eq!(log.rows(0..2).first().map(String::as_str), Some("first"));
+        }
+
+        /// The view draws only the rows on screen, so it asks for a window of
+        /// them by index. A stale range must not be a panic: the count it was
+        /// given came from the previous frame.
+        #[test]
+        fn a_window_of_rows_survives_a_stale_range() {
+            let mut log = Log::default();
+            for index in 0..5 {
+                log.push(index.to_string());
+            }
+            assert_eq!(log.line_count(), 5);
+            assert_eq!(log.rows(1..3), ["1".to_owned(), "2".to_owned()]);
+            assert_eq!(log.rows(0..5).len(), 5);
+            assert!(log.rows(3..9).is_empty());
+            assert!(log.rows(9..9).is_empty());
+            assert!(Log::default().rows(0..1).is_empty());
         }
     }
 }
@@ -177,6 +429,7 @@ mod activity {
 mod desktop {
     use crate::activity::Log;
     use crate::gates::Form;
+    use crate::layout;
     use eframe::egui;
     use omt_deployer_core::{
         AuthMethod, Connection, DeployOptions, ManagementAction, Secret, WifiSettings, apply_wifi,
@@ -233,6 +486,16 @@ mod desktop {
         cancel: Arc<AtomicBool>,
         running: bool,
         events: Option<Receiver<WorkerEvent>>,
+        fit: Fit,
+    }
+
+    /// Whether the opening window has been fitted to the display it landed on.
+    /// Settled on the first frame that names a monitor, because that is the
+    /// first moment the display behind the window is known.
+    #[derive(PartialEq, Eq)]
+    enum Fit {
+        Pending,
+        Settled,
     }
 
     impl Default for App {
@@ -262,6 +525,7 @@ mod desktop {
                 cancel: Arc::new(AtomicBool::new(false)),
                 running: false,
                 events: None,
+                fit: Fit::Pending,
             }
         }
     }
@@ -361,6 +625,165 @@ mod desktop {
                 context.request_repaint_after(std::time::Duration::from_millis(100));
             }
         }
+
+        /// Bring the opening window inside the display it landed on.
+        ///
+        /// eframe clamps the requested size against the *largest* monitor and
+        /// with no margin, which is the wrong monitor on a mixed-DPI desk and
+        /// the wrong size under a task bar. The first frame is the first point
+        /// at which the window's own monitor is known, so the fit happens
+        /// here, once, and only ever shrinks.
+        fn fit_window(&mut self, context: &egui::Context) {
+            if self.fit == Fit::Settled {
+                return;
+            }
+            // Already in egui points: egui-winit divides the monitor's
+            // physical size by the window's pixels-per-point. A backend that
+            // does not name a monitor yet leaves the fit pending rather than
+            // spending it on a guess.
+            let Some(monitor) = context.input(|input| input.viewport().monitor_size) else {
+                return;
+            };
+            self.fit = Fit::Settled;
+            let current = context.screen_rect().size();
+            let fitted =
+                layout::fit_to_monitor([current.x, current.y], Some([monitor.x, monitor.y]));
+            // A point of slack: resizing to what the window already is costs a
+            // needless round trip to the compositor on every launch.
+            if fitted[0] < current.x - 1.0 || fitted[1] < current.y - 1.0 {
+                context.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
+                    fitted[0], fitted[1],
+                )));
+            }
+        }
+
+        /// Apply the zoom shortcuts through the same rule the buttons use.
+        ///
+        /// egui would handle these itself, but with its own 0.2-to-5.0 clamp,
+        /// which is how the keyboard would come to reach a zoom the buttons
+        /// refuse -- the mistake `gates` exists to prevent for the Wi-Fi
+        /// button. So its handler is turned off and the shortcuts are consumed
+        /// here.
+        fn zoom_input(context: &egui::Context) {
+            use egui::gui_zoom::kb_shortcuts;
+            context.options_mut(|options| options.zoom_with_keyboard = false);
+            let (reset, steps) = context.input_mut(|input| {
+                let reset = input.consume_shortcut(&kb_shortcuts::ZOOM_RESET);
+                let mut steps: i8 = 0;
+                if input.consume_shortcut(&kb_shortcuts::ZOOM_IN)
+                    || input.consume_shortcut(&kb_shortcuts::ZOOM_IN_SECONDARY)
+                {
+                    steps += 1;
+                }
+                if input.consume_shortcut(&kb_shortcuts::ZOOM_OUT) {
+                    steps -= 1;
+                }
+                (reset, steps)
+            });
+            if reset {
+                context.set_zoom_factor(1.0);
+            } else if steps != 0 {
+                context.set_zoom_factor(layout::step_zoom(context.zoom_factor(), steps));
+            }
+        }
+
+        /// The bar that reports what the deployer made of the display, and
+        /// lets the operator overrule it.
+        fn status_bar(&self, ui: &mut egui::Ui) {
+            let context = ui.ctx().clone();
+            let zoom = context.zoom_factor();
+            let scale = context
+                .input(|input| input.viewport().native_pixels_per_point)
+                .unwrap_or(1.0);
+            ui.horizontal_wrapped(|ui| {
+                ui.label(format!("Display scale {:.0}%", scale * 100.0));
+                ui.separator();
+                ui.label(format!("Zoom {:.0}%", zoom * 100.0));
+                if ui
+                    .add_enabled(zoom > layout::ZOOM_MIN, egui::Button::new("-"))
+                    .on_hover_text(format!(
+                        "Zoom out ({})",
+                        context.format_shortcut(&egui::gui_zoom::kb_shortcuts::ZOOM_OUT)
+                    ))
+                    .clicked()
+                {
+                    context.set_zoom_factor(layout::step_zoom(zoom, -1));
+                }
+                if ui
+                    .add_enabled(zoom < layout::ZOOM_MAX, egui::Button::new("+"))
+                    .on_hover_text(format!(
+                        "Zoom in ({})",
+                        context.format_shortcut(&egui::gui_zoom::kb_shortcuts::ZOOM_IN)
+                    ))
+                    .clicked()
+                {
+                    context.set_zoom_factor(layout::step_zoom(zoom, 1));
+                }
+                if ui
+                    .add_enabled(
+                        (zoom - 1.0).abs() > f32::EPSILON,
+                        egui::Button::new("Reset"),
+                    )
+                    .on_hover_text(format!(
+                        "Reset zoom ({})",
+                        context.format_shortcut(&egui::gui_zoom::kb_shortcuts::ZOOM_RESET)
+                    ))
+                    .clicked()
+                {
+                    context.set_zoom_factor(1.0);
+                }
+                ui.separator();
+                ui.label(if self.running { "Busy" } else { "Idle" });
+            });
+        }
+    }
+
+    /// Run `body` in a scrolling, centred column of readable width.
+    ///
+    /// Every view goes through this: the scroll is what keeps a button
+    /// reachable when the window is at its minimum, and the width cap is what
+    /// stops a host-name field spanning a 4K desktop.
+    fn column(ui: &mut egui::Ui, body: impl FnOnce(&mut egui::Ui)) {
+        egui::ScrollArea::vertical()
+            .auto_shrink([false; 2])
+            .show(ui, |ui| {
+                let width = layout::column_width(ui.available_width());
+                let inset = (ui.available_width() - width) / 2.0;
+                ui.horizontal(|ui| {
+                    ui.add_space(inset);
+                    ui.vertical(|ui| {
+                        ui.set_max_width(width);
+                        body(ui);
+                    });
+                });
+            });
+    }
+
+    /// One labelled field: beside its label where the column is wide enough
+    /// for both, stacked above it where it is not.
+    fn field(ui: &mut egui::Ui, label: &str, body: impl FnOnce(&mut egui::Ui)) {
+        if layout::fields_paired(ui.max_rect().width()) {
+            ui.horizontal(|ui| {
+                ui.add_sized(
+                    [layout::LABEL_WIDTH, ui.spacing().interact_size.y],
+                    egui::Label::new(label).halign(egui::Align::LEFT),
+                );
+                body(ui);
+            });
+        } else {
+            ui.label(label);
+            body(ui);
+        }
+        ui.add_space(ui.spacing().item_spacing.y);
+    }
+
+    /// A text field that fills the column rather than the window.
+    fn text_field(ui: &mut egui::Ui, text: &mut String, secret: bool) {
+        ui.add(
+            egui::TextEdit::singleline(text)
+                .password(secret)
+                .desired_width(f32::INFINITY),
+        );
     }
 
     /// One queued operation, handed to the worker thread.
@@ -424,6 +847,8 @@ mod desktop {
     impl eframe::App for App {
         fn update(&mut self, context: &egui::Context, _frame: &mut eframe::Frame) {
             self.poll_worker(context);
+            self.fit_window(context);
+            Self::zoom_input(context);
             egui::TopBottomPanel::top("navigation").show(context, |ui| {
                 ui.horizontal_wrapped(|ui| {
                     for (name, view) in [
@@ -440,16 +865,19 @@ mod desktop {
                     }
                 });
             });
+            egui::TopBottomPanel::bottom("status").show(context, |ui| self.status_bar(ui));
             egui::CentralPanel::default().show(context, |ui| match self.view {
-                View::Connection => {
+                View::Connection => column(ui, |ui| {
                     ui.heading("Connection");
-                    ui.label("Pi host");
-                    ui.text_edit_singleline(&mut self.host);
-                    ui.label("SSH username");
-                    ui.text_edit_singleline(&mut self.user);
-                    ui.label("SSH password");
-                    ui.add(egui::TextEdit::singleline(&mut *self.password).password(!self.reveal));
+                    field(ui, "Pi host", |ui| text_field(ui, &mut self.host, false));
+                    field(ui, "SSH username", |ui| {
+                        text_field(ui, &mut self.user, false);
+                    });
+                    field(ui, "SSH password", |ui| {
+                        text_field(ui, &mut self.password, !self.reveal);
+                    });
                     ui.checkbox(&mut self.reveal, "Reveal secrets");
+                    ui.add_space(ui.spacing().item_spacing.y);
                     let enabled = self.form().can_connect() && !self.running;
                     if ui
                         .add_enabled(enabled, egui::Button::new("Test connection"))
@@ -457,16 +885,19 @@ mod desktop {
                     {
                         self.start_job(Job::Test);
                     }
-                }
-                View::Deploy => {
+                }),
+                View::Deploy => column(ui, |ui| {
                     ui.heading("Deploy");
                     ui.label(
                         "Build, verify, upload, recover, and promote the manifest-v3 capsule.",
                     );
-                    ui.label("Project root");
-                    ui.text_edit_singleline(&mut self.project_root);
-                    ui.label("Remote directory");
-                    ui.text_edit_singleline(&mut self.remote_directory);
+                    ui.add_space(ui.spacing().item_spacing.y);
+                    field(ui, "Project root", |ui| {
+                        text_field(ui, &mut self.project_root, false);
+                    });
+                    field(ui, "Remote directory", |ui| {
+                        text_field(ui, &mut self.remote_directory, false);
+                    });
                     let enabled = self.form().can_deploy() && !self.running;
                     if ui
                         .add_enabled(enabled, egui::Button::new("Deploy"))
@@ -474,10 +905,11 @@ mod desktop {
                     {
                         self.start_job(Job::Deploy);
                     }
-                }
-                View::Manage => {
+                }),
+                View::Manage => column(ui, |ui| {
                     ui.heading("Manage");
-                    ui.horizontal(|ui| {
+                    // Wrapped, so three buttons do not run off a narrow window.
+                    ui.horizontal_wrapped(|ui| {
                         for (label, action) in [
                             ("Status", ManagementAction::Status),
                             ("Logs", ManagementAction::Logs),
@@ -491,16 +923,15 @@ mod desktop {
                             }
                         }
                     });
-                }
-                View::Wifi => {
+                }),
+                View::Wifi => column(ui, |ui| {
                     ui.heading("Wi-Fi");
-                    ui.label("SSID");
-                    ui.text_edit_singleline(&mut self.wifi_ssid);
-                    ui.label("Passphrase");
-                    ui.add(
-                        egui::TextEdit::singleline(&mut *self.wifi_password).password(!self.reveal),
-                    );
+                    field(ui, "SSID", |ui| text_field(ui, &mut self.wifi_ssid, false));
+                    field(ui, "Passphrase", |ui| {
+                        text_field(ui, &mut self.wifi_password, !self.reveal);
+                    });
                     ui.checkbox(&mut self.wifi_connect, "Connect after saving");
+                    ui.add_space(ui.spacing().item_spacing.y);
                     let enabled = self.form().can_apply_wifi() && !self.running;
                     if ui
                         .add_enabled(enabled, egui::Button::new("Apply Wi-Fi"))
@@ -508,30 +939,54 @@ mod desktop {
                     {
                         self.start_job(Job::Wifi);
                     }
-                }
+                }),
                 View::Activity => {
-                    ui.heading("Activity");
-                    if self.running && ui.button("Cancel").clicked() {
-                        self.cancel.store(true, Ordering::Relaxed);
-                        self.activity.push("Cancellation requested...".into());
-                    }
-                    egui::ScrollArea::vertical().show(ui, |ui| {
-                        for line in self.activity.iter() {
-                            ui.label(line);
+                    // Full width, and with Cancel above the log rather than in
+                    // it: a control that scrolls away with the output is one
+                    // an operator cannot reach when it matters.
+                    ui.horizontal_wrapped(|ui| {
+                        ui.heading("Activity");
+                        if self.running && ui.button("Cancel").clicked() {
+                            self.cancel.store(true, Ordering::Relaxed);
+                            self.activity.push("Cancellation requested...".into());
                         }
                     });
+                    ui.separator();
+                    // Only the rows on screen are laid out. The log holds up
+                    // to `activity::LIMIT` lines, and laying out all of them
+                    // every frame is felt first on the large, high-density
+                    // displays this view is most likely to be read on.
+                    let row_height = ui.text_style_height(&egui::TextStyle::Monospace);
+                    let rows = self.activity.line_count();
+                    egui::ScrollArea::both()
+                        .auto_shrink([false; 2])
+                        .stick_to_bottom(true)
+                        .show_rows(ui, row_height, rows, |ui, range| {
+                            for line in self.activity.rows(range) {
+                                // Uniform row height is what lets the scroll
+                                // area skip the rows it is not drawing, so
+                                // long lines extend and scroll sideways rather
+                                // than wrapping to two.
+                                ui.add(
+                                    egui::Label::new(egui::RichText::new(line).monospace())
+                                        .wrap_mode(egui::TextWrapMode::Extend),
+                                );
+                            }
+                        });
                 }
                 View::About => {
                     ui.heading("Raspberry Pi OMT Deployer");
                     ui.label(VERSION);
-                    egui::ScrollArea::vertical().show(ui, |ui| {
-                        ui.collapsing("License", |ui| {
-                            ui.monospace(LICENSE);
+                    egui::ScrollArea::vertical()
+                        .auto_shrink([false; 2])
+                        .show(ui, |ui| {
+                            ui.collapsing("License", |ui| {
+                                ui.monospace(LICENSE);
+                            });
+                            ui.collapsing("Third-party notices", |ui| {
+                                ui.monospace(NOTICES);
+                            });
                         });
-                        ui.collapsing("Third-party notices", |ui| {
-                            ui.monospace(NOTICES);
-                        });
-                    });
                 }
             });
         }
@@ -540,8 +995,14 @@ mod desktop {
     pub fn run() -> eframe::Result<()> {
         let options = eframe::NativeOptions {
             viewport: egui::ViewportBuilder::default()
-                .with_inner_size([960.0, 640.0])
-                .with_min_inner_size([720.0, 480.0]),
+                .with_inner_size(layout::DEFAULT_SIZE)
+                .with_min_inner_size(layout::MIN_SIZE)
+                // egui's own default for this is platform-dependent, so it is
+                // stated rather than inherited: a window larger than the
+                // monitor is unusable everywhere and crashes some Linux
+                // compositors. `App::fit_window` then refines the result
+                // against the monitor the window actually opened on.
+                .with_clamp_size_to_monitor_size(true),
             centered: true,
             ..eframe::NativeOptions::default()
         };

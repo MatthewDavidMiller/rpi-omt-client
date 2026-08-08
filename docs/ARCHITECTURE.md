@@ -169,6 +169,23 @@ through, not only the ones it is stored in: the sudo stdin a deployment holds
 for its whole run, the Wi-Fi passphrase handed to the worker thread, and the
 raw `--secrets-stdin` document are all wiped rather than freed intact.
 
+How the deployer's window answers a display is a set of rules, not a set of
+widgets, so they live outside its view alongside the button-gating rules:
+window fit against the monitor, the readable column width, when labels pair
+with their fields, and the zoom bounds. Each is only observable on hardware --
+a 200%-scaled laptop, a 4K desktop, a window dragged to its minimum -- so
+keeping the arithmetic out of egui is what lets `cargo test` cover it without
+one. The zoom bounds are applied to the keyboard shortcuts as well as the
+buttons, which is why egui's own handler is turned off: two clamps for one
+control is the mistake the gating rules exist to prevent.
+
+Windows sets per-monitor DPI awareness v2 from winit at process start, so the
+cross-built `.exe` needs no side-by-side manifest and
+`scripts/verify-windows-deployer.sh` gains no assertion for it -- that gate
+reads PE headers and can never observe DPI behaviour. The Linux publisher
+cannot run a Windows or macOS window, so behaviour on those platforms is
+reasoned from the pinned upstream sources rather than observed.
+
 ## Trust and legal surfaces
 
 `LICENSE` governs project-owned code. `THIRD_PARTY_NOTICES.txt` covers shipped

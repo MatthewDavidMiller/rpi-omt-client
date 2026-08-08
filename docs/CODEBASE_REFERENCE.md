@@ -120,7 +120,7 @@ are POST and CSRF protected.
 | Deployer validation, fixed actions, SSH/SFTP, deploy, and Wi-Fi | `crates/omt-deployer-core/src/lib.rs`, `crates/omt-deployer-core/src/ssh.rs`, `crates/omt-deployer-core/src/ops.rs` |
 | Secure command-line deployer | `crates/rpi-omt-deploy/src/main.rs` |
 | Deployer CLI contract | `tests/native/test_deployer_cli.sh` |
-| egui desktop deployer, its button-gating rules, and embedded legal texts | `crates/rpi-omt-deployer/` |
+| egui desktop deployer, its button-gating and display-scaling rules, and embedded legal texts | `crates/rpi-omt-deployer/` |
 | Hash-locked Rust dependencies and supply-chain gates | `Cargo.lock`, `deny.toml`, `supply-chain/`, `scripts/check-supply-chain.sh` |
 | Windows cross build | `scripts/build-windows-deployer.sh` |
 | Local toolchain provisioning | `scripts/install-dev-deps.sh`, `scripts/install-hadolint.sh`, `scripts/install-trivy.sh`, `scripts/install-arm64-emulation.sh` |

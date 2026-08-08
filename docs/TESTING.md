@@ -71,7 +71,12 @@ quoting, SHA-256, secure tokens, Wi-Fi PSK vectors, bounded processes, and
 manifest-v3 path safety. The egui application is built with its `desktop`
 feature for the test run as well as the publish build, so the view is compiled
 and linted rather than skipped, and the rules that enable its buttons are
-tested against the same core validators the buttons' actions use.
+tested against the same core validators the buttons' actions use. The same run
+covers the rules that answer the display: that a window never opens larger than
+the monitor it landed on and never grows to reach a floor, that an unreadable
+monitor size changes nothing, that the form column stops widening, that labels
+stack at the narrowest window, and that zoom steps by a tenth, saturates at its
+bounds, and returns to exactly 100%. None of that needs a display attached.
 
 `tests/native/test_deployer_cli.sh` then runs the built CLI: capsule
 validation, the exit-2 usage contract for missing arguments and rejected

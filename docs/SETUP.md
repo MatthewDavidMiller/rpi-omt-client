@@ -64,10 +64,39 @@ running it.
 The application does not otherwise rely on the working directory it happens to
 inherit from a shell or a desktop shortcut. Project root is preselected by
 searching upward from the working directory and then from the executable for
-the tree holding `deploy/manifest-v3.txt`. Fonts, spacing, and the initial
-window follow the display's content scale, so the window opens at the same
-apparent size on a scaled 4K desktop as on a 1366x768 panel and rescales when
-dragged to a display with a different scale.
+the tree holding `deploy/manifest-v3.txt`.
+
+### Display scaling and window size
+
+Fonts, spacing, and the initial window follow the display's content scale, so
+the window opens at the same apparent size on a scaled 4K desktop as on a
+1366x768 panel and rescales when dragged to a display with a different scale.
+The opening window is then fitted to the monitor it actually landed on, taking
+at most 90% of its width and 85% of its height, so a heavily scaled panel --
+1366x768 at 200% scaling leaves only 683x384 points in total -- never gets a
+window larger than itself.
+
+The window can be dragged down to 420x320 points. Every view scrolls rather
+than clipping, the navigation and the Manage buttons wrap, and labels move from
+beside their fields to above them, so no control becomes unreachable at that
+size. Forms stop widening at a readable column and stay centred, so a host name
+does not get a field the width of a 4K desktop.
+
+The status bar reports the display scale the deployer detected and the current
+zoom. Zoom runs from 60% to 300% in steps of 10, through the `-`, `+`, and
+`Reset` buttons or `Ctrl` with `+`, `-`, and `0` (`Cmd` on macOS); the buttons
+and the shortcuts share one rule, so they cannot disagree. Zoom applies for the
+session and is not written to disk.
+
+If an X11 session reports the wrong scale -- the status bar shows a display
+scale that does not match the desktop's setting -- set `Xft.dpi` in the X
+resources, or override it directly:
+
+```bash
+WINIT_X11_SCALE_FACTOR=2 .build/deployer-publish/bin/rpi-omt-deployer
+```
+
+Wayland and Windows report their scale per monitor and need no override.
 
 ## CLI deployment
 
