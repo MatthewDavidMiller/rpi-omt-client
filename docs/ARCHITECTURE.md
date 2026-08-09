@@ -121,10 +121,13 @@ before release.
 ## Container and host boundary
 
 The Alpine 3.23.5 runtime is read-only, drops all Linux capabilities, runs as
-the `omt` user, and receives only DRM/ALSA devices, the OMT config volume, a
+the `omt` user, retains Docker's default sensitive `/proc` and `/sys` path
+confinement, and receives only DRM/ALSA devices, the OMT config volume, a
 filtered Avahi D-Bus socket, diagnostics state, and the host-action directory.
 The container cannot invoke OpenRC or write the directory containing host
-action files.
+action files. A minimal injected init reaps failed receiver descendants; PID,
+memory, swap, shared-memory, file-descriptor, core-dump, and temporary-filesystem
+limits bound the remaining process and storage surfaces.
 
 The appliance OpenRC service waits for Docker's API with a bounded timeout
 before invoking Compose. Alpine's supervised Docker service can report itself

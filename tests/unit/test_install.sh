@@ -60,6 +60,11 @@ forbid 'OMT_ALLOW_EMULATED_PI' "production board validation must not have an env
 
 require '90-omt-client-hardening\.conf' "sysctl and SSH hardening must be managed"
 require 'kernel\.unprivileged_bpf_disabled=1' "unprivileged BPF must be disabled"
+require 'kernel\.perf_event_paranoid=3' "unprivileged performance events must be disabled"
+require 'kernel\.sysrq=0' "the kernel SysRq interface must be disabled"
+require 'fs\.suid_dumpable=0' "privileged processes must not produce core dumps"
+require 'net\.ipv4\.tcp_syncookies=1' "TCP SYN cookies must be enabled"
+require 'net\.ipv6\.conf\.all\.accept_source_route=0' "IPv6 source routing must be disabled"
 require 'vm\.page-cluster=0' "zram swap-in must avoid unnecessary read-ahead"
 require 'vm\.swappiness=100' "compressed swap must be preferred over reclaim pressure"
 require 'ZRAM_MIB=\$\(\(MEMTOTAL_KIB / 4096\)\)' "zram must scale to one quarter of installed RAM"
@@ -68,7 +73,13 @@ require 'ZRAM_MIB <= 512' "zram must retain its bounded maximum"
 require 'rc-update add zram-init default' "zram must remain enabled across boots"
 require 'no-new-privileges' "Docker daemon must default to no-new-privileges"
 require 'userland-proxy.*false' "Docker userland proxy must be disabled"
+require 'dockerd --validate --config-file' "merged Docker configuration must be validated before publication"
 require 'PermitRootLogin prohibit-password' "root password SSH must be disabled"
+require 'DisableForwarding yes' "all unused SSH forwarding channels must be disabled"
+require 'PermitUserRC no' "user-controlled SSH startup commands must be disabled"
+require 'MaxSessions 4' "SSH session fan-out must be bounded"
+require 'MaxStartups 3:30:10' "unauthenticated SSH connections must be bounded"
+require 'chmod 0600 "\$\{COMPOSE_ENV_TMP\}"' "the root-owned Compose environment must not be world-readable"
 # The appliance's accepts must land in the host's own input chain. A private
 # table hooked at a lower priority is accepted there and then dropped by
 # Alpine's stock chain, which took SSH and the web UI down with it.
@@ -92,8 +103,11 @@ forbid 'systemctl' "Alpine host integration must not call systemd"
 forbid 'apt-get' "Alpine host integration must not call apt"
 
 require 'usercfg\.txt' "Alpine boot customization must use usercfg.txt"
+forbid 'touch "\$\{USERCFG_FILE\}"' "installer must not follow a usercfg symlink before validating it"
 require 'host_hdmi_config_txt "\$\{BOARD_ID\}"' "KMS configuration must be board-aware"
 require 'host_hdmi_cmdline_line' "forced connector mode must use tested rules"
+require 'active regular boot cmdline file is required to enable the memory cgroup' \
+    "the installer must not succeed when it cannot enable the enforced memory limit"
 require 'host_validate_video_ceiling' "the decode ceiling must use tested rules"
 require 'OMT_VIDEO_CEILING=%s' "the effective decode ceiling must reach the container"
 require 'MAX_VIDEO=\$\{MAX_VIDEO\}' "the operator's ceiling choice must be retained"

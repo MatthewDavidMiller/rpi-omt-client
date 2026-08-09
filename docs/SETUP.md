@@ -236,9 +236,9 @@ The installer then:
 1. updates Alpine and installs `linux-rpi`, Raspberry Pi boot firmware,
    Broadcom firmware, ALSA/DRM tools, Docker/Compose, Avahi/D-Bus, nftables,
    inotify, `wpa_supplicant`, and zram support;
-2. applies kernel/network sysctls, SSH safeguards, bounded Docker logs, daemon
-   no-new-privileges, zram swap, a 256 MiB container cap, a 64-PID cap, and
-   bounded tmpfs mounts;
+2. applies kernel/network sysctls, SSH forwarding/session safeguards, bounded
+   Docker logs, daemon no-new-privileges, zram swap, a 256 MiB container cap,
+   a 64-PID cap, and bounded file descriptors, shared memory, and tmpfs mounts;
 3. installs a default-deny nftables input policy allowing established traffic,
    loopback, ICMP/IPv6 neighbor discovery, DHCP, mDNS, SSH, and the Web port;
 4. loads the ARM64 image, prepares the persistent volume and least-privilege

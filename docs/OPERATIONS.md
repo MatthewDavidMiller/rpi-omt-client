@@ -86,9 +86,10 @@ Host security and low-memory state:
 
 ```bash
 sudo rc-status --all
-sudo nft list table inet omt_client
+sudo nft list table inet filter
 zramctl
 docker inspect --format '{{.HostConfig.Memory}} {{.HostConfig.PidsLimit}}' omt-client
+docker inspect --format '{{json .HostConfig.MaskedPaths}} {{json .HostConfig.ReadonlyPaths}}' omt-client
 ```
 
 Inside the container, `control-omt.sh status|start|stop|restart` manages the

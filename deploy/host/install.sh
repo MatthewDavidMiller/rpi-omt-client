@@ -357,17 +357,31 @@ fs.protected_fifos=2
 fs.protected_hardlinks=1
 fs.protected_regular=2
 fs.protected_symlinks=1
+fs.suid_dumpable=0
 kernel.dmesg_restrict=1
 kernel.kptr_restrict=2
+kernel.perf_event_paranoid=3
+kernel.randomize_va_space=2
+kernel.sysrq=0
 kernel.unprivileged_bpf_disabled=1
 net.ipv4.conf.all.accept_redirects=0
 net.ipv4.conf.all.accept_source_route=0
+net.ipv4.conf.all.log_martians=1
+net.ipv4.conf.all.secure_redirects=0
 net.ipv4.conf.all.send_redirects=0
 net.ipv4.conf.default.accept_redirects=0
 net.ipv4.conf.default.accept_source_route=0
+net.ipv4.conf.default.log_martians=1
+net.ipv4.conf.default.secure_redirects=0
 net.ipv4.conf.default.send_redirects=0
+net.ipv4.icmp_echo_ignore_broadcasts=1
+net.ipv4.icmp_ignore_bogus_error_responses=1
+net.ipv4.tcp_rfc1337=1
+net.ipv4.tcp_syncookies=1
 net.ipv6.conf.all.accept_redirects=0
+net.ipv6.conf.all.accept_source_route=0
 net.ipv6.conf.default.accept_redirects=0
+net.ipv6.conf.default.accept_source_route=0
 vm.page-cluster=0
 vm.swappiness=100
 EOF
@@ -407,17 +421,34 @@ else
 fi
 chmod 0600 "${DOCKER_CONFIG_TMP}"
 chown root:root "${DOCKER_CONFIG_TMP}"
+# A syntactically valid JSON object may still contain a daemon option Docker
+# does not understand. Validate the complete merge before replacing the live
+# configuration, otherwise the following restart can take the appliance and
+# its recovery path down while leaving the invalid file active for next boot.
+dockerd --validate --config-file "${DOCKER_CONFIG_TMP}" >/dev/null
 mv -fT "${DOCKER_CONFIG_TMP}" /etc/docker/daemon.json
 
 host_publish_file /etc/ssh/sshd_config.d/90-omt-client-hardening.conf 0644 root root <<'EOF'
 # Preserve key-based emergency access while removing risky SSH features.
 PermitRootLogin prohibit-password
+PasswordAuthentication yes
+PubkeyAuthentication yes
 KbdInteractiveAuthentication no
 X11Forwarding no
 AllowAgentForwarding no
 AllowTcpForwarding no
+AllowStreamLocalForwarding no
+DisableForwarding yes
+GatewayPorts no
+HostbasedAuthentication no
+IgnoreRhosts yes
+PermitEmptyPasswords no
 PermitTunnel no
+PermitUserEnvironment no
+PermitUserRC no
 MaxAuthTries 3
+MaxSessions 4
+MaxStartups 3:30:10
 LoginGraceTime 30
 ClientAliveInterval 300
 ClientAliveCountMax 2
@@ -560,7 +591,7 @@ COMPOSE_ENV_TMP="$(mktemp "${COMPOSE_ENV_FILE}.tmp.XXXXXX")"
     printf 'OMT_VIDEO_CEILING=%s\n' "${OMT_VIDEO_CEILING}"
     printf 'OMT_CONTAINER_MEMORY_LIMIT=256m\n'
 } > "${COMPOSE_ENV_TMP}"
-chmod 0644 "${COMPOSE_ENV_TMP}"
+chmod 0600 "${COMPOSE_ENV_TMP}"
 mv -fT "${COMPOSE_ENV_TMP}" "${COMPOSE_ENV_FILE}"
 
 echo "Installing fixed-purpose OpenRC services..."
@@ -641,15 +672,21 @@ done
     exit 1
 }
 USERCFG_FILE="${BOOT_ROOT}/usercfg.txt"
-touch "${USERCFG_FILE}"
-[[ -f "${USERCFG_FILE}" && ! -L "${USERCFG_FILE}" && -w "${USERCFG_FILE}" ]] || {
-    echo "ERROR: Alpine usercfg.txt must be a writable regular file." >&2
-    exit 1
-}
 HDMI_TMP="$(mktemp "${USERCFG_FILE}.omt-client.XXXXXX")"
-host_hdmi_config_txt "${BOARD_ID}" < "${USERCFG_FILE}" > "${HDMI_TMP}"
-chmod --reference="${USERCFG_FILE}" "${HDMI_TMP}"
-chown --reference="${USERCFG_FILE}" "${HDMI_TMP}"
+if [[ -e "${USERCFG_FILE}" || -L "${USERCFG_FILE}" ]]; then
+    [[ -f "${USERCFG_FILE}" && ! -L "${USERCFG_FILE}" && -r "${USERCFG_FILE}" ]] || {
+        echo "ERROR: Alpine usercfg.txt must be a readable regular file." >&2
+        rm -f -- "${HDMI_TMP}"
+        exit 1
+    }
+    host_hdmi_config_txt "${BOARD_ID}" < "${USERCFG_FILE}" > "${HDMI_TMP}"
+    chmod --reference="${USERCFG_FILE}" "${HDMI_TMP}"
+    chown --reference="${USERCFG_FILE}" "${HDMI_TMP}"
+else
+    host_hdmi_config_txt "${BOARD_ID}" < /dev/null > "${HDMI_TMP}"
+    chmod 0644 "${HDMI_TMP}"
+    chown root:root "${HDMI_TMP}"
+fi
 mv -fT "${HDMI_TMP}" "${USERCFG_FILE}"
 
 CMDLINE_FILE=""
@@ -659,6 +696,10 @@ for candidate in "${BOOT_ROOT}/cmdline.txt" "${BOOT_ROOT}/cmdline-rpi.txt" "${BO
         break
     fi
 done
+[[ -n "${CMDLINE_FILE}" ]] || {
+    echo "ERROR: An active regular boot cmdline file is required to enable the memory cgroup." >&2
+    exit 1
+}
 PREVIOUS_HDMI_TOKEN=""
 [[ "${SAVED_HDMI_VIDEO_MODE}" == auto ]] || PREVIOUS_HDMI_TOKEN="video=${SAVED_HDMI_VIDEO_MODE}D"
 DESIRED_HDMI_TOKEN=""
@@ -667,28 +708,23 @@ if [[ "${HDMI_VIDEO_MODE}" != auto ]]; then
     DESIRED_HDMI_TOKEN="video=${HDMI_VIDEO_MODE}D"
     DESIRED_HDMI_CONNECTOR="${HDMI_VIDEO_MODE%%:*}"
 fi
-if [[ -n "${CMDLINE_FILE}" ]]; then
-    mapfile -t cmdline_lines < "${CMDLINE_FILE}"
-    [[ "${#cmdline_lines[@]}" -eq 1 && -n "${cmdline_lines[0]}" ]] || {
-        echo "ERROR: ${CMDLINE_FILE} must contain one non-empty line." >&2
-        exit 1
-    }
-    UPDATED_CMDLINE="$(host_hdmi_cmdline_line "${cmdline_lines[0]}" \
-        "${PREVIOUS_HDMI_TOKEN}" "${DESIRED_HDMI_TOKEN}" "${DESIRED_HDMI_CONNECTOR}")" || {
-        echo "ERROR: ${CMDLINE_FILE} contains an unmanaged connector mode." >&2
-        exit 1
-    }
-    UPDATED_CMDLINE="$(host_cmdline_memory_cgroup "${UPDATED_CMDLINE}")"
-    if [[ "${UPDATED_CMDLINE}" != "${cmdline_lines[0]}" ]]; then
-        CMDLINE_TMP="$(mktemp "${CMDLINE_FILE}.omt-client.XXXXXX")"
-        printf '%s\n' "${UPDATED_CMDLINE}" > "${CMDLINE_TMP}"
-        chmod --reference="${CMDLINE_FILE}" "${CMDLINE_TMP}"
-        chown --reference="${CMDLINE_FILE}" "${CMDLINE_TMP}"
-        mv -fT "${CMDLINE_TMP}" "${CMDLINE_FILE}"
-    fi
-elif [[ "${HDMI_VIDEO_MODE}" != auto ]]; then
-    echo "ERROR: A boot cmdline file is required for a forced HDMI mode." >&2
+mapfile -t cmdline_lines < "${CMDLINE_FILE}"
+[[ "${#cmdline_lines[@]}" -eq 1 && -n "${cmdline_lines[0]}" ]] || {
+    echo "ERROR: ${CMDLINE_FILE} must contain one non-empty line." >&2
     exit 1
+}
+UPDATED_CMDLINE="$(host_hdmi_cmdline_line "${cmdline_lines[0]}" \
+    "${PREVIOUS_HDMI_TOKEN}" "${DESIRED_HDMI_TOKEN}" "${DESIRED_HDMI_CONNECTOR}")" || {
+    echo "ERROR: ${CMDLINE_FILE} contains an unmanaged connector mode." >&2
+    exit 1
+}
+UPDATED_CMDLINE="$(host_cmdline_memory_cgroup "${UPDATED_CMDLINE}")"
+if [[ "${UPDATED_CMDLINE}" != "${cmdline_lines[0]}" ]]; then
+    CMDLINE_TMP="$(mktemp "${CMDLINE_FILE}.omt-client.XXXXXX")"
+    printf '%s\n' "${UPDATED_CMDLINE}" > "${CMDLINE_TMP}"
+    chmod --reference="${CMDLINE_FILE}" "${CMDLINE_TMP}"
+    chown --reference="${CMDLINE_FILE}" "${CMDLINE_TMP}"
+    mv -fT "${CMDLINE_TMP}" "${CMDLINE_FILE}"
 fi
 install -d -m 0755 "${INSTALLER_CONFIG_DIR}"
 host_publish_file "${INSTALLER_CONFIG_FILE}" 0644 root root <<EOF

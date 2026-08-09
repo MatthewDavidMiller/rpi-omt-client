@@ -3,11 +3,21 @@ services:
     image: omt-client
     container_name: omt-client
     restart: unless-stopped
+    # Reap receiver descendants after failures and forward termination cleanly
+    # instead of making Gunicorn, which is the application process, act as an
+    # init system as well.
+    init: true
     # The receiver decodes directly into three scanout buffers, so the complete
     # appliance stays inside a 256 MiB budget even on the 512 MiB design target.
     mem_limit: "${OMT_CONTAINER_MEMORY_LIMIT:-256m}"
     memswap_limit: "${OMT_CONTAINER_MEMORY_LIMIT:-256m}"
     pids_limit: 64
+    shm_size: 1048576
+    ulimits:
+      core: 0
+      nofile:
+        soft: 4096
+        hard: 4096
     logging:
       driver: local
       options:
@@ -17,8 +27,6 @@ services:
     read_only: true
     security_opt:
       - no-new-privileges:true
-      # Docker masks /proc/asound by default; ALSA needs it to enumerate cards.
-      - systempaths=unconfined
     cap_drop:
       - ALL
     environment:

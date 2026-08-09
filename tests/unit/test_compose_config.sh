@@ -49,8 +49,8 @@ assert_contains '^[[:space:]]*read_only:[[:space:]]+true[[:space:]]*$' \
     "production container uses a read-only root filesystem"
 assert_contains '^[[:space:]]*-[[:space:]]+no-new-privileges:true[[:space:]]*$' \
     "production container prevents privilege escalation"
-assert_contains '^[[:space:]]*-[[:space:]]+systempaths=unconfined[[:space:]]*$' \
-    "production container exposes proc ALSA state"
+assert_not_contains 'systempaths=unconfined' \
+    "production container retains Docker's sensitive proc and sys path confinement"
 assert_contains '^[[:space:]]*-[[:space:]]+ALL[[:space:]]*$' \
     "production container drops Linux capabilities"
 assert_contains '^[[:space:]]*-[[:space:]]+/dev/dri:/dev/dri[[:space:]]*$' \
@@ -89,6 +89,16 @@ assert_contains '^[[:space:]]*memswap_limit:[[:space:]]+"\$\{OMT_CONTAINER_MEMOR
     "container cannot expand beyond its RAM limit into swap"
 assert_contains '^[[:space:]]*pids_limit:[[:space:]]+64[[:space:]]*$' \
     "container process count is bounded"
+assert_contains '^[[:space:]]*init:[[:space:]]+true[[:space:]]*$' \
+    "container has a minimal PID 1 to reap receiver descendants"
+assert_contains '^[[:space:]]*shm_size:[[:space:]]+1048576[[:space:]]*$' \
+    "unused shared memory cannot consume the default 64 MiB"
+assert_contains '^[[:space:]]*core:[[:space:]]+0[[:space:]]*$' \
+    "container core dumps are disabled"
+assert_contains '^[[:space:]]*soft:[[:space:]]+4096[[:space:]]*$' \
+    "container file descriptors have a bounded soft limit"
+assert_contains '^[[:space:]]*hard:[[:space:]]+4096[[:space:]]*$' \
+    "container file descriptors have a bounded hard limit"
 assert_contains '^[[:space:]]*driver:[[:space:]]+local[[:space:]]*$' \
     "container logs use Docker's bounded local driver"
 # Playback status is rewritten continuously, so a runtime directory left on the
