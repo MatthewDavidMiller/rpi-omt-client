@@ -102,4 +102,13 @@ require 'STABLE_VOLUME="omt-config-v3"' "the persistent volume name must be fixe
 require 'chmod 0600.*HOST_REBOOT_REQUEST_FILE' "reboot request must be mode 0600"
 require 'chmod 0640.*HOST_REBOOT_RESULT_FILE' "reboot result must be mode 0640"
 
+# xdg-dbus-proxy runs as nobody:${OMT_GID} and creates its socket inside this
+# directory, so the group needs write, not just search. At 0750 the proxy died
+# on "Error binding to address (GUnixSocketAddress): Permission denied" on
+# every install, and the retry then collided with its own respawning orphan.
+require 'install -d -m 2770 -o root -g "\$\{OMT_GID\}" "\$\{AVAHI_STATE_DIR\}"' \
+    "the Avahi proxy socket directory must be writable by the proxy's group"
+forbid 'install -d -m 0750 -o root -g "\$\{OMT_GID\}" "\$\{AVAHI_STATE_DIR\}"' \
+    "a non-group-writable Avahi socket directory stops the proxy from binding"
+
 echo "Alpine OMT installer contract tests passed"

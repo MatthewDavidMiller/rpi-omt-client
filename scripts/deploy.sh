@@ -105,9 +105,29 @@ echo "Deploying to ${platform_lines[3]}."
 # bootstrap them before anything downstream assumes they exist.
 remote_capabilities="$(ssh "${HOST}" '
     id -u
-    for tool in bash sudo doas; do
+    for tool in bash sudo; do
         if command -v "$tool" >/dev/null 2>&1; then echo yes; else echo no; fi
-    done')"
+    done
+    # doas is reported by whether it can escalate, not by whether it exists.
+    # Alpine ships the binary on every image with each rule in /etc/doas.conf
+    # commented out, so presence proved nothing and this branch was selected on
+    # exactly the stock hosts where doas cannot work; the deploy then died on
+    # "doas: Operation not permitted" instead of printing the bootstrap
+    # instructions below. The config is mode 0640 root:root, so the deploy
+    # account cannot read it to find out. Ask doas itself: a rule that matched
+    # but wants a password reports an authentication failure and will succeed
+    # on the tty that ssh -t provides, while an unmatched rule reports that the
+    # operation is not permitted and never will.
+    if ! command -v doas >/dev/null 2>&1; then
+        echo no
+    elif doas -n true >/dev/null 2>&1; then
+        echo yes
+    else
+        case "$(doas -n true 2>&1)" in
+            *[Aa]uthenticat*|*[Aa]uthoriz*) echo yes ;;
+            *) echo no ;;
+        esac
+    fi')"
 mapfile -t capability_lines <<< "${remote_capabilities}"
 REMOTE_UID="${capability_lines[0]:-}"
 HAS_BASH="${capability_lines[1]:-no}"

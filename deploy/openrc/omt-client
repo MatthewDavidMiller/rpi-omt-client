@@ -9,10 +9,10 @@ depend() {
 }
 
 start_pre() {
-    [[ -d "${OMT_INSTALL_DIR}" && ! -L "${OMT_INSTALL_DIR}" ]] || {
+    if [ ! -d "${OMT_INSTALL_DIR}" ] || [ -L "${OMT_INSTALL_DIR}" ]; then
         eerror "OMT Client install directory is missing or unsafe"
         return 1
-    }
+    fi
     "${OMT_RECOVERY_HELPER}" recover "${OMT_INSTALL_DIR}" "${OMT_RECOVERY_MANIFEST}"
     find /dev/dri -maxdepth 1 -type c -name 'card*' -print -quit 2>/dev/null | grep -q . || {
         eerror "OMT Client requires a primary DRM card under /dev/dri"
@@ -22,6 +22,28 @@ start_pre() {
         eerror "OMT Client requires an ALSA playback PCM under /dev/snd"
         return 1
     }
+    # Without the memory controller, compose's mem_limit is accepted and then
+    # ignored, and the appliance runs uncapped on a board sized around a
+    # 256 MiB container. The Raspberry Pi firmware puts cgroup_disable=memory
+    # on the command line ahead of the installer's cgroup_enable=memory and
+    # the later token only wins by the kernel's __setup ordering, so this is
+    # checked rather than assumed. Under cgroup v2 the controller is absent
+    # from /proc/cgroups even when present, so read the unified list first.
+    local memory_controller=1
+    if [ -r /sys/fs/cgroup/cgroup.controllers ]; then
+        grep -qw memory /sys/fs/cgroup/cgroup.controllers
+        memory_controller=$?
+    elif [ -r /proc/cgroups ]; then
+        awk '$1 == "memory" && $4 == "1" { found = 1 } END { exit !found }' /proc/cgroups
+        memory_controller=$?
+    fi
+    if [ "${memory_controller}" -ne 0 ]; then
+        eerror "The kernel memory controller is unavailable, so the container"
+        eerror "memory cap cannot be enforced. Ensure cgroup_enable=memory is"
+        eerror "on the boot command line and reboot; re-run the installer if"
+        eerror "it is missing from cmdline.txt."
+        return 1
+    fi
 }
 
 start() {

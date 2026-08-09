@@ -106,8 +106,12 @@ assert_not_contains '^[[:space:]]*-[[:space:]]+omt-config-v3:/etc/omt/run' \
     "the runtime directory is not bound back onto the persistent volume"
 assert_contains '^[[:space:]]*-[[:space:]]+"\$\{OMT_VIDEO_GID:-27\}"[[:space:]]*(#.*)?$' \
     "video group uses an installer-provided GID with the Alpine fallback"
-assert_contains '^[[:space:]]*-[[:space:]]+"\$\{OMT_RENDER_GID:-27\}"[[:space:]]*(#.*)?$' \
-    "render group uses an installer-provided GID with the Alpine fallback"
+# Compose requires group_add items to be unique. Alpine owns /dev/dri/renderD*
+# with the video group, so a separate render entry always repeated the video
+# GID and Compose refused the service outright with "items at 0 and 1 are
+# equal" -- the appliance container could never start.
+assert_not_contains 'OMT_RENDER_GID' \
+    "a separate render GID always duplicates the video GID and Compose rejects it"
 assert_contains '^[[:space:]]*-[[:space:]]+"\$\{OMT_AUDIO_GID:-18\}"[[:space:]]*(#.*)?$' \
     "audio group uses an installer-provided GID with the Alpine fallback"
 assert_contains '^volumes:[[:space:]]*$' \

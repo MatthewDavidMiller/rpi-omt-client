@@ -63,10 +63,15 @@ services:
         tmpfs:
           size: 67108864
           mode: 1023
+    # Alpine has no render group: /dev/dri/renderD* is owned by video, so one
+    # DRM entry covers both the card and the render node. A second, equal entry
+    # is not merely redundant but fatal -- Compose requires group_add items to
+    # be unique and refuses the service with "items at 0 and 1 are equal", so
+    # the appliance container could not start at all. The installer checks the
+    # render node really is in the video group and refuses if it ever is not.
     group_add:
-      - "${OMT_VIDEO_GID:-27}"   # Alpine video
-      - "${OMT_RENDER_GID:-27}"  # Alpine has no separate render group by default
-      - "${OMT_AUDIO_GID:-18}"   # Alpine audio
+      - "${OMT_VIDEO_GID:-27}"   # Alpine video: /dev/dri card and render node
+      - "${OMT_AUDIO_GID:-18}"   # Alpine audio: /dev/snd
 
 volumes:
   omt-config-v3:

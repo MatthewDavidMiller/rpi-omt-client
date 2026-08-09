@@ -72,6 +72,27 @@ if ! tar -tf "${staged_artifact}" >/dev/null; then
     echo "ERROR: The container engine produced an invalid or incomplete ARM64 archive." >&2
     exit 1
 fi
+
+# Both engines emit an *uncompressed* tar, so the published .tar.gz was not
+# gzip at all and every deploy pushed ~86 MiB over SSH to a Raspberry Pi where
+# ~27 MiB would do. `docker load` sniffs the archive rather than trusting the
+# name, so compressing here needs no change on the appliance. -n omits the
+# name and timestamp from the gzip header, which keeps the artifact
+# byte-reproducible across rebuilds of an identical image.
+compressed_artifact="${staged_artifact}.gz"
+rm -f -- "${compressed_artifact}"
+if ! gzip -9 -n -c -- "${staged_artifact}" > "${compressed_artifact}"; then
+    echo "ERROR: Unable to compress the ARM64 archive." >&2
+    exit 1
+fi
+rm -f -- "${staged_artifact}"
+staged_artifact="${compressed_artifact}"
+if [[ ! -f "${staged_artifact}" || -L "${staged_artifact}" || ! -s "${staged_artifact}" ]] || \
+   ! tar -tzf "${staged_artifact}" >/dev/null; then
+    echo "ERROR: The compressed ARM64 archive is invalid or incomplete." >&2
+    exit 1
+fi
+
 if [[ ! -f "${staged_iid}" || ! -s "${staged_iid}" ]]; then
     echo "ERROR: The container engine did not publish the ARM64 image identity." >&2
     exit 1

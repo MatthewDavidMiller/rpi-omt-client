@@ -48,10 +48,14 @@ they cannot run on an untouched image.
 `make deploy` and the deployer applications handle this automatically: they
 detect the gap and run `deploy/host/bootstrap.sh`, which enables the
 `community` repository, installs `bash` and `sudo`, and grants `wheel`
-escalation through both `sudoers` and `doas.conf`.
+escalation through both `/etc/sudoers.d/omt-client` and
+`/etc/doas.d/10-omt-client-wheel.conf`.
 
-Automatic bootstrap needs a way to become root. Deploy as `root@<ip>` for a
-hands-off first install, or run the bootstrap once by hand:
+Automatic bootstrap needs a way to become root, and on a stock image there is
+none: Alpine has no `sudo`, and although it ships the `doas` binary, every rule
+in the packaged `/etc/doas.conf` is commented out, so `wheel` cannot escalate
+with it either. Deploy as `root@<ip>` for a hands-off first install, or run the
+bootstrap once by hand:
 
 ```bash
 scp deploy/host/bootstrap.sh <admin>@<ip>:/tmp/

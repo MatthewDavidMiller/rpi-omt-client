@@ -54,6 +54,17 @@ require 'visudo -c' "a generated sudoers drop-in must be validated before publis
 require '%wheel' "wheel must be granted escalation; Alpine grants it nothing"
 require 'id -u.*=.*0|EUID' "bootstrap must refuse to run unprivileged"
 
+# Alpine's doas package always ships /etc/doas.conf, so a guard on its absence
+# never fires and leaves doas inert on precisely the stock images this script
+# targets. The rule has to go in the drop-in directory instead.
+require '/etc/doas\.d' "bootstrap must configure doas through an /etc/doas.d drop-in"
+if grep -Eq '\[ ! -e /etc/doas\.conf \]|\[ ! -f /etc/doas\.conf \]' "${BOOTSTRAP}"; then
+    fail "bootstrap must not gate doas configuration on /etc/doas.conf being absent"
+fi
+if grep -Eq '> */etc/doas\.conf' "${BOOTSTRAP}"; then
+    fail "bootstrap must not overwrite the packaged /etc/doas.conf"
+fi
+
 # The series is read from the host, not hardcoded a second time.
 grep -Eq 'SUPPORTED_ALPINE_SERIES=3\.24' "${BOOTSTRAP}" || \
     fail "bootstrap must pin the same Alpine series as the installer"
@@ -68,6 +79,24 @@ grep -q 'BOOTSTRAP_SCRIPT' "${DEPLOY}" || \
 if grep -Eq '"sudo install -d|&& sudo ' "${DEPLOY}"; then
     fail "deploy.sh must escalate through the detected method, not a literal sudo"
 fi
+
+# Escalation capability, not binary presence. Alpine ships the doas binary on
+# every image with every rule commented out, so `command -v doas` selected the
+# doas branch on exactly the stock hosts that cannot use it, and the deploy
+# died on "doas: Operation not permitted" rather than printing the bootstrap
+# instructions. The Rust deployer runs the same probe and must agree.
+OPS_RS="${ROOT}/crates/omt-deployer-core/src/ops.rs"
+for probe_source in "${DEPLOY}" "${OPS_RS}"; do
+    [[ -f "${probe_source}" ]] || {
+        fail "missing escalation probe source: ${probe_source}"
+        continue
+    }
+    if grep -Eq 'for tool in bash sudo doas' "${probe_source}"; then
+        fail "$(basename "${probe_source}") must not treat doas presence as escalation capability"
+    fi
+    grep -Eq 'doas -n true' "${probe_source}" || \
+        fail "$(basename "${probe_source}") must probe whether doas can actually escalate"
+done
 
 if ((failures > 0)); then
     echo "${failures} bootstrap contract test(s) failed" >&2

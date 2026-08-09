@@ -540,11 +540,19 @@ for gid in "${OMT_VIDEO_GID}" "${OMT_RENDER_GID}" "${OMT_AUDIO_GID}"; do
         exit 1
     }
 done
+# The render node is not granted separately: on Alpine /dev/dri/renderD* is
+# owned by the video group, and Compose rejects a group_add list holding two
+# equal items, so a second entry for it stopped the container from starting at
+# all. Refuse rather than quietly drop GPU access if that ever stops holding.
+[[ "${OMT_RENDER_GID}" == "${OMT_VIDEO_GID}" ]] || {
+    echo "ERROR: /dev/dri/renderD* belongs to group ${OMT_RENDER_GID}, not the" >&2
+    echo "video group ${OMT_VIDEO_GID}. This appliance grants one DRM group." >&2
+    exit 1
+}
 
 COMPOSE_ENV_TMP="$(mktemp "${COMPOSE_ENV_FILE}.tmp.XXXXXX")"
 {
     printf 'OMT_VIDEO_GID=%s\n' "${OMT_VIDEO_GID}"
-    printf 'OMT_RENDER_GID=%s\n' "${OMT_RENDER_GID}"
     printf 'OMT_AUDIO_GID=%s\n' "${OMT_AUDIO_GID}"
     printf 'OMT_HDMI_CONNECTOR=%s\n' "${OMT_HDMI_CONNECTOR}"
     printf 'OMT_BOARD_ID=%s\n' "${BOARD_ID}"
@@ -577,7 +585,12 @@ done
 
 rm -f -- "${AVAHI_PROXY_SOCKET}"
 install -d -m 0755 -o root -g root "${HOST_STATE_DIR}"
-install -d -m 0750 -o root -g "${OMT_GID}" "${AVAHI_STATE_DIR}"
+# Group-writable, unlike the diagnostics directories below: xdg-dbus-proxy runs
+# as nobody:${OMT_GID} and has to *create* its socket in here. At 0750 the group
+# got r-x, so every install ended with "Error binding to address
+# (GUnixSocketAddress): Permission denied" and a proxy that never came up.
+# Setgid so the socket carries the group the container is granted through.
+install -d -m 2770 -o root -g "${OMT_GID}" "${AVAHI_STATE_DIR}"
 install -d -m 2750 -o root -g "${OMT_GID}" "${HOST_DIAGNOSTICS_STATE_DIR}" "${HOST_ACTION_STATE_DIR}"
 touch "${HOST_DIAGNOSTICS_REQUEST_FILE}" "${HOST_DIAGNOSTICS_REPORT_FILE}" \
     "${HOST_REBOOT_REQUEST_FILE}" "${HOST_REBOOT_RESULT_FILE}"

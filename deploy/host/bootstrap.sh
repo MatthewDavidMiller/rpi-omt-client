@@ -82,10 +82,21 @@ visudo -cqf "${SUDOERS_TMP}" || {
 }
 mv -f "${SUDOERS_TMP}" /etc/sudoers.d/omt-client
 
-if command -v doas >/dev/null 2>&1 && [ ! -e /etc/doas.conf ]; then
-    printf 'permit persist :wheel\n' > /etc/doas.conf
-    chown root:root /etc/doas.conf
-    chmod 0400 /etc/doas.conf
+# Alpine's doas package always ships /etc/doas.conf -- with every rule in it
+# commented out -- so the previous guard, which wrote a config only when that
+# file was absent, never fired once, and doas was left inert on exactly the
+# stock images this script exists for.
+# Publish a drop-in instead: /etc/doas.d/*.conf is read by the binary, and it
+# leaves the packaged file, and any rule an operator has put in it, untouched.
+# The temporary name deliberately does not end in .conf so a half-written file
+# is never inside that glob.
+if command -v doas >/dev/null 2>&1; then
+    install -d -m 0755 /etc/doas.d
+    DOAS_TMP="$(mktemp /etc/doas.d/.omt-client.XXXXXX)"
+    printf 'permit persist :wheel\n' > "${DOAS_TMP}"
+    chown root:root "${DOAS_TMP}"
+    chmod 0640 "${DOAS_TMP}"
+    mv -f "${DOAS_TMP}" /etc/doas.d/10-omt-client-wheel.conf
 fi
 
 echo "Bootstrap complete: bash and sudo are installed and wheel may escalate."

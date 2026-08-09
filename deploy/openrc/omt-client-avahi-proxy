@@ -21,7 +21,10 @@ start_pre() {
 start_post() {
     local attempt
     for attempt in $(seq 1 50); do
-        if [[ -S "${OMT_AVAHI_PROXY_SOCKET}" ]]; then
+        # POSIX test: openrc-run executes this under /bin/sh, and busybox ash
+        # accepts the bash double-bracket form only because Alpine happens to
+        # build it with the bash compatibility option enabled.
+        if [ -S "${OMT_AVAHI_PROXY_SOCKET}" ]; then
             chown "nobody:${OMT_GID}" "${OMT_AVAHI_PROXY_SOCKET}"
             chmod 0660 "${OMT_AVAHI_PROXY_SOCKET}"
             return 0
@@ -29,6 +32,12 @@ start_post() {
         sleep 0.1
     done
     eerror "Filtered Avahi proxy did not create its socket"
+    # respawn_max=0 means supervise-daemon retries forever, so a proxy that
+    # cannot bind is still supervised after this failure returns. Left running
+    # it turns every subsequent start into "xdg-dbus-proxy is already running",
+    # which reports a collision with our own orphan instead of the bind error
+    # that actually needs fixing.
+    supervise-daemon "${RC_SVCNAME}" --stop --quiet >/dev/null 2>&1 || true
     return 1
 }
 

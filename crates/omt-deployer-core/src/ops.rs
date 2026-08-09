@@ -119,8 +119,22 @@ struct HostTooling {
     has_doas: bool,
 }
 
-const TOOLING_PROBE: &str = "id -u; for tool in bash sudo doas; do \
-     if command -v \"$tool\" >/dev/null 2>&1; then echo yes; else echo no; fi; done";
+/// Reports the deploy account's uid, then bash, sudo, and doas as `yes`/`no`.
+///
+/// doas is reported by whether it can escalate, not by whether it exists.
+/// Alpine ships the binary on every image with each rule in `/etc/doas.conf`
+/// commented out, so presence proved nothing and `bootstrap_escalation` picked
+/// doas on exactly the stock hosts where it cannot work. `/etc/doas.conf` is
+/// mode 0640 root:root, so the deploy account cannot read it to find out
+/// either. Ask doas instead: a rule that matched but wants a password reports
+/// an authentication failure and will succeed once a password is supplied,
+/// while an unmatched rule reports that the operation is not permitted.
+const TOOLING_PROBE: &str = "id -u; for tool in bash sudo; do \
+     if command -v \"$tool\" >/dev/null 2>&1; then echo yes; else echo no; fi; done; \
+     if ! command -v doas >/dev/null 2>&1; then echo no; \
+     elif doas -n true >/dev/null 2>&1; then echo yes; \
+     else case \"$(doas -n true 2>&1)\" in \
+       *[Aa]uthenticat*|*[Aa]uthoriz*) echo yes ;; *) echo no ;; esac; fi";
 
 fn parse_host_tooling(output: &str) -> HostTooling {
     let mut lines = output.lines();
