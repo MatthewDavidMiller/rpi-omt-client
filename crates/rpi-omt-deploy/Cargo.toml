@@ -7,7 +7,7 @@ rust-version.workspace = true
 
 [dependencies]
 clap.workspace = true
-omt-deployer-core = { version = "0.9.38", path = "../omt-deployer-core" }
+omt-deployer-core = { version = "0.9.39", path = "../omt-deployer-core" }
 rpassword.workspace = true
 serde.workspace = true
 serde_json.workspace = true
