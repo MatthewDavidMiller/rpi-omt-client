@@ -10,6 +10,7 @@ set -euo pipefail
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 BUILD="${ROOT}/scripts/build-arm64.sh"
+DOCKERFILE="${ROOT}/deploy/Dockerfile"
 INSTALL="${ROOT}/deploy/host/install.sh"
 ARTIFACT="${ROOT}/omt-client-arm64.tar.gz"
 
@@ -33,6 +34,27 @@ grep -Eq 'gzip .*-n' "${BUILD}" || \
     fail "gzip must omit the name and timestamp so rebuilds stay reproducible"
 grep -Eq 'tar -tzf' "${BUILD}" || \
     fail "the compressed archive must be verified as gzip before it is published"
+grep -Fq 'RECEIVER_SOURCE_FINGERPRINT=' "${BUILD}" || \
+    fail "the ARM64 build must fingerprint the receiver source closure"
+grep -Fq 'find .cargo -type f -print0' "${BUILD}" || \
+    fail "the receiver fingerprint must include Cargo build configuration"
+grep -Fq '"${RPI_OMT_CLIENT_VERSION}" "${receiver_files_fingerprint}"' "${BUILD}" || \
+    fail "the receiver fingerprint must include embedded version metadata"
+grep -Fq -- '--build-arg "RECEIVER_SOURCE_FINGERPRINT=${RECEIVER_SOURCE_FINGERPRINT}"' "${BUILD}" || \
+    fail "the receiver fingerprint must reach the container build"
+grep -Fq 'LABEL org.rpi-omt-client.receiver-source=${RECEIVER_SOURCE_FINGERPRINT}' \
+    "${DOCKERFILE}" || \
+    fail "the scratch artifact stage must invalidate stale cross-stage COPY cache"
+fingerprint_labels="$(grep -Fc 'LABEL org.rpi-omt-client.receiver-source=${RECEIVER_SOURCE_FINGERPRINT}' "${DOCKERFILE}")"
+[[ "${fingerprint_labels}" == 2 ]] || \
+    fail "both receiver COPY boundaries must be tied to the source fingerprint"
+if grep -Fq 'COPY crates/ crates/' "${DOCKERFILE}"; then
+    fail "deployer-only edits must not invalidate the ARM64 receiver builder"
+fi
+for receiver_crate in omt-protocol omt-receiver-core vmx-decoder omt-receiver; do
+    grep -Fq "COPY crates/${receiver_crate}/ crates/${receiver_crate}/" "${DOCKERFILE}" || \
+        fail "the receiver builder must copy ${receiver_crate}"
+done
 
 # The appliance side must not have grown a decompression step of its own:
 # `docker load` detects gzip, and a pipeline through gunzip would break the

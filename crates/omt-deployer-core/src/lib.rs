@@ -80,6 +80,9 @@ pub struct Connection {
     pub key_passphrase: Option<Secret>,
     pub known_hosts_path: Option<PathBuf>,
     pub sudo_password: Option<Secret>,
+    /// Root password used only to bootstrap untouched Alpine through `su`.
+    /// Once sudo exists, privileged operations use `sudo_password` instead.
+    pub bootstrap_root_password: Option<Secret>,
 }
 #[derive(Clone, Debug)]
 pub struct DeployOptions {

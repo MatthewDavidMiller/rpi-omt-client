@@ -21,6 +21,7 @@ use tokio::time::{self, timeout};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 const COMMAND_IDLE_TIMEOUT: Duration = Duration::from_mins(1);
+const COMMAND_TIMEOUT: Duration = Duration::from_mins(30);
 const UPLOAD_TIMEOUT: Duration = Duration::from_mins(30);
 
 #[derive(Debug)]
@@ -194,6 +195,25 @@ impl SshSession {
             .block_on(run_command(&self.handle, command, stdin, cancellation))
     }
 
+    /// Run a command on a pseudo-terminal. This is reserved for privilege
+    /// tools such as Alpine's `su`, which refuse to read a password from a
+    /// normal SSH channel.
+    pub fn run_pty_after_marker(
+        &mut self,
+        command: &str,
+        marker: &str,
+        stdin: &str,
+        cancellation: &AtomicBool,
+    ) -> io::Result<RemoteResult> {
+        self.runtime.block_on(run_command_with_pty(
+            &self.handle,
+            command,
+            marker,
+            stdin,
+            cancellation,
+        ))
+    }
+
     pub fn upload(
         &mut self,
         local: &Path,
@@ -291,6 +311,27 @@ async fn run_command(
     stdin: &str,
     cancellation: &AtomicBool,
 ) -> io::Result<RemoteResult> {
+    run_command_inner(handle, command, None, stdin, cancellation, false).await
+}
+
+async fn run_command_with_pty(
+    handle: &client::Handle<StrictHostKey>,
+    command: &str,
+    marker: &str,
+    stdin: &str,
+    cancellation: &AtomicBool,
+) -> io::Result<RemoteResult> {
+    run_command_inner(handle, command, Some(marker), stdin, cancellation, true).await
+}
+
+async fn run_command_inner(
+    handle: &client::Handle<StrictHostKey>,
+    command: &str,
+    input_marker: Option<&str>,
+    stdin: &str,
+    cancellation: &AtomicBool,
+    request_pty: bool,
+) -> io::Result<RemoteResult> {
     if cancellation.load(Ordering::Relaxed) {
         return Err(io::Error::new(
             io::ErrorKind::Interrupted,
@@ -298,19 +339,29 @@ async fn run_command(
         ));
     }
     let mut channel = handle.channel_open_session().await.map_err(map_err)?;
-    channel.exec(true, command).await.map_err(map_err)?;
-    if !stdin.is_empty() {
-        channel.data(stdin.as_bytes()).await.map_err(map_err)?;
+    if request_pty {
+        channel
+            .request_pty(true, "dumb", 80, 24, 0, 0, &[])
+            .await
+            .map_err(map_err)?;
     }
-    channel.eof().await.map_err(map_err)?;
+    channel.exec(true, command).await.map_err(map_err)?;
 
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
     let mut exit_code = 1_i32;
     let mut idle = time::interval(Duration::from_millis(100));
     idle.set_missed_tick_behavior(time::MissedTickBehavior::Delay);
-    let deadline = time::Instant::now() + COMMAND_IDLE_TIMEOUT;
+    let deadline = time::Instant::now() + COMMAND_TIMEOUT;
     let mut last_activity = time::Instant::now();
+    let mut input_sent = stdin.is_empty();
+    if input_sent || input_marker.is_none() {
+        if !stdin.is_empty() {
+            channel.data(stdin.as_bytes()).await.map_err(map_err)?;
+            input_sent = true;
+        }
+        channel.eof().await.map_err(map_err)?;
+    }
 
     loop {
         if cancellation.load(Ordering::Relaxed) {
@@ -347,11 +398,17 @@ async fn run_command(
                         last_activity = time::Instant::now();
                     }
                 }
+                if !input_sent && input_marker.is_some_and(|marker| {
+                    contains_bytes(&stdout, marker.as_bytes())
+                        || contains_bytes(&stderr, marker.as_bytes())
+                }) {
+                    channel.data(stdin.as_bytes()).await.map_err(map_err)?;
+                    channel.eof().await.map_err(map_err)?;
+                    input_sent = true;
+                }
             }
             _ = idle.tick() => {
-                if last_activity.elapsed() > COMMAND_IDLE_TIMEOUT
-                    || time::Instant::now() > deadline + COMMAND_IDLE_TIMEOUT
-                {
+                if last_activity.elapsed() > COMMAND_IDLE_TIMEOUT || time::Instant::now() > deadline {
                     let _ = channel.close().await;
                     return Err(io::Error::new(
                         io::ErrorKind::TimedOut,
@@ -367,6 +424,13 @@ async fn run_command(
         stdout: String::from_utf8_lossy(&stdout).into_owned(),
         stderr: String::from_utf8_lossy(&stderr).into_owned(),
     })
+}
+
+fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
+    !needle.is_empty()
+        && haystack
+            .windows(needle.len())
+            .any(|window| window == needle)
 }
 
 fn command_complete(message: Option<&ChannelMsg>) -> bool {
@@ -465,6 +529,7 @@ mod tests {
             key_passphrase: None,
             known_hosts_path: Some(PathBuf::from("/trusted/known_hosts")),
             sudo_password: None,
+            bootstrap_root_password: None,
         };
         assert_eq!(
             known_hosts_path(&connection).unwrap_or_else(|error| panic!("{error}")),
@@ -480,5 +545,18 @@ mod tests {
         })));
         assert!(command_complete(Some(&ChannelMsg::Close)));
         assert!(command_complete(None));
+    }
+
+    #[test]
+    fn readiness_markers_are_found_only_as_complete_byte_sequences() {
+        assert!(contains_bytes(b"before\nready\r\nafter", b"ready"));
+        assert!(!contains_bytes(b"rea", b"ready"));
+        assert!(!contains_bytes(b"anything", b""));
+    }
+
+    #[test]
+    fn active_installers_outlive_the_idle_timeout() {
+        assert!(COMMAND_TIMEOUT > COMMAND_IDLE_TIMEOUT);
+        assert_eq!(COMMAND_TIMEOUT, UPLOAD_TIMEOUT);
     }
 }

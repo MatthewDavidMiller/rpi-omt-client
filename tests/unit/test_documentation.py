@@ -99,3 +99,15 @@ def test_manifest_v3_nested_capsule_boundary_is_documented():
     assert "manifest version 3" in architecture
     assert "nested paths" in architecture
     assert all(name in setup or name == "omt-client-arm64.tar.gz" for name in manifest_names)
+
+
+def test_headless_wifi_example_contains_the_required_fields():
+    setup = (REPO_ROOT / "docs" / "SETUP.md").read_text(encoding="utf-8")
+    block = re.search(r"```ini\n(.*?)```", setup, re.DOTALL)
+    assert block is not None
+    example = block.group(1)
+    assert re.search(r"^country=[A-Z]{2}$", example, re.MULTILINE)
+    assert "network={" in example
+    assert 'ssid="your-network-name"' in example
+    assert 'psk="your-wifi-passphrase"' in example
+    assert "key_mgmt=WPA-PSK" in example

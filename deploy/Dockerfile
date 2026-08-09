@@ -1,5 +1,6 @@
 ARG ALPINE_DIGEST=sha256:fd791d74b68913cbb027c6546007b3f0d3bc45125f797758156952bc2d6daf40
 ARG RUST_DIGEST=sha256:c4a364ddbf684fe038e6fa6a4f25b30c8dc85247423e0e660676ece0d17be4a2
+ARG RECEIVER_SOURCE_FINGERPRINT=unknown
 
 # Build with the exact stable compiler required by rust-toolchain.toml. The
 # official image digest is a multi-architecture manifest, so each output is
@@ -16,7 +17,25 @@ RUN apk add --no-cache alsa-lib-dev musl-dev pkgconf
 WORKDIR /src
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY .cargo/ .cargo/
-COPY crates/ crates/
+# Cargo parses every declared workspace member before selecting `-p`, and
+# `--locked` requires that workspace shape to remain intact. Copy the deployer
+# manifests with inert targets, while keeping their real source out of this
+# build context; a GUI/SSH-only edit then cannot force another slow emulated
+# ARM64 receiver build.
+COPY crates/omt-deployer-core/Cargo.toml crates/omt-deployer-core/Cargo.toml
+COPY crates/rpi-omt-deploy/Cargo.toml crates/rpi-omt-deploy/Cargo.toml
+COPY crates/rpi-omt-deployer/Cargo.toml crates/rpi-omt-deployer/Cargo.toml
+RUN mkdir -p \
+        crates/omt-deployer-core/src \
+        crates/rpi-omt-deploy/src \
+        crates/rpi-omt-deployer/src \
+    && : > crates/omt-deployer-core/src/lib.rs \
+    && printf 'fn main() {}\n' > crates/rpi-omt-deploy/src/main.rs \
+    && printf 'fn main() {}\n' > crates/rpi-omt-deployer/src/main.rs
+COPY crates/omt-protocol/ crates/omt-protocol/
+COPY crates/omt-receiver-core/ crates/omt-receiver-core/
+COPY crates/vmx-decoder/ crates/vmx-decoder/
+COPY crates/omt-receiver/ crates/omt-receiver/
 ENV RPI_OMT_CLIENT_VERSION=${RPI_OMT_CLIENT_VERSION}
 RUN cargo build --locked --release -p omt-receiver \
     && install -Dm755 target/release/omt-receiver /out/receiver/omt-receiver
@@ -24,6 +43,11 @@ RUN cargo build --locked --release -p omt-receiver \
 # Keep the testable/exportable ARM64 target limited to shipped artifacts. The
 # Compiler, source, and Cargo intermediates never enter this image.
 FROM scratch AS receiver-artifacts
+ARG RECEIVER_SOURCE_FINGERPRINT
+# Buildah/Podman can otherwise reuse this cross-stage COPY after the builder
+# produced a different binary. Put the source fingerprint into the parent
+# image configuration so a receiver change invalidates the COPY itself.
+LABEL org.rpi-omt-client.receiver-source=${RECEIVER_SOURCE_FINGERPRINT}
 COPY --from=receiver-builder /out/receiver/omt-receiver /omt-receiver
 
 FROM alpine:3.23.5@${ALPINE_DIGEST} AS python-builder
@@ -74,6 +98,11 @@ RUN apk add --no-cache \
     && python3 -c 'import decimal; assert str(decimal.Decimal(1) / 7).startswith("0.142857")'
 
 COPY --from=python-builder /opt/venv /opt/venv
+ARG RECEIVER_SOURCE_FINGERPRINT
+# Repeat the fingerprint at the final cross-stage boundary. Buildah may cache
+# this COPY independently of the changed intermediate image unless the final
+# stage's own parent configuration changes too.
+LABEL org.rpi-omt-client.receiver-source=${RECEIVER_SOURCE_FINGERPRINT}
 COPY --from=receiver-artifacts /omt-receiver /usr/local/bin/omt-receiver
 COPY deploy/container/ /usr/local/bin/
 COPY LICENSE THIRD_PARTY_NOTICES.txt /app/legal/

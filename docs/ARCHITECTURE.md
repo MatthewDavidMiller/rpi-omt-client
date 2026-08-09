@@ -200,6 +200,19 @@ in the Docker group. Host-key verification defaults to OpenSSH's
 `~/.ssh/known_hosts`; the CLI and GUI can select another verified file without
 relaxing strict checking.
 
+An untouched Alpine host has neither sudo nor an active doas rule. When a
+separate initial root password is supplied, the native deployers bootstrap
+through `su` on a bounded SSH PTY. Terminal echo is disabled before the secret
+is sent; only the fixed staged bootstrap is run, and subsequent deployment
+returns to the administrator's sudo credential. The root secret is zeroized
+with the other authentication buffers. Remote commands retain a one-minute
+idle timeout but allow the package installer up to thirty minutes while it is
+still producing progress; the previous two-minute total ceiling could abort a
+healthy first install on a Pi.
+The explicit root credential takes priority over an ambiguous `doas` probe:
+stock Alpine can describe its inert rule set as authorization-capable and then
+refuse the actual non-PTY command.
+
 How the deployer's window answers a display is a set of rules, not a set of
 widgets, so they live outside its view alongside the button-gating rules:
 window fit against the monitor, the readable column width, when labels pair

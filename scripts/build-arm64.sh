@@ -17,6 +17,29 @@ ARM64_TARBALL="${ARM64_TARBALL:-${PROJECT_ROOT}/omt-client-arm64.tar.gz}"
 BUILD_METADATA_DIR="${BUILD_METADATA_DIR:-${PROJECT_ROOT}/.build}"
 RPI_OMT_CLIENT_VERSION="${RPI_OMT_CLIENT_VERSION:-$("${PROJECT_ROOT}/scripts/detect-version.sh" "${PROJECT_ROOT}")}"
 
+# Podman's layered cache does not always connect a changed source stage to a
+# later cross-stage COPY. Hash the receiver's complete build closure and feed
+# it into the scratch stage, where the Dockerfile makes it part of the COPY's
+# parent image. This preserves useful dependency caches without publishing an
+# old receiver after spending time compiling a new one.
+receiver_files_fingerprint="$(
+    cd "${PROJECT_ROOT}"
+    {
+        printf '%s\0' Cargo.toml Cargo.lock rust-toolchain.toml
+        find .cargo -type f -print0
+        find crates/omt-protocol crates/omt-receiver-core crates/vmx-decoder \
+            crates/omt-receiver -type f -print0
+    } | sort -z | xargs -0 sha256sum | sha256sum | awk '{print $1}'
+)"
+RECEIVER_SOURCE_FINGERPRINT="$(
+    printf '%s\n%s\n' "${RPI_OMT_CLIENT_VERSION}" "${receiver_files_fingerprint}" \
+        | sha256sum | awk '{print $1}'
+)"
+[[ "${RECEIVER_SOURCE_FINGERPRINT}" =~ ^[0-9a-f]{64}$ ]] || {
+    echo "ERROR: Unable to fingerprint the receiver source closure." >&2
+    exit 1
+}
+
 artifact_directory="$(dirname -- "${ARM64_TARBALL}")"
 artifact_name="$(basename -- "${ARM64_TARBALL}")"
 mkdir -p "${BUILD_METADATA_DIR}" "${artifact_directory}"
@@ -50,6 +73,7 @@ if [[ "${CONTAINER_ENGINE_KIND}" == "podman" ]]; then
     "${CONTAINER_ENGINE}" build --format docker --platform linux/arm64 \
         --file "${PROJECT_ROOT}/deploy/Dockerfile" \
         --build-arg "RPI_OMT_CLIENT_VERSION=${RPI_OMT_CLIENT_VERSION}" \
+        --build-arg "RECEIVER_SOURCE_FINGERPRINT=${RECEIVER_SOURCE_FINGERPRINT}" \
         --iidfile "${staged_iid}" \
         -t "${podman_reference}" "${PROJECT_ROOT}"
     "${CONTAINER_ENGINE}" save --format docker-archive \
@@ -58,6 +82,7 @@ else
     "${CONTAINER_ENGINE}" buildx build --platform linux/arm64 \
         --file "${PROJECT_ROOT}/deploy/Dockerfile" \
         --build-arg "RPI_OMT_CLIENT_VERSION=${RPI_OMT_CLIENT_VERSION}" \
+        --build-arg "RECEIVER_SOURCE_FINGERPRINT=${RECEIVER_SOURCE_FINGERPRINT}" \
         --iidfile "${staged_iid}" \
         --output "type=docker,dest=${staged_artifact}" \
         -t "${IMAGE_NAME}" "${PROJECT_ROOT}"

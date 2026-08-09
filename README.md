@@ -38,10 +38,12 @@ full local toolchain, including persistent ARM64 emulation on Linux x86-64.
 ## Install
 
 A stock Alpine image has neither `bash` nor `sudo`, so it is bootstrapped once
-before the installer can run. Deploying over SSH does this automatically:
+before the installer can run. The native CLI and GUI can do this through `su`
+when given the separate initial root password. The shell target handles a root
+SSH account or a host that already has sudo/doas:
 
 ```bash
-make deploy HOST=admin@192.168.1.50
+make deploy HOST=root@192.168.1.50
 ```
 
 To install on the Pi itself, copy the nested files named in

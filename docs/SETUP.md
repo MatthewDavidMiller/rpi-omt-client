@@ -38,6 +38,26 @@ with no network. To provision without a keyboard and monitor, use
 drop its `headless.apkovl.tar.gz` onto the boot partition alongside a
 `wpa_supplicant.conf` for Wi-Fi, boot once, then SSH in and run `setup-alpine`.
 
+Create `wpa_supplicant.conf` as a Linux-text file (LF line endings) in the root
+of the boot partition. Replace the two-letter regulatory country, SSID, and
+passphrase:
+
+```ini
+country=US
+network={
+    key_mgmt=WPA-PSK
+    ssid="your-network-name"
+    psk="your-wifi-passphrase"
+}
+```
+
+This first-boot file contains the Wi-Fi passphrase in plaintext. Keep the boot
+media physically controlled, remove the bootstrap copy after the installed
+system is reachable, and keep the installed
+`/etc/wpa_supplicant/wpa_supplicant.conf` root-only. The appliance installer
+preserves the network block and adds the control settings needed for later
+Wi-Fi changes from the deployer.
+
 ### Bootstrapping bash and sudo
 
 A stock Alpine image has **no `bash` and no `sudo`** — it ships busybox `ash`,
@@ -45,24 +65,34 @@ and while the `wheel` group exists, nothing grants it escalation. Both the
 installer and the deploy transaction are bash scripts run through `sudo`, so
 they cannot run on an untouched image.
 
-`make deploy` and the deployer applications handle this automatically: they
+The native deployer applications handle this automatically. `make deploy`
+does too when the SSH account is root or already has an escalation path. They
 detect the gap and run `deploy/host/bootstrap.sh`, which enables the
 `community` repository, installs `bash` and `sudo`, and grants `wheel`
 escalation through both `/etc/sudoers.d/omt-client` and
 `/etc/doas.d/10-omt-client-wheel.conf`.
 
-Automatic bootstrap needs a way to become root, and on a stock image there is
-none: Alpine has no `sudo`, and although it ships the `doas` binary, every rule
-in the packaged `/etc/doas.conf` is commented out, so `wheel` cannot escalate
-with it either. Deploy as `root@<ip>` for a hands-off first install, or run the
-bootstrap once by hand:
+Automatic bootstrap needs the initial root password because Alpine has no
+`sudo`, and although it ships the `doas` binary, every rule in the packaged
+`/etc/doas.conf` is commented out. The native CLI and GUI accept an optional
+clean-Alpine root password separately from the SSH user's password and future
+sudo password. They allocate a PTY for `su`, disable terminal echo before
+sending the secret, run the fixed bootstrap script, and discard that root
+secret after the operation. In the CLI `--secrets-stdin` JSON, the field is
+`bootstrap_root_password`; interactive mode prompts for it. In the GUI, use
+“initial root password (clean Alpine only).”
+
+Connecting directly as `root` also works when the host's SSH policy permits
+it. The shell-only `make deploy` path cannot accept a second root credential;
+for that path, run the bootstrap once by hand:
 
 ```bash
 scp deploy/host/bootstrap.sh <admin>@<ip>:/tmp/
 ssh -t <admin>@<ip> "su -c '/bin/sh /tmp/bootstrap.sh'"
 ```
 
-After that first run, `sudo` works and every later deploy is unattended.
+After bootstrap, `sudo` works and every later deploy needs only the SSH user's
+sudo password.
 
 ## Rust deployment applications
 
@@ -95,9 +125,10 @@ still runs entirely in the pinned Linux containers.
 Run `.build/deployer-publish/bin/rpi-omt-deployer` (or the `.exe` produced on
 Windows) with Docker, a Pi key already trusted in `~/.ssh/known_hosts`,
 administrator SSH/sudo credentials, and this source tree. The Connection view
-accepts a separate optional sudo password and an optional alternate
-`known_hosts` path; the CLI equivalents are the `sudo_password` field in
-`--secrets-stdin` and `--known-hosts <path>`. Connect validates Alpine 3.24
+accepts separate optional sudo and initial-root passwords and an optional
+alternate `known_hosts` path; the CLI equivalents are the `sudo_password` and
+`bootstrap_root_password` fields in `--secrets-stdin` and
+`--known-hosts <path>`. Connect validates Alpine 3.24
 aarch64 and a supported device-tree model.
 Deploy builds, verifies, uploads, and installs the capsule. Manage reads
 container status/logs or restarts it through sudo for a non-root SSH account.

@@ -88,7 +88,14 @@ local or refused before a connection is opened. The SSH adapter rejects missing
 default or explicitly selected `known_hosts` files and unknown or changed host
 keys; legacy SHA-1 host-key hashes and CBC ciphers are excluded from
 negotiation. Privileged command construction is tested for password-backed
-sudo, passwordless sudo, and direct root sessions.
+sudo, passwordless sudo, direct root sessions, and the separate root-secret
+gate used to bootstrap untouched Alpine through `su`.
+That gate also covers stock Alpine's misleading password-capable `doas` probe;
+an explicit initial root credential must select the PTY-backed `su` path.
+The SSH adapter's command timeout is long enough for a clean-host package
+installation while retaining its shorter idle timeout and bounded output.
+The deployer summary parser drops package-manager noise and retains the final
+installer URL/status block after successful native deployments.
 
 The reboot bridge tests include the install-time empty result channel as well
 as populated files, unsafe modes, and symlinks. This protects the fixed-inode
@@ -100,6 +107,12 @@ or unlocked registry package. `scripts/check-supply-chain.sh` also runs
 `cargo deny` and `cargo vet` against `deny.toml` and `supply-chain/`. Container
 integration checks that no C++ standard-library payload ships and that Python's
 decimal fallback remains functional.
+
+The ARM64 artifact contract also pins the receiver-source fingerprint at both
+of Podman's cross-stage COPY boundaries. A receiver change must alter the
+published runtime image instead of merely recompiling an unused builder layer.
+The same contract refuses a broad `COPY crates/ crates/`, which would make
+unrelated deployer edits invalidate the slow ARM64 receiver build.
 
 Restricted or offline builders use a trusted Cargo registry mirror populated
 with the exact checksums in `Cargo.lock`.

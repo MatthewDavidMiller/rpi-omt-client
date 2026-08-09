@@ -15,6 +15,7 @@ use std::time::SystemTime;
 use zeroize::Zeroizing;
 
 const PLATFORM_PROBE: &str = "uname -m && . /etc/os-release && printf '%s\\n' \"$ID\" && cat /etc/alpine-release && tr -d '\\000' < /proc/device-tree/model && printf '\\n'";
+const BOOTSTRAP_PASSWORD_READY: &str = "omt-bootstrap-password-ready";
 
 const WIFI_SCRIPT: &str = concat!(
     "marker=$3\n",
@@ -107,6 +108,12 @@ fn privileged_command(connection: &Connection, command: &str) -> String {
     }
 }
 
+fn privileged_stdin_command(connection: &Connection, command: &str) -> String {
+    // Keep authentication and execution in one process so the remaining
+    // stdin is delivered to the command after sudo consumes its password.
+    privileged_command(connection, command)
+}
+
 /// The sudo password as the remote shell expects it on stdin.
 ///
 /// Zeroizing rather than a bare `String`: `deploy` holds this for the whole
@@ -182,6 +189,15 @@ fn bootstrap_escalation(tooling: &HostTooling) -> io::Result<&'static str> {
     }
 }
 
+fn needs_su_bootstrap(tooling: &HostTooling, connection: &Connection) -> bool {
+    tooling.uid != "0"
+        && !tooling.has_sudo
+        && connection
+            .bootstrap_root_password
+            .as_ref()
+            .is_some_and(|value| !value.expose().is_empty())
+}
+
 /// Install bash and sudo when the target is a stock Alpine image.
 ///
 /// `install.sh` and `transaction.sh` are both bash scripts invoked through
@@ -203,15 +219,32 @@ fn ensure_host_bootstrapped(
     }
 
     progress("Bootstrapping bash and sudo on the Raspberry Pi...");
-    let escalation = bootstrap_escalation(&tooling)?;
     let local = secure_relative(project_root, "deploy/host/bootstrap.sh")?;
     let remote = format!("/tmp/omt-bootstrap-{}.sh", random_token(8)?);
     let remote_q = shell_quote(&remote);
     session.upload(&local, &remote, cancellation)?;
 
     // /bin/sh explicitly: this is the one script that must run before bash does.
-    let command = format!("{escalation} /bin/sh {remote_q}; rc=$?; rm -f -- {remote_q}; exit $rc");
-    let result = session.run(&command, &sudo_input(connection), cancellation)?;
+    let result = if needs_su_bootstrap(&tooling, connection) {
+        // BusyBox su reads from /dev/tty, so a PTY is required. Disable echo
+        // before sending the password: channel input may arrive before su has
+        // displayed its prompt and must never be reflected into captured logs.
+        let root_password = connection
+            .bootstrap_root_password
+            .as_ref()
+            .ok_or_else(|| io::Error::other("bootstrap root password is missing"))?;
+        let inner = shell_quote(&format!("/bin/sh {remote_q}"));
+        let command = format!(
+            "stty -echo; printf '{BOOTSTRAP_PASSWORD_READY}\\n'; su -c {inner}; rc=$?; stty echo; rm -f -- {remote_q}; exit $rc"
+        );
+        let input = Zeroizing::new(format!("{}\n", root_password.expose()));
+        session.run_pty_after_marker(&command, BOOTSTRAP_PASSWORD_READY, &input, cancellation)?
+    } else {
+        let escalation = bootstrap_escalation(&tooling)?;
+        let command =
+            format!("{escalation} /bin/sh {remote_q}; rc=$?; rm -f -- {remote_q}; exit $rc");
+        session.run(&command, &sudo_input(connection), cancellation)?
+    };
     require_success(&result, "Alpine bootstrap")?;
     Ok(())
 }
@@ -335,6 +368,13 @@ fn redact(message: &str, secrets: &[&str]) -> String {
     safe
 }
 
+fn installer_summary(output: &str) -> Option<&str> {
+    output
+        .find("=== Installation Complete ===")
+        .map(|start| output[start..].trim())
+        .filter(|summary| !summary.is_empty())
+}
+
 fn build_image(
     options: &DeployOptions,
     cancellation: &Arc<AtomicBool>,
@@ -453,7 +493,6 @@ pub fn apply_wifi(
     };
     let marker = format!("__OMT_WIFI_PASSWORD_FOLLOWS_{}__", random_token(12)?);
     let ssid_hex = hex_encode(settings.ssid.as_bytes());
-    let sudo = sudo_prefix(connection);
     let mut stdin = sudo_input(connection);
     stdin.push_str(&marker);
     stdin.push('\n');
@@ -467,11 +506,12 @@ pub fn apply_wifi(
         shell_quote(if settings.connect { "yes" } else { "no" }),
         shell_quote(&marker),
     );
-    let command = if sudo.is_empty() {
-        wifi_command
-    } else {
-        format!("{sudo} -v && sudo -n {wifi_command}")
-    };
+    // Authenticate and execute in one sudo process. Alpine's default sudo
+    // timestamp policy may not carry a non-interactive `sudo -v` ticket into
+    // a second `sudo -n` invocation, even in the same SSH channel. The first
+    // input line is consumed by sudo; the marker and PSK remain available to
+    // the privileged shell on the same stdin stream.
+    let command = privileged_stdin_command(connection, &wifi_command);
     let secrets = [
         connection
             .password
@@ -708,11 +748,37 @@ pub fn deploy(
         "{chmod} && {}",
         privileged_command(connection, &format!("sh -c {install_script}"))
     );
-    require_success(
-        &session.run(&install, &sudo_data, cancellation)?,
-        "Remote installer",
-    )?;
-    progress("Deployment complete; use the installer URL shown above.");
+    let install_result = session.run(&install, &sudo_data, cancellation)?;
+    require_success(&install_result, "Remote installer")?;
+    // The installer prints its operator summary on stdout. OpenRC and Compose
+    // warnings arrive on stderr and are deliberately excluded here; combining
+    // the streams appended those warnings after an otherwise clean summary.
+    if let Some(summary) = installer_summary(&install_result.stdout) {
+        let secrets = [
+            connection
+                .password
+                .as_ref()
+                .map(Secret::expose)
+                .unwrap_or_default(),
+            connection
+                .key_passphrase
+                .as_ref()
+                .map(Secret::expose)
+                .unwrap_or_default(),
+            connection
+                .sudo_password
+                .as_ref()
+                .map(Secret::expose)
+                .unwrap_or_default(),
+            connection
+                .bootstrap_root_password
+                .as_ref()
+                .map(Secret::expose)
+                .unwrap_or_default(),
+        ];
+        progress(&redact(summary, &secrets));
+    }
+    progress("Deployment complete.");
     Ok(())
 }
 
@@ -854,6 +920,16 @@ mod tests {
         assert!(safe.contains("[redacted]"));
     }
 
+    #[test]
+    fn successful_installs_surface_only_the_final_summary() {
+        let output = "apk noise\n=== Installation Complete ===\nWeb UI: https://pi:5000\n";
+        assert_eq!(
+            installer_summary(output),
+            Some("=== Installation Complete ===\nWeb UI: https://pi:5000")
+        );
+        assert_eq!(installer_summary("apk noise only"), None);
+    }
+
     /// `deploy` holds the sudo stdin for the whole upload-verify-promote-install
     /// sequence. The return type is the guarantee that it is wiped afterwards --
     /// a bare `String` here left the operator's sudo password in freed heap --
@@ -872,6 +948,7 @@ mod tests {
             key_passphrase: None,
             known_hosts_path: None,
             sudo_password: Secret::new("hunter2".into()).ok(),
+            bootstrap_root_password: None,
         };
         let input = sudo_input(&connection);
         assert_zeroizing(&input);
@@ -880,6 +957,10 @@ mod tests {
         assert_eq!(
             privileged_command(&connection, "docker ps"),
             "sudo -S -p '' docker ps"
+        );
+        assert_eq!(
+            privileged_stdin_command(&connection, "sh wifi-update"),
+            "sudo -S -p '' sh wifi-update"
         );
 
         // No password means passwordless sudo: nothing on stdin, and the
@@ -900,5 +981,45 @@ mod tests {
         assert!(sudo_input(&connection).is_empty());
         assert_eq!(sudo_prefix(&connection), "");
         assert_eq!(privileged_command(&connection, "docker ps"), "docker ps");
+    }
+
+    #[test]
+    fn untouched_alpine_can_bootstrap_through_su_only_with_a_root_secret() {
+        let tooling = HostTooling {
+            uid: "1000".into(),
+            has_bash: false,
+            has_sudo: false,
+            has_doas: false,
+        };
+        let mut connection = Connection {
+            host: "pi.local".into(),
+            username: "pi".into(),
+            port: 22,
+            auth: crate::AuthMethod::Password,
+            password: Secret::new("ssh-password".into()).ok(),
+            key_path: None,
+            key_passphrase: None,
+            known_hosts_path: None,
+            sudo_password: Secret::new("user-password".into()).ok(),
+            bootstrap_root_password: None,
+        };
+        assert!(!needs_su_bootstrap(&tooling, &connection));
+        connection.bootstrap_root_password = Secret::new("root-password".into()).ok();
+        assert!(needs_su_bootstrap(&tooling, &connection));
+
+        // Stock Alpine's doas can report an authorization-style error to the
+        // probe and then refuse the command because it has no TTY. A supplied
+        // root secret makes the explicit PTY-backed su path authoritative.
+        let ambiguous_doas = HostTooling {
+            has_doas: true,
+            ..tooling
+        };
+        assert!(needs_su_bootstrap(&ambiguous_doas, &connection));
+
+        let root_tooling = HostTooling {
+            uid: "0".into(),
+            ..ambiguous_doas
+        };
+        assert!(!needs_su_bootstrap(&root_tooling, &connection));
     }
 }

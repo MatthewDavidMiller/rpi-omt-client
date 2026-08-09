@@ -477,6 +477,7 @@ mod desktop {
         user: String,
         password: Zeroizing<String>,
         sudo_password: Zeroizing<String>,
+        bootstrap_root_password: Zeroizing<String>,
         known_hosts: String,
         wifi_ssid: String,
         wifi_password: Zeroizing<String>,
@@ -518,6 +519,7 @@ mod desktop {
                 user: "root".into(),
                 password: Zeroizing::new(String::new()),
                 sudo_password: Zeroizing::new(String::new()),
+                bootstrap_root_password: Zeroizing::new(String::new()),
                 known_hosts: String::new(),
                 wifi_ssid: String::new(),
                 wifi_password: Zeroizing::new(String::new()),
@@ -558,6 +560,14 @@ mod desktop {
                         .map_err(|error| error.to_string())?,
                 )
             };
+            let bootstrap_root_password = if self.bootstrap_root_password.is_empty() {
+                None
+            } else {
+                Some(
+                    Secret::new((*self.bootstrap_root_password).clone())
+                        .map_err(|error| error.to_string())?,
+                )
+            };
             let connection = Connection {
                 host: self.host.clone(),
                 username: self.user.clone(),
@@ -572,6 +582,7 @@ mod desktop {
                     Some(PathBuf::from(&self.known_hosts))
                 },
                 sudo_password,
+                bootstrap_root_password,
             };
             omt_deployer_core::validate_connection(&connection)
                 .map_err(|error| error.to_string())?;
@@ -896,6 +907,9 @@ mod desktop {
                     field(ui, "sudo password (optional)", |ui| {
                         text_field(ui, &mut self.sudo_password, !self.reveal);
                     });
+                    field(ui, "initial root password (clean Alpine only)", |ui| {
+                        text_field(ui, &mut self.bootstrap_root_password, !self.reveal);
+                    });
                     field(ui, "known_hosts (optional)", |ui| {
                         text_field(ui, &mut self.known_hosts, false);
                     });
@@ -1046,6 +1060,7 @@ mod desktop {
                 user: "pi".into(),
                 password: Zeroizing::new("ssh-password".into()),
                 sudo_password: Zeroizing::new("sudo-password".into()),
+                bootstrap_root_password: Zeroizing::new("root-password".into()),
                 ..App::default()
             };
 
@@ -1057,6 +1072,13 @@ mod desktop {
             assert_eq!(
                 connection.sudo_password.as_ref().map(Secret::expose),
                 Some("sudo-password")
+            );
+            assert_eq!(
+                connection
+                    .bootstrap_root_password
+                    .as_ref()
+                    .map(Secret::expose),
+                Some("root-password")
             );
         }
     }

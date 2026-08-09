@@ -97,6 +97,13 @@ The receiver is built with checksum-locked Cargo dependencies and Rust 1.97.1
 in a digest-pinned Alpine builder stage. A `scratch` stage contains only the
 stripped `omt-receiver`, so neither the SDK nor build toolchain is part of the
 deployed image.
+The ARM64 publisher fingerprints the receiver's complete local source closure
+into that scratch stage: Podman's cross-stage cache can otherwise compile a
+changed receiver and still reuse the old copied binary.
+The builder copies only the four receiver-side crates plus the deployer
+manifests and inert target stubs needed to preserve the locked workspace, so a
+desktop or SSH-client source edit does not trigger another emulated ARM64
+receiver compile.
 
 Public routes are `/login`, `/logout`, `/`, `/sources/select`,
 `/sources/refresh`, `/playback/restart`, `/playback/clear`,
@@ -132,6 +139,12 @@ separately. Privileged remote operations use the provided, zeroized sudo
 credential for non-root accounts and run directly for root. The SSH command
 adapter continues reading through an EOF notification so that the server's
 subsequent exit status remains authoritative.
+On a clean Alpine host with no usable escalation rule, a separately zeroized
+initial root password drives the fixed bootstrap through a no-echo PTY and
+`su`; it is never reused for ordinary management operations.
+Successful native deployments surface the installer's final summary (including
+the authoritative Web URL) while omitting the noisy package transcript; every
+connection secret is redacted before that summary reaches progress output.
 
 ## Legal and release
 

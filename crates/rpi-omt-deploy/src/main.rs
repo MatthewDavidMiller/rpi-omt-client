@@ -73,6 +73,7 @@ struct SecretInput {
     password: Option<String>,
     key_passphrase: Option<String>,
     sudo_password: Option<String>,
+    bootstrap_root_password: Option<String>,
     wifi_password: Option<String>,
 }
 #[derive(Serialize)]
@@ -137,6 +138,15 @@ fn connection(cli: &Cli, mut values: SecretInput) -> Result<Connection, String> 
             values.sudo_password = Some(prompted);
         }
     }
+    if cli.interactive_secrets && values.bootstrap_root_password.is_none() {
+        let prompted = rpassword::prompt_password(
+            "root password for clean-Alpine bootstrap (empty if not needed): ",
+        )
+        .map_err(|e| e.to_string())?;
+        if !prompted.is_empty() {
+            values.bootstrap_root_password = Some(prompted);
+        }
+    }
     let connection = Connection {
         host,
         username,
@@ -151,6 +161,7 @@ fn connection(cli: &Cli, mut values: SecretInput) -> Result<Connection, String> 
         key_passphrase: secret(values.key_passphrase)?,
         known_hosts_path: cli.known_hosts.clone(),
         sudo_password: secret(values.sudo_password)?,
+        bootstrap_root_password: secret(values.bootstrap_root_password)?,
     };
     validate_connection(&connection).map_err(|e| e.to_string())?;
     Ok(connection)
@@ -177,6 +188,7 @@ fn run(cli: Cli) -> Result<(), (i32, String)> {
                     password: secrets.password.take(),
                     key_passphrase: secrets.key_passphrase.take(),
                     sudo_password: secrets.sudo_password.take(),
+                    bootstrap_root_password: secrets.bootstrap_root_password.take(),
                     wifi_password: None,
                 },
             )
