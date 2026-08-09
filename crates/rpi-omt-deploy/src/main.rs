@@ -29,6 +29,8 @@ struct Cli {
     #[arg(long, global = true)]
     key: Option<PathBuf>,
     #[arg(long, global = true)]
+    known_hosts: Option<PathBuf>,
+    #[arg(long, global = true)]
     project: Option<PathBuf>,
     #[arg(long, global = true)]
     json: bool,
@@ -147,6 +149,7 @@ fn connection(cli: &Cli, mut values: SecretInput) -> Result<Connection, String> 
         password: secret(values.password)?,
         key_path: cli.key.clone(),
         key_passphrase: secret(values.key_passphrase)?,
+        known_hosts_path: cli.known_hosts.clone(),
         sudo_password: secret(values.sudo_password)?,
     };
     validate_connection(&connection).map_err(|e| e.to_string())?;

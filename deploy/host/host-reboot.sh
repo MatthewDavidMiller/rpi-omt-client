@@ -44,8 +44,8 @@ flock -n 9 || exit 0
 
 publish_result() {
     local request_id="$1" status="$2" detail="$3" before after
-    before="$(stat -c '%d:%i:%F:%u:%g:%a' -- "${RESULT_FILE}" 2>/dev/null || true)"
-    [[ "${before}" == *":regular file:0:${EXPECTED_GID}:640" ]] || {
+    before="$(reboot_fixed_file_identity "${RESULT_FILE}" 0 "${EXPECTED_GID}" 640 || true)"
+    [[ -n "${before}" ]] || {
         echo "unsafe reboot result file" >&2
         return 1
     }
@@ -54,8 +54,8 @@ publish_result() {
     chmod 0640 "${RESULT_FILE}"
     chown "root:${EXPECTED_GID}" "${RESULT_FILE}"
     sync -f "${RESULT_FILE}"
-    after="$(stat -c '%d:%i:%F:%u:%g:%a' -- "${RESULT_FILE}" 2>/dev/null || true)"
-    [[ "${before%%:regular file:*}" == "${after%%:regular file:*}" ]]
+    after="$(reboot_fixed_file_identity "${RESULT_FILE}" 0 "${EXPECTED_GID}" 640 || true)"
+    [[ "${before}" == "${after}" ]]
 }
 
 before="$(stat -c '%d:%i:%s:%F:%u:%g:%a' -- "${REQUEST_FILE}" 2>/dev/null || true)"
@@ -117,7 +117,9 @@ chown "${EXPECTED_UID}:${EXPECTED_GID}" "${REQUEST_FILE}"
 chmod 0600 "${REQUEST_FILE}"
 sync -f "${REQUEST_FILE}"
 publish_result "${request_id}" accepted scheduled
-logger --tag omt-client-reboot "accepted reboot request ${request_id}"
+# Acceptance is already visible to the Web UI. A missing syslog socket must not
+# turn that acknowledgement into a reboot that never happens.
+logger --tag omt-client-reboot "accepted reboot request ${request_id}" || true
 
 sleep 5
 exec /sbin/reboot

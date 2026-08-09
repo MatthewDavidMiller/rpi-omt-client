@@ -11,6 +11,20 @@
 # On success sets: version, action, request_id, requested_at_epoch
 # On soft evaluation failure prints a stable reject reason to stdout and returns 1.
 
+# Print a stable identity only for the expected fixed regular file. `%F` is
+# deliberately not used here: GNU stat describes a zero-byte regular file as
+# "regular empty file", which made a freshly installed result channel fail its
+# first publication even though its inode, owner, group, and mode were correct.
+reboot_fixed_file_identity() {
+    local path="$1" expected_uid="$2" expected_gid="$3" expected_mode="$4"
+    local identity
+    [[ -f "${path}" && ! -L "${path}" ]] || return 1
+    identity="$(stat -c '%d:%i:%u:%g:%a' -- "${path}" 2>/dev/null)" || return 1
+    [[ "${identity}" =~ ^[0-9]+:[0-9]+:${expected_uid}:${expected_gid}:${expected_mode}$ ]] ||
+        return 1
+    printf '%s\n' "${identity}"
+}
+
 reboot_parse_request_body() {
     local line key value line_count=0 body="${request-}"
     local -A seen=()

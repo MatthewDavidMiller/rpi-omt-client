@@ -126,6 +126,13 @@ are POST and CSRF protected.
 | Windows cross build | `scripts/build-windows-deployer.sh` |
 | Local toolchain provisioning | `scripts/install-dev-deps.sh`, `scripts/install-hadolint.sh`, `scripts/install-trivy.sh`, `scripts/install-arm64-emulation.sh` |
 
+The native deployers default to the user's OpenSSH `known_hosts` file and can
+select an alternate verified file when deployment automation keeps host keys
+separately. Privileged remote operations use the provided, zeroized sudo
+credential for non-root accounts and run directly for root. The SSH command
+adapter continues reading through an EOF notification so that the server's
+subsequent exit status remains authoritative.
+
 ## Legal and release
 
 `LICENSE`, `THIRD_PARTY_NOTICES.txt`, and `THIRD_PARTY_SOURCE.md` are release

@@ -292,10 +292,12 @@ impl AudioContext {
     }
 
     fn note_status(&self, result: std::io::Result<bool>) {
-        if let Err(error) = result
-            && !self.status_failed.swap(true, Ordering::Relaxed)
-        {
-            eprintln!("playback status publish failed: {error}");
+        match result {
+            Ok(_) => self.status_failed.store(false, Ordering::Relaxed),
+            Err(error) if !self.status_failed.swap(true, Ordering::Relaxed) => {
+                eprintln!("playback status publish failed: {error}");
+            }
+            Err(_) => {}
         }
     }
 }
@@ -382,13 +384,34 @@ fn wait(
     }
 }
 
-/// Logs the first status-publish failure in a session so a full `/run/omt` is
-/// diagnosable instead of silently freezing the dashboard.
+/// Logs the first status-publish failure in each contiguous outage so a full
+/// or briefly missing `/run/omt` is diagnosable without flooding stderr.
 fn note_status(logged: &mut bool, result: std::io::Result<bool>) {
-    if let Err(error) = result
-        && !*logged
-    {
-        eprintln!("playback status publish failed: {error}");
-        *logged = true;
+    match result {
+        Ok(_) => *logged = false,
+        Err(error) if !*logged => {
+            eprintln!("playback status publish failed: {error}");
+            *logged = true;
+        }
+        Err(_) => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::note_status;
+
+    #[test]
+    fn a_success_rearms_status_failure_reporting() {
+        let mut logged = false;
+        note_status(&mut logged, Err(std::io::Error::other("first outage")));
+        assert!(logged);
+        note_status(&mut logged, Err(std::io::Error::other("same outage")));
+        assert!(logged);
+
+        note_status(&mut logged, Ok(false));
+        assert!(!logged);
+        note_status(&mut logged, Err(std::io::Error::other("later outage")));
+        assert!(logged);
     }
 }

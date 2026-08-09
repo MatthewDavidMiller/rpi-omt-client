@@ -73,6 +73,9 @@ expect_status 2 "an invalid host" \
     "${deployer}" --host '-pi.local' --username root --secrets-stdin status
 expect_status 2 "an invalid username" \
     "${deployer}" --host pi.local --username 'ro ot' --secrets-stdin status
+expect_status_stdin 2 "a missing explicit known_hosts file" '{"password":"secret"}' \
+    "${deployer}" --host pi.local --username root \
+    --known-hosts "${empty}/missing-known-hosts" --secrets-stdin status
 
 # Secrets arrive on stdin or through a prompt, never as arguments.
 expect_status 2 "two secret sources at once" \

@@ -52,9 +52,12 @@ any of them.
 
 The runtime is capped at 256 MiB and 64 processes on every board. At 1080p it
 uses three DRM scanout buffers, bounded network frames, and a persistent pool of
-VMX workers with 512 KiB stacks (created once per decoder, not per frame). The
-512 MiB Pi Zero 2 W is the memory-design floor and is inside the supported
-matrix at that cap.
+VMX workers with 512 KiB stacks (created once per decoder, not per frame).
+Worker jobs travel inline through bounded channels, and the receiver reserves
+only the additional bytes needed when a network payload grows, so neither jobs
+nor a second full-size payload buffer are allocated in the steady-state frame
+path. The 512 MiB Pi Zero 2 W is the memory-design floor and is inside the
+supported matrix at that cap.
 
 Memory is not what separates the boards; decode throughput is. VMX is decoded in
 software on three of the four cores every supported board has, and a 1.0 GHz
@@ -190,6 +193,12 @@ arguments or environment variables. That covers every buffer a secret passes
 through, not only the ones it is stored in: the sudo stdin a deployment holds
 for its whole run, the Wi-Fi passphrase handed to the worker thread, and the
 raw `--secrets-stdin` document are all wiped rather than freed intact.
+Fixed management actions cross the same privilege boundary as deployment and
+Wi-Fi: a non-root SSH account uses its bounded sudo-password channel, while a
+root session runs the fixed command directly. Neither account needs membership
+in the Docker group. Host-key verification defaults to OpenSSH's
+`~/.ssh/known_hosts`; the CLI and GUI can select another verified file without
+relaxing strict checking.
 
 How the deployer's window answers a display is a set of rules, not a set of
 widgets, so they live outside its view alongside the button-gating rules:

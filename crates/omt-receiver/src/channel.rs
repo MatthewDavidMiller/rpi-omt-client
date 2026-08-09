@@ -280,8 +280,11 @@ fn positive(value: Duration) -> Duration {
 }
 
 fn ensure_payload(payload: &mut Vec<u8>, required: usize) -> io::Result<()> {
+    // `try_reserve` takes an additional element count, not a target capacity.
+    // Passing `required` while `len() == required` made the second frame
+    // reserve room for two full payloads and permanently doubled this buffer.
     payload
-        .try_reserve(required)
+        .try_reserve(required.saturating_sub(payload.len()))
         .map_err(|_| io::Error::other("unable to allocate the bounded OMT frame"))?;
     payload.resize(required, 0);
     Ok(())
@@ -361,17 +364,20 @@ mod tests {
 
     #[test]
     fn payload_resize_reuses_capacity_without_clearing() {
-        let mut payload = Vec::new();
+        let mut payload = Vec::with_capacity(128);
         ensure_payload(&mut payload, 64).unwrap_or_else(|error| panic!("{error}"));
         payload.fill(0xAB);
         let capacity = payload.capacity();
         ensure_payload(&mut payload, 32).unwrap_or_else(|error| panic!("{error}"));
         assert_eq!(payload.len(), 32);
-        assert!(payload.capacity() >= capacity);
+        assert_eq!(payload.capacity(), capacity);
         assert!(payload.iter().all(|&byte| byte == 0xAB));
         ensure_payload(&mut payload, 96).unwrap_or_else(|error| panic!("{error}"));
         assert_eq!(payload.len(), 96);
+        assert_eq!(payload.capacity(), capacity);
         assert!(payload[..32].iter().all(|&byte| byte == 0xAB));
         assert!(payload[32..].iter().all(|&byte| byte == 0));
+        ensure_payload(&mut payload, 96).unwrap_or_else(|error| panic!("{error}"));
+        assert_eq!(payload.capacity(), capacity);
     }
 }

@@ -297,6 +297,26 @@ impl Output {
             Present::UnsupportedFormat("Display has no mode for the OMT video format".into())
         })?;
 
+        // Build the software side before changing the CRTC. If decoder
+        // allocation or worker creation fails, no newly active framebuffer
+        // has to be torn down from an error path.
+        let Ok(width) = usize::try_from(header.width) else {
+            return Err(Present::UnsupportedFormat("Unsupported video width".into()));
+        };
+        let Ok(height) = usize::try_from(header.height) else {
+            return Err(Present::UnsupportedFormat(
+                "Unsupported video height".into(),
+            ));
+        };
+        let decoder = Decoder::new(
+            Dimensions { width, height },
+            ColorSpace::resolve(header.color_space, height),
+            DECODE_WORKERS,
+        )
+        .map_err(|error| {
+            Present::UnsupportedFormat(format!("Unable to create the VMX decoder: {error}"))
+        })?;
+
         let mut surfaces = Vec::new();
         for _ in 0..BUFFERS {
             match self.create_surface(&mode) {
@@ -318,30 +338,6 @@ impl Output {
             self.destroy_surfaces(surfaces);
             return Err(Present::Failed(format!("Unable to set DRM mode: {error}")));
         }
-
-        let Ok(width) = usize::try_from(header.width) else {
-            self.destroy_surfaces(surfaces);
-            return Err(Present::UnsupportedFormat("Unsupported video width".into()));
-        };
-        let Ok(height) = usize::try_from(header.height) else {
-            self.destroy_surfaces(surfaces);
-            return Err(Present::UnsupportedFormat(
-                "Unsupported video height".into(),
-            ));
-        };
-        let decoder = match Decoder::new(
-            Dimensions { width, height },
-            ColorSpace::resolve(header.color_space, height),
-            DECODE_WORKERS,
-        ) {
-            Ok(decoder) => decoder,
-            Err(error) => {
-                self.destroy_surfaces(surfaces);
-                return Err(Present::UnsupportedFormat(format!(
-                    "Unable to create the VMX decoder: {error}"
-                )));
-            }
-        };
 
         self.active = Some(Configured {
             crtc,

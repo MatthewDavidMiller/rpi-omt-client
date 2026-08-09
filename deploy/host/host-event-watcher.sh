@@ -36,7 +36,10 @@ command -v inotifywait >/dev/null 2>&1 || {
 
 run_action() {
     if ! "${action}"; then
-        logger -t "omt-client-${kind}" "fixed ${kind} action failed"
+        # Logging is best-effort.  A missing or temporarily unavailable syslog
+        # socket must not tear down the persistent request watcher after an
+        # action failure.
+        logger -t "omt-client-${kind}" "fixed ${kind} action failed" || true
     fi
 }
 

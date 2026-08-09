@@ -64,7 +64,9 @@ UYVY and BGRX, at one, two, three, and eight workers, so a worker count can
 never change an output byte. The same suite covers repeated decode lifecycles,
 every truncation of a valid stream, and periodic bit flips through the payload,
 none of which may panic, read out of bounds, or allocate past the documented
-caps.
+caps. The worker-pool unit suite also forces a channel failure after another
+worker has started, proving that the pool drains every outstanding raw-pointer
+job before returning the error.
 
 `make test-deployer` builds the Rust core, CLI, and GUI and tests validation,
 quoting, SHA-256, secure tokens, Wi-Fi PSK vectors, bounded processes, and
@@ -83,8 +85,15 @@ validation, the exit-2 usage contract for missing arguments and rejected
 connections, the bounded `--secrets-stdin` channel, and the one-object-per-line
 `--json` surface. Nothing in it reaches the network -- every invocation is
 local or refused before a connection is opened. The SSH adapter rejects missing
-`known_hosts` files and unknown or changed host keys; legacy SHA-1 host-key
-hashes and CBC ciphers are excluded from negotiation.
+default or explicitly selected `known_hosts` files and unknown or changed host
+keys; legacy SHA-1 host-key hashes and CBC ciphers are excluded from
+negotiation. Privileged command construction is tested for password-backed
+sudo, passwordless sudo, and direct root sessions.
+
+The reboot bridge tests include the install-time empty result channel as well
+as populated files, unsafe modes, and symlinks. This protects the fixed-inode
+publication boundary without depending on the human-readable file description
+returned by a particular `stat` implementation.
 
 The supply-chain gate rejects every tracked C/C++ source, Git Cargo dependency,
 or unlocked registry package. `scripts/check-supply-chain.sh` also runs
@@ -131,10 +140,12 @@ one is not evidence for another:
 
 0. deploy to an image on which nothing has been installed by hand, and confirm
    `deploy/host/bootstrap.sh` installs bash and sudo before the installer runs.
-   Confirm the memory cgroup is live after the reboot (`grep memory
-   /proc/cgroups`): the Pi firmware injects `cgroup_disable=memory`, and
-   without the installer's `cgroup_enable=memory` the advertised container
-   memory cap is silently not enforced;
+   Confirm the memory cgroup is live after the reboot (`grep -qw memory
+   /sys/fs/cgroup/cgroup.controllers` on the shipped cgroup-v2 host, then check
+   that the container's `memory.max` is `268435456`): the Pi firmware injects
+   `cgroup_disable=memory`, and without the installer's
+   `cgroup_enable=memory` the advertised container memory cap is silently not
+   enforced. `/proc/cgroups` is only the fallback check for a cgroup-v1 host;
 
 1. deploy through both CLI and native app and confirm unsupported boards fail
    before upload. Include a near miss if one is available: a Pi 400 or Pi 500

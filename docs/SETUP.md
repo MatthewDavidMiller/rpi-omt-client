@@ -94,10 +94,14 @@ still runs entirely in the pinned Linux containers.
 
 Run `.build/deployer-publish/bin/rpi-omt-deployer` (or the `.exe` produced on
 Windows) with Docker, a Pi key already trusted in `~/.ssh/known_hosts`,
-administrator SSH/sudo credentials, and this source tree. Connect validates
-Alpine 3.24 aarch64 and a supported device-tree model.
+administrator SSH/sudo credentials, and this source tree. The Connection view
+accepts a separate optional sudo password and an optional alternate
+`known_hosts` path; the CLI equivalents are the `sudo_password` field in
+`--secrets-stdin` and `--known-hosts <path>`. Connect validates Alpine 3.24
+aarch64 and a supported device-tree model.
 Deploy builds, verifies, uploads, and installs the capsule. Manage reads
-container status/logs or restarts it. Wi-Fi updates the running
+container status/logs or restarts it through sudo for a non-root SSH account.
+Wi-Fi updates the running
 `wpa_supplicant` through its control socket and stores a derived WPA PSK rather
 than sending the plaintext passphrase to a command line.
 

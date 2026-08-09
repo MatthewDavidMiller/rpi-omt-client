@@ -7,6 +7,9 @@ ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 # shellcheck source=../../deploy/lib/reboot-request.sh
 source "${ROOT}/deploy/lib/reboot-request.sh"
 
+CASE_DIR="$(mktemp -d)"
+trap 'rm -rf -- "${CASE_DIR}"' EXIT
+
 MAX_AGE_SECONDS=30
 MAX_FUTURE_SECONDS=5
 COOLDOWN_SECONDS=60
@@ -83,5 +86,33 @@ expect_reject "cooldown active" "cooldown-active"
 
 last_accepted_raw="55555555555555555555555555555555 1699999900"
 reboot_evaluate_request
+
+# A fresh install creates an empty result channel. GNU stat names its `%F`
+# "regular empty file", so fixed-file validation must use structural file and
+# numeric identity checks rather than a human-readable type description.
+result_file="${CASE_DIR}/reboot.result"
+touch "${result_file}"
+chmod 0640 "${result_file}"
+result_uid="$(id -u)"
+result_gid="$(id -g)"
+empty_identity="$(
+    reboot_fixed_file_identity "${result_file}" "${result_uid}" "${result_gid}" 640
+)"
+[[ -n "${empty_identity}" ]]
+printf 'accepted\n' > "${result_file}"
+[[ "$(reboot_fixed_file_identity \
+    "${result_file}" "${result_uid}" "${result_gid}" 640)" == "${empty_identity}" ]]
+chmod 0600 "${result_file}"
+if reboot_fixed_file_identity \
+    "${result_file}" "${result_uid}" "${result_gid}" 640 >/dev/null; then
+    echo "FAIL: unsafe reboot result mode was accepted" >&2
+    exit 1
+fi
+ln -s "${result_file}" "${CASE_DIR}/reboot.result.link"
+if reboot_fixed_file_identity \
+    "${CASE_DIR}/reboot.result.link" "${result_uid}" "${result_gid}" 600 >/dev/null; then
+    echo "FAIL: symlink reboot result was accepted" >&2
+    exit 1
+fi
 
 echo "Host reboot request validation tests passed"

@@ -85,7 +85,9 @@ fn require_success(result: &RemoteResult, operation: &str) -> io::Result<()> {
 }
 
 fn sudo_prefix(connection: &Connection) -> &'static str {
-    if connection
+    if connection.username == "root" {
+        ""
+    } else if connection
         .sudo_password
         .as_ref()
         .is_some_and(|value| !value.expose().is_empty())
@@ -96,12 +98,24 @@ fn sudo_prefix(connection: &Connection) -> &'static str {
     }
 }
 
+fn privileged_command(connection: &Connection, command: &str) -> String {
+    let sudo = sudo_prefix(connection);
+    if sudo.is_empty() {
+        command.to_owned()
+    } else {
+        format!("{sudo} {command}")
+    }
+}
+
 /// The sudo password as the remote shell expects it on stdin.
 ///
 /// Zeroizing rather than a bare `String`: `deploy` holds this for the whole
 /// upload-verify-promote-install sequence, and a plain buffer would leave the
 /// operator's sudo password in freed heap for the life of the process.
 fn sudo_input(connection: &Connection) -> Zeroizing<String> {
+    if connection.username == "root" {
+        return Zeroizing::new(String::new());
+    }
     Zeroizing::new(
         connection
             .sudo_password
@@ -394,14 +408,16 @@ pub fn manage(
         ManagementAction::Restart => "Restarting service...",
     });
     let mut session = connect(connection)?;
-    let command = action
+    let docker_command = action
         .remote_argv()
         .iter()
         .copied()
         .map(shell_quote)
         .collect::<Vec<_>>()
         .join(" ");
-    let result = session.run(&command, "", cancellation)?;
+    let command = privileged_command(connection, &docker_command);
+    let stdin = sudo_input(connection);
+    let result = session.run(&command, &stdin, cancellation)?;
     require_success(&result, "Remote management action")?;
     let output = result.combined();
     if !output.trim().is_empty() {
@@ -444,13 +460,18 @@ pub fn apply_wifi(
     stdin.push_str(psk.expose());
     stdin.push('\n');
 
-    let command = format!(
-        "{sudo} -v && sudo -n sh -eu -c {} sh {} {} {}",
+    let wifi_command = format!(
+        "sh -eu -c {} sh {} {} {}",
         shell_quote(WIFI_SCRIPT),
         shell_quote(&ssid_hex),
         shell_quote(if settings.connect { "yes" } else { "no" }),
         shell_quote(&marker),
     );
+    let command = if sudo.is_empty() {
+        wifi_command
+    } else {
+        format!("{sudo} -v && sudo -n {wifi_command}")
+    };
     let secrets = [
         connection
             .password
@@ -611,9 +632,11 @@ pub fn deploy(
 
     let remote_directory = options.remote_directory.trim_end_matches('/').to_owned();
     let remote_q = shell_quote(&remote_directory);
-    let sudo = sudo_prefix(connection);
     let sudo_data = sudo_input(connection);
-    let prepare = format!("{sudo} install -d -m 755 -o \"$(id -u)\" -g \"$(id -g)\" {remote_q}");
+    let prepare = privileged_command(
+        connection,
+        &format!("install -d -m 755 -o \"$(id -u)\" -g \"$(id -g)\" {remote_q}"),
+    );
     require_success(
         &session.run(&prepare, &sudo_data, cancellation)?,
         "Remote directory preparation",
@@ -681,7 +704,10 @@ pub fn deploy(
     }
     let installer = shell_quote(&format!("{remote_directory}/deploy/host/install.sh"));
     let install_script = shell_quote(&format!("printf 'n\\n' | {installer}"));
-    let install = format!("{chmod} && {sudo} sh -c {install_script}");
+    let install = format!(
+        "{chmod} && {}",
+        privileged_command(connection, &format!("sh -c {install_script}"))
+    );
     require_success(
         &session.run(&install, &sudo_data, cancellation)?,
         "Remote installer",
@@ -838,18 +864,23 @@ mod tests {
 
         let mut connection = Connection {
             host: "pi.local".into(),
-            username: "root".into(),
+            username: "pi".into(),
             port: 22,
             auth: crate::AuthMethod::Password,
             password: None,
             key_path: None,
             key_passphrase: None,
+            known_hosts_path: None,
             sudo_password: Secret::new("hunter2".into()).ok(),
         };
         let input = sudo_input(&connection);
         assert_zeroizing(&input);
         assert_eq!(input.as_str(), "hunter2\n");
         assert_eq!(sudo_prefix(&connection), "sudo -S -p ''");
+        assert_eq!(
+            privileged_command(&connection, "docker ps"),
+            "sudo -S -p '' docker ps"
+        );
 
         // No password means passwordless sudo: nothing on stdin, and the
         // non-interactive prefix rather than one that waits for a prompt.
@@ -861,5 +892,13 @@ mod tests {
         connection.sudo_password = Secret::new(String::new()).ok();
         assert!(sudo_input(&connection).is_empty());
         assert_eq!(sudo_prefix(&connection), "sudo -n");
+
+        // A root SSH session executes the same fixed command directly, even
+        // if a caller supplied a redundant sudo password.
+        connection.username = "root".into();
+        connection.sudo_password = Secret::new("unused".into()).ok();
+        assert!(sudo_input(&connection).is_empty());
+        assert_eq!(sudo_prefix(&connection), "");
+        assert_eq!(privileged_command(&connection, "docker ps"), "docker ps");
     }
 }

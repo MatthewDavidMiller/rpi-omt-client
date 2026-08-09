@@ -476,6 +476,8 @@ mod desktop {
         host: String,
         user: String,
         password: Zeroizing<String>,
+        sudo_password: Zeroizing<String>,
+        known_hosts: String,
         wifi_ssid: String,
         wifi_password: Zeroizing<String>,
         wifi_connect: bool,
@@ -515,6 +517,8 @@ mod desktop {
                 host: "raspberrypi.local".into(),
                 user: "root".into(),
                 password: Zeroizing::new(String::new()),
+                sudo_password: Zeroizing::new(String::new()),
+                known_hosts: String::new(),
                 wifi_ssid: String::new(),
                 wifi_password: Zeroizing::new(String::new()),
                 wifi_connect: true,
@@ -546,6 +550,14 @@ mod desktop {
         fn connection(&self) -> Result<Connection, String> {
             let password =
                 Secret::new((*self.password).clone()).map_err(|error| error.to_string())?;
+            let sudo_password = if self.sudo_password.is_empty() {
+                None
+            } else {
+                Some(
+                    Secret::new((*self.sudo_password).clone())
+                        .map_err(|error| error.to_string())?,
+                )
+            };
             let connection = Connection {
                 host: self.host.clone(),
                 username: self.user.clone(),
@@ -554,7 +566,12 @@ mod desktop {
                 password: Some(password),
                 key_path: None,
                 key_passphrase: None,
-                sudo_password: None,
+                known_hosts_path: if self.known_hosts.is_empty() {
+                    None
+                } else {
+                    Some(PathBuf::from(&self.known_hosts))
+                },
+                sudo_password,
             };
             omt_deployer_core::validate_connection(&connection)
                 .map_err(|error| error.to_string())?;
@@ -876,6 +893,12 @@ mod desktop {
                     field(ui, "SSH password", |ui| {
                         text_field(ui, &mut self.password, !self.reveal);
                     });
+                    field(ui, "sudo password (optional)", |ui| {
+                        text_field(ui, &mut self.sudo_password, !self.reveal);
+                    });
+                    field(ui, "known_hosts (optional)", |ui| {
+                        text_field(ui, &mut self.known_hosts, false);
+                    });
                     ui.checkbox(&mut self.reveal, "Reveal secrets");
                     ui.add_space(ui.spacing().item_spacing.y);
                     let enabled = self.form().can_connect() && !self.running;
@@ -1011,6 +1034,31 @@ mod desktop {
             options,
             Box::new(|_| Ok(Box::<App>::default())),
         )
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn connection_keeps_ssh_and_sudo_credentials_separate() {
+            let app = App {
+                user: "pi".into(),
+                password: Zeroizing::new("ssh-password".into()),
+                sudo_password: Zeroizing::new("sudo-password".into()),
+                ..App::default()
+            };
+
+            let connection = app.connection().unwrap_or_else(|error| panic!("{error}"));
+            assert_eq!(
+                connection.password.as_ref().map(Secret::expose),
+                Some("ssh-password")
+            );
+            assert_eq!(
+                connection.sudo_password.as_ref().map(Secret::expose),
+                Some("sudo-password")
+            );
+        }
     }
 }
 

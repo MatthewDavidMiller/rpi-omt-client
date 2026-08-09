@@ -50,6 +50,7 @@ impl RemoteResult {
 struct StrictHostKey {
     host: String,
     port: u16,
+    known_hosts: PathBuf,
 }
 
 impl client::Handler for StrictHostKey {
@@ -59,7 +60,12 @@ impl client::Handler for StrictHostKey {
         &mut self,
         server_public_key: &PublicKey,
     ) -> Result<bool, Self::Error> {
-        match keys::check_known_hosts(&self.host, self.port, server_public_key) {
+        match keys::check_known_hosts_path(
+            &self.host,
+            self.port,
+            server_public_key,
+            &self.known_hosts,
+        ) {
             Ok(true) => Ok(true),
             Ok(false) | Err(keys::Error::KeyChanged { .. } | keys::Error::NoHomeDir) => Ok(false),
             Err(error) => Err(russh::Error::from(error)),
@@ -130,7 +136,10 @@ mod ssh_key_alg {
     }
 }
 
-fn known_hosts_path() -> io::Result<PathBuf> {
+fn known_hosts_path(connection: &Connection) -> io::Result<PathBuf> {
+    if let Some(path) = connection.known_hosts_path.as_ref() {
+        return Ok(path.clone());
+    }
     let home = std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))
         .ok_or_else(|| {
@@ -142,8 +151,8 @@ fn known_hosts_path() -> io::Result<PathBuf> {
     Ok(PathBuf::from(home).join(".ssh").join("known_hosts"))
 }
 
-fn ensure_known_hosts_present() -> io::Result<()> {
-    let path = known_hosts_path()?;
+fn ensure_known_hosts_present(connection: &Connection) -> io::Result<PathBuf> {
+    let path = known_hosts_path(connection)?;
     if !path.is_file() {
         return Err(io::Error::new(
             io::ErrorKind::NotFound,
@@ -153,7 +162,7 @@ fn ensure_known_hosts_present() -> io::Result<()> {
             ),
         ));
     }
-    Ok(())
+    Ok(path)
 }
 
 fn map_err(error: impl std::fmt::Display) -> io::Error {
@@ -167,11 +176,11 @@ pub struct SshSession {
 
 impl SshSession {
     pub fn connect(connection: &Connection) -> io::Result<Self> {
-        ensure_known_hosts_present()?;
+        let known_hosts = ensure_known_hosts_present(connection)?;
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
-        let handle = runtime.block_on(connect_async(connection))?;
+        let handle = runtime.block_on(connect_async(connection, known_hosts))?;
         Ok(Self { runtime, handle })
     }
 
@@ -196,7 +205,10 @@ impl SshSession {
     }
 }
 
-async fn connect_async(connection: &Connection) -> io::Result<client::Handle<StrictHostKey>> {
+async fn connect_async(
+    connection: &Connection,
+    known_hosts: PathBuf,
+) -> io::Result<client::Handle<StrictHostKey>> {
     let config = client::Config {
         inactivity_timeout: Some(COMMAND_IDLE_TIMEOUT),
         preferred: secure_preferred(),
@@ -205,6 +217,7 @@ async fn connect_async(connection: &Connection) -> io::Result<client::Handle<Str
     let handler = StrictHostKey {
         host: connection.host.clone(),
         port: connection.port,
+        known_hosts,
     };
     let mut handle = timeout(
         CONNECT_TIMEOUT,
@@ -309,6 +322,9 @@ async fn run_command(
         }
         tokio::select! {
             message = channel.wait() => {
+                if command_complete(message.as_ref()) {
+                    break;
+                }
                 match message {
                     Some(ChannelMsg::Data { ref data }) => {
                         append_bounded(&mut stdout, data)?;
@@ -322,7 +338,11 @@ async fn run_command(
                         exit_code = i32::try_from(exit_status).unwrap_or(1);
                         last_activity = time::Instant::now();
                     }
-                    Some(ChannelMsg::Eof) | None => break,
+                    Some(ChannelMsg::Close) | None => {}
+                    // This includes SSH EOF, which closes the remote process's
+                    // output stream but not the channel. OpenSSH sends the
+                    // exit-status request after EOF, so stopping there would
+                    // discard a successful status and report exit 1.
                     Some(_) => {
                         last_activity = time::Instant::now();
                     }
@@ -347,6 +367,10 @@ async fn run_command(
         stdout: String::from_utf8_lossy(&stdout).into_owned(),
         stderr: String::from_utf8_lossy(&stderr).into_owned(),
     })
+}
+
+fn command_complete(message: Option<&ChannelMsg>) -> bool {
+    matches!(message, Some(ChannelMsg::Close) | None)
 }
 
 fn append_bounded(target: &mut Vec<u8>, data: &[u8]) -> io::Result<()> {
@@ -417,6 +441,7 @@ async fn upload_file(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::AuthMethod;
 
     #[test]
     fn preferred_excludes_legacy_rsa_sha1() {
@@ -426,5 +451,34 @@ mod tests {
                 !matches!(algorithm, russh::keys::Algorithm::Rsa { hash: None })
             })
         );
+    }
+
+    #[test]
+    fn an_explicit_known_hosts_path_overrides_the_home_default() {
+        let connection = Connection {
+            host: "pi.local".into(),
+            username: "pi".into(),
+            port: 22,
+            auth: AuthMethod::Password,
+            password: None,
+            key_path: None,
+            key_passphrase: None,
+            known_hosts_path: Some(PathBuf::from("/trusted/known_hosts")),
+            sudo_password: None,
+        };
+        assert_eq!(
+            known_hosts_path(&connection).unwrap_or_else(|error| panic!("{error}")),
+            PathBuf::from("/trusted/known_hosts")
+        );
+    }
+
+    #[test]
+    fn eof_is_not_command_completion() {
+        assert!(!command_complete(Some(&ChannelMsg::Eof)));
+        assert!(!command_complete(Some(&ChannelMsg::ExitStatus {
+            exit_status: 0
+        })));
+        assert!(command_complete(Some(&ChannelMsg::Close)));
+        assert!(command_complete(None));
     }
 }

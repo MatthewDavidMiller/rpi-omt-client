@@ -32,6 +32,10 @@ require '[[ "${line_count}" -eq 4' "request schema must have exactly four fields
 require '[[ "${request_id}" =~ ^[0-9a-f]{32}$ ]]' "request IDs must be fixed nonces"
 require 'replayed-request' "accepted request IDs must not replay"
 require 'publish_result "${request_id}" accepted scheduled' "acceptance must be correlated"
+require 'reboot_fixed_file_identity "${RESULT_FILE}"' \
+    "result publication must validate empty and non-empty fixed regular files"
+require 'logger --tag omt-client-reboot "accepted reboot request ${request_id}" || true' \
+    "a syslog failure must not abort an accepted reboot"
 require 'exec /sbin/reboot' "Alpine reboot command must be fixed"
 if grep -q 'systemctl' "${HELPER}"; then
     echo "FAIL: Alpine reboot helper must not call systemd" >&2

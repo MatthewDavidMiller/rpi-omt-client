@@ -78,6 +78,7 @@ pub struct Connection {
     pub password: Option<Secret>,
     pub key_path: Option<PathBuf>,
     pub key_passphrase: Option<Secret>,
+    pub known_hosts_path: Option<PathBuf>,
     pub sudo_password: Option<Secret>,
 }
 #[derive(Clone, Debug)]
@@ -154,6 +155,13 @@ pub fn validate_connection(value: &Connection) -> Result<(), ValidationError> {
     }
     if value.port == 0 {
         return Err(ValidationError("SSH port must be between 1 and 65535."));
+    }
+    if value
+        .known_hosts_path
+        .as_ref()
+        .is_some_and(|path| !path.is_file())
+    {
+        return Err(ValidationError("OpenSSH known_hosts file does not exist."));
     }
     match value.auth {
         AuthMethod::Password
