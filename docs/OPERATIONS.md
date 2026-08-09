@@ -105,7 +105,8 @@ receiver.
   the video limit table in [CONFIGURATION.md](CONFIGURATION.md).
 - Video without audio: inspect ALSA devices and ELD; video remains degraded.
 - Service does not start after install: confirm Alpine loaded `linux-rpi`, then
-  inspect `/dev/dri`, `/dev/snd`, `dmesg`, and `rc-service omt-client status`.
+  inspect `/dev/dri`, `/dev/snd`, `dmesg`, Docker readiness, and
+  `rc-service omt-client status`.
 - Wi-Fi save fails: reboot once after installation, then verify `wlan0`,
   `rc-service wpa_supplicant status`, and the `/run/wpa_supplicant/wlan0`
   control socket. The installer enables durable configuration updates.

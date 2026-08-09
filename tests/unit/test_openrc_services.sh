@@ -72,6 +72,10 @@ grep -Eq 'supervise-daemon "\$\{RC_SVCNAME\}" --stop' "${AVAHI_PROXY}" || \
 # around a 256 MiB container. The Pi firmware puts cgroup_disable=memory ahead
 # of the installer's cgroup_enable=memory, so this is checked, not assumed.
 APPLIANCE="${OPENRC_DIR}/omt-client"
+grep -Eq 'until docker info' "${APPLIANCE}" || \
+    fail "the appliance must wait for Docker API readiness, not only its OpenRC state"
+grep -Eq 'docker_wait.*-ge 30' "${APPLIANCE}" || \
+    fail "the Docker readiness wait must have a fixed upper bound"
 grep -Eq 'cgroup\.controllers' "${APPLIANCE}" || \
     fail "the appliance must confirm the memory controller before starting uncapped"
 grep -Eq '/proc/cgroups' "${APPLIANCE}" || \

@@ -43,7 +43,11 @@ impl ManagementAction {
         match self {
             Self::Status => &["docker", "ps", "--filter", "name=omt-client"],
             Self::Logs => &["docker", "logs", "--tail", "500", "omt-client"],
-            Self::Restart => &["docker", "restart", "omt-client"],
+            // Manage the OpenRC service rather than assuming its container
+            // already exists. A clean install deliberately defers first
+            // startup until reboot, and rc-service can both start that state
+            // and restart an existing container.
+            Self::Restart => &["rc-service", "omt-client", "restart"],
         }
     }
 }
@@ -420,6 +424,14 @@ mod tests {
         assert!(valid_username("pi_admin-1"));
         assert!(valid_remote_directory("/opt/omt-client"));
         assert_eq!(shell_quote("a'b"), "'a'\\''b'");
+    }
+    #[test]
+    fn restart_manages_the_service_even_before_first_container_creation() {
+        assert_eq!(
+            ManagementAction::Restart.remote_argv(),
+            &["rc-service", "omt-client", "restart"]
+        );
+        assert!(!ManagementAction::Restart.remote_argv().contains(&"docker"));
     }
     /// One encoder now serves the PSK, the staging token, and the SSID, so its
     /// output has to stay byte-for-byte what each of those callers published

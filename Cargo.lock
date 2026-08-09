@@ -2897,7 +2897,7 @@ dependencies = [
 
 [[package]]
 name = "omt-deployer-core"
-version = "0.9.39"
+version = "0.9.40"
 dependencies = [
  "getrandom 0.3.4",
  "hmac 0.12.1",
@@ -2913,7 +2913,7 @@ dependencies = [
 
 [[package]]
 name = "omt-protocol"
-version = "0.9.39"
+version = "0.9.40"
 dependencies = [
  "serde",
  "serde_json",
@@ -2922,7 +2922,7 @@ dependencies = [
 
 [[package]]
 name = "omt-receiver"
-version = "0.9.39"
+version = "0.9.40"
 dependencies = [
  "alsa",
  "async-io",
@@ -2940,7 +2940,7 @@ dependencies = [
 
 [[package]]
 name = "omt-receiver-core"
-version = "0.9.39"
+version = "0.9.40"
 dependencies = [
  "omt-protocol",
  "serde",
@@ -3470,7 +3470,7 @@ dependencies = [
 
 [[package]]
 name = "rpi-omt-deploy"
-version = "0.9.39"
+version = "0.9.40"
 dependencies = [
  "clap",
  "omt-deployer-core",
@@ -3482,7 +3482,7 @@ dependencies = [
 
 [[package]]
 name = "rpi-omt-deployer"
-version = "0.9.39"
+version = "0.9.40"
 dependencies = [
  "eframe",
  "egui",
@@ -4526,7 +4526,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "vmx-decoder"
-version = "0.9.39"
+version = "0.9.40"
 dependencies = [
  "serde",
  "serde_json",

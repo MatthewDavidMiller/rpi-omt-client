@@ -126,6 +126,12 @@ filtered Avahi D-Bus socket, diagnostics state, and the host-action directory.
 The container cannot invoke OpenRC or write the directory containing host
 action files.
 
+The appliance OpenRC service waits for Docker's API with a bounded timeout
+before invoking Compose. Alpine's supervised Docker service can report itself
+started while dockerd is still initializing containerd; ordering only on the
+OpenRC service otherwise leaves a clean boot stopped after a one-time socket
+race.
+
 Fresh diagnostics use a separate fixed-inode request channel. The Web process
 writes a versioned nonce and `capture_pcap=0|1`, collects container-side data
 while the root-owned oneshot runs, and accepts only a stable bounded host

@@ -131,7 +131,9 @@ alternate `known_hosts` path; the CLI equivalents are the `sudo_password` and
 `--known-hosts <path>`. Connect validates Alpine 3.24
 aarch64 and a supported device-tree model.
 Deploy builds, verifies, uploads, and installs the capsule. Manage reads
-container status/logs or restarts it through sudo for a non-root SSH account.
+container status/logs or restarts the OpenRC service through sudo for a
+non-root SSH account. Restart uses the service boundary so it can also start a
+freshly installed appliance whose container has not been created yet.
 Wi-Fi updates the running
 `wpa_supplicant` through its control socket and stores a derived WPA PSK rather
 than sending the plaintext passphrase to a command line.
