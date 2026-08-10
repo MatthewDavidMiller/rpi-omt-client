@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """A synthetic OMT sender, enough to drive a receiver's ingest path.
 
-There is no OMT sender in this repository and no encoder for the VMX codec, so
-until this existed the receiver's network path could only be exercised against
-real third-party sending hardware -- which meant, in practice, that it was
-never exercised at all.
+This older fixture intentionally sends filler rather than decodable VMX media;
+it remains useful for narrow ingest and error-path tests. For a legitimate A/V
+source backed by reference-encoded VMX frames, use the first-party Rust sender
+documented in ``docs/OMT_TEST_SENDER.md``.
 
 This speaks only the framing in `crates/omt-protocol`: a 16-byte frame header
 followed by `data_length` bytes, which for video begin with the 32-byte video

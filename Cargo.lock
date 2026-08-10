@@ -2948,6 +2948,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "omt-test-sender"
+version = "0.9.40"
+dependencies = [
+ "omt-protocol",
+]
+
+[[package]]
 name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"

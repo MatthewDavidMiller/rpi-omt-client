@@ -82,6 +82,7 @@ run_test "Flask App Syntax" "${PROJECT_ROOT}/tests/unit/test_flask_app_syntax.sh
 run_test "OMT Controller" "${PROJECT_ROOT}/tests/unit/test_control_omt.sh"
 run_test "Entrypoint Logic" "${PROJECT_ROOT}/tests/unit/test_entrypoint_logic.sh"
 run_test "Start OMT Script" "${PROJECT_ROOT}/tests/unit/test_start_omt.sh"
+run_test "OMT Test Sender" "${PROJECT_ROOT}/tests/unit/test_omt_test_sender.sh"
 run_test "Host Diagnostics" "${PROJECT_ROOT}/tests/unit/test_host_diagnostics.sh"
 run_test "Host Event Watcher" "${PROJECT_ROOT}/tests/unit/test_host_event_watcher.sh"
 run_test "Host Reboot Bridge" "${PROJECT_ROOT}/tests/unit/test_host_reboot.sh"

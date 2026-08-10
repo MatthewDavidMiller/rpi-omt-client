@@ -5,6 +5,7 @@ members = [
   "crates/vmx-decoder",
   "crates/omt-receiver-core",
   "crates/omt-receiver",
+  "crates/omt-test-sender",
   "crates/omt-deployer-core",
   "crates/rpi-omt-deploy",
   "crates/rpi-omt-deployer",

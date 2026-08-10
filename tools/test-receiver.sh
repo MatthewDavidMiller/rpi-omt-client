@@ -1,12 +1,16 @@
 #!/bin/bash
-# Test the Rust receiver crates and their preserved CLI contract.
+# Test the Rust receiver, sender, and their preserved CLI contracts.
 set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${PROJECT_ROOT}"
 command -v cargo >/dev/null 2>&1 || { echo "ERROR: cargo is required. Run: make install" >&2; exit 1; }
-cargo test --locked -p omt-protocol -p vmx-decoder -p omt-receiver-core -p omt-receiver
-cargo build --locked -p omt-receiver
+cargo test --locked -p omt-protocol -p vmx-decoder -p omt-receiver-core -p omt-receiver \
+    -p omt-test-sender
+cargo build --locked -p omt-receiver -p omt-test-sender
 tests/native/test_receiver_cli.sh "${PROJECT_ROOT}/target/debug/omt-receiver"
+tests/native/test_sender_receiver.sh \
+    "${PROJECT_ROOT}/target/debug/omt-test-sender" \
+    "${PROJECT_ROOT}/target/debug/omt-receiver"
 python3 tests/native/test_discovery_server.py "${PROJECT_ROOT}/target/debug/omt-receiver"
 python3 tests/native/test_discovery_multi.py "${PROJECT_ROOT}/target/debug/omt-receiver"
 

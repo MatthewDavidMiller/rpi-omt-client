@@ -19,19 +19,23 @@ COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY .cargo/ .cargo/
 # Cargo parses every declared workspace member before selecting `-p`, and
 # `--locked` requires that workspace shape to remain intact. Copy the deployer
-# manifests with inert targets, while keeping their real source out of this
-# build context; a GUI/SSH-only edit then cannot force another slow emulated
-# ARM64 receiver build.
+# and test-sender manifests with inert targets, while keeping their real source
+# out of this build context; a GUI/SSH-only or test-tooling edit then cannot
+# force another slow emulated ARM64 receiver build, and neither the deployer
+# nor the test sender can reach the appliance image.
 COPY crates/omt-deployer-core/Cargo.toml crates/omt-deployer-core/Cargo.toml
 COPY crates/rpi-omt-deploy/Cargo.toml crates/rpi-omt-deploy/Cargo.toml
 COPY crates/rpi-omt-deployer/Cargo.toml crates/rpi-omt-deployer/Cargo.toml
+COPY crates/omt-test-sender/Cargo.toml crates/omt-test-sender/Cargo.toml
 RUN mkdir -p \
         crates/omt-deployer-core/src \
         crates/rpi-omt-deploy/src \
         crates/rpi-omt-deployer/src \
+        crates/omt-test-sender/src \
     && : > crates/omt-deployer-core/src/lib.rs \
     && printf 'fn main() {}\n' > crates/rpi-omt-deploy/src/main.rs \
-    && printf 'fn main() {}\n' > crates/rpi-omt-deployer/src/main.rs
+    && printf 'fn main() {}\n' > crates/rpi-omt-deployer/src/main.rs \
+    && printf 'fn main() {}\n' > crates/omt-test-sender/src/main.rs
 COPY crates/omt-protocol/ crates/omt-protocol/
 COPY crates/omt-receiver-core/ crates/omt-receiver-core/
 COPY crates/vmx-decoder/ crates/vmx-decoder/

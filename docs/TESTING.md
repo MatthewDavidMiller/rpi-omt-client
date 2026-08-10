@@ -39,6 +39,16 @@ make test
 ./scripts/test-local.sh --full
 ```
 
+For full network, codec, audio, and real-Pi playback validation, build the
+first-party Rust sender with `make build-omt-sender`. Its source-scoped firewall
+setup, lifecycle commands, ARM64 build, and end-to-end checklist are documented
+in [OMT_TEST_SENDER.md](OMT_TEST_SENDER.md). The normal Rust gate compiles and
+tests it; the shell gate also asserts that its manifest adds no third-party
+package dependency. Before calling a sender build Pi-compatible, build
+`aarch64-unknown-linux-musl` and run it on a real Alpine aarch64 Pi. Pi 4 and Pi
+5 share that userspace ABI, while receiver throughput and HDMI behavior still
+require a display-path check on the board being qualified.
+
 `make test-py` covers validation, state, persistent auth, CSRF/rate limits,
 routes, diagnostics, and runtime adapters at a **100%** branch-coverage floor.
 The floor is 100 rather than a margin below it because a margin is only ever

@@ -18,6 +18,8 @@
 | VMX bitstream and colour conversion | `crates/vmx-decoder/src/bitstream.rs`, `crates/vmx-decoder/src/convert.rs` |
 | Inverse DCT: portable definition, AArch64 NEON kernel, and the choice between them | `crates/vmx-decoder/src/idct/scalar.rs`, `crates/vmx-decoder/src/idct/neon.rs`, `crates/vmx-decoder/src/idct/mod.rs` |
 | VMX conformance vectors captured from the reference decoder | `tests/vectors/vmx/` |
+| First-party Rust OMT A/V test sender | `crates/omt-test-sender/`, `scripts/build-omt-test-sender.sh`, `scripts/omt-test-sender.sh` |
+| Source-scoped sender firewall helper | `scripts/configure-omt-test-sender-firewall.sh` |
 | Shared validation, status, and forbidden-code-point contracts | `tests/schema/` |
 | Per-artifact SBOM closures from `Cargo.lock` | `scripts/cargo_lock.py` |
 | OMT provenance | `third_party/omt/PROVENANCE.md`, `third_party/omt/libvmx/LICENSE.txt` |

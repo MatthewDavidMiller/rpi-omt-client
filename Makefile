@@ -1,7 +1,7 @@
 # Raspberry Pi OMT Client Build System
 # Usage: make [target]
 
-.PHONY: help install setup-arm64-emulation build build-arm64 build-amd64 build-deployer build-windows-deployer deploy up down logs lint test test-quick test-py test-receiver test-deployer test-setup security-scan clean
+.PHONY: help install setup-arm64-emulation build build-arm64 build-amd64 build-deployer build-windows-deployer build-omt-sender omt-sender-start omt-sender-stop omt-sender-status omt-sender-firewall-allow omt-sender-firewall-remove deploy up down logs lint test test-quick test-py test-receiver test-deployer test-setup security-scan clean
 
 IMAGE_NAME   := omt-client
 ARM64_TARBALL := omt-client-arm64.tar.gz
@@ -9,6 +9,7 @@ DEV_COMPOSE  := docker-compose.dev.yml
 BUILD_METADATA_DIR := .build
 RPI_OMT_CLIENT_VERSION ?= $(shell ./scripts/detect-version.sh "$(CURDIR)")
 TEST_PYTHON := tests/.venv/bin/python
+OMT_SENDER_TARGET ?= auto
 
 # Default target
 help:
@@ -20,6 +21,7 @@ help:
 	@echo "  build         Alias for build-arm64"
 	@echo "  build-deployer Test and publish the native deployer for this host"
 	@echo "  build-windows-deployer  Cross-compile the Windows x86-64 deployer (Linux host)"
+	@echo "  build-omt-sender  Build the first-party Rust OMT A/V sender"
 	@echo ""
 	@echo "Deploy targets:"
 	@echo "  deploy HOST=user@ip  Copy ARM64 image to Pi and start container"
@@ -30,13 +32,16 @@ help:
 	@echo "  up            Start local dev container (amd64)"
 	@echo "  down          Stop local dev container"
 	@echo "  logs          Follow local dev container logs"
+	@echo "  omt-sender-start/status/stop  Manage the local OMT A/V test sender"
+	@echo "  omt-sender-firewall-allow SOURCE=IP_OR_CIDR  Allow a receiver source"
+	@echo "  omt-sender-firewall-remove SOURCE=IP_OR_CIDR Remove that allowance"
 	@echo ""
 	@echo "Quality targets:"
 	@echo "  lint          Run ruff + hadolint + shellcheck + yamllint"
 	@echo "  test          Run all tests (unit + live container build)"
 	@echo "  test-quick    Run every unit suite, no container engine (~1m)"
 	@echo "  test-py       Run Python unit tests only (requires test-setup)"
-	@echo "  test-receiver Build and test the Rust receiver"
+	@echo "  test-receiver Build and test the Rust receiver and test sender"
 	@echo "  test-deployer Build and test the Rust deployer"
 	@echo "  test-setup    Bootstrap Python test tooling"
 	@echo "  security-scan Run Trivy filesystem + image scans"
@@ -80,6 +85,32 @@ build-deployer:
 # Cross-compile the Windows x86-64 deployer from Linux with mingw-w64.
 build-windows-deployer:
 	RPI_OMT_CLIENT_VERSION="$(RPI_OMT_CLIENT_VERSION)" ./scripts/build-windows-deployer.sh
+
+build-omt-sender:
+	./scripts/build-omt-test-sender.sh --target "$(OMT_SENDER_TARGET)"
+
+omt-sender-start:
+	./scripts/omt-test-sender.sh start
+
+omt-sender-stop:
+	./scripts/omt-test-sender.sh stop
+
+omt-sender-status:
+	./scripts/omt-test-sender.sh status
+
+omt-sender-firewall-allow:
+	@if [ -z "$(SOURCE)" ]; then \
+		echo "ERROR: SOURCE is required. Usage: make $@ SOURCE=<receiver-ip-or-cidr>"; \
+		exit 1; \
+	fi
+	./scripts/configure-omt-test-sender-firewall.sh allow "$(SOURCE)"
+
+omt-sender-firewall-remove:
+	@if [ -z "$(SOURCE)" ]; then \
+		echo "ERROR: SOURCE is required. Usage: make $@ SOURCE=<receiver-ip-or-cidr>"; \
+		exit 1; \
+	fi
+	./scripts/configure-omt-test-sender-firewall.sh remove "$(SOURCE)"
 
 # Deploy ARM64 image to Raspberry Pi
 # Usage: make deploy HOST=pi@192.168.1.100
