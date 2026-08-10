@@ -79,12 +79,23 @@ if [[ "${CONTAINER_ENGINE_KIND}" == "podman" ]]; then
     "${CONTAINER_ENGINE}" save --format docker-archive \
         --output "${staged_artifact}" "${podman_reference}"
 else
+    # Git Bash rewrites an argument that is a POSIX path into a Windows one
+    # before the native docker.exe sees it, which is what makes --file and
+    # --iidfile work here. It does not reach inside a comma-separated option
+    # value, so buildx would be handed dest=/c/Users/... and resolve it against
+    # the current drive as C:\c\Users\... . cygpath exists only where that
+    # translation is needed; -m keeps forward slashes, which the CSV parser
+    # this value is read by does not have to escape.
+    output_destination="${staged_artifact}"
+    if command -v cygpath >/dev/null 2>&1; then
+        output_destination="$(cygpath -m "${staged_artifact}")"
+    fi
     "${CONTAINER_ENGINE}" buildx build --platform linux/arm64 \
         --file "${PROJECT_ROOT}/deploy/Dockerfile" \
         --build-arg "RPI_OMT_CLIENT_VERSION=${RPI_OMT_CLIENT_VERSION}" \
         --build-arg "RECEIVER_SOURCE_FINGERPRINT=${RECEIVER_SOURCE_FINGERPRINT}" \
         --iidfile "${staged_iid}" \
-        --output "type=docker,dest=${staged_artifact}" \
+        --output "type=docker,dest=${output_destination}" \
         -t "${IMAGE_NAME}" "${PROJECT_ROOT}"
 fi
 

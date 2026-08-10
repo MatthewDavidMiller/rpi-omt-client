@@ -131,9 +131,10 @@ grep -Eq '^flags: .*F' "${handler}" || {
     exit 1
 }
 
-if ! timeout 120 "${CONTAINER_ENGINE}" run --rm --platform linux/arm64 \
-    --entrypoint /bin/sh "${CHECK_IMAGE}" \
-    -c 'test "$(uname -m)" = "aarch64"' >/dev/null; then
+# The machine name is the container's command, not an entrypoint override, so
+# this is the same probe scripts/check-arm64-emulation.sh runs.
+if [[ "$(timeout 120 "${CONTAINER_ENGINE}" run --rm --platform linux/arm64 \
+    "${CHECK_IMAGE}" uname -m 2>/dev/null | tail -n 1)" != "aarch64" ]]; then
     echo "ERROR: ${CONTAINER_ENGINE} could not execute the ARM64 verification image." >&2
     exit 1
 fi

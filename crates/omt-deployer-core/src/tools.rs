@@ -651,18 +651,37 @@ fn report_install(
     }
 }
 
+/// Whether an ARM64 probe ran, and ran on an ARM64 kernel.
+///
+/// The machine name is the last line of the output rather than all of it: an
+/// engine that has to pull the image first prints progress ahead of the
+/// answer, and that progress is not an answer either way.
+fn reports_aarch64(result: &ProcessResult) -> bool {
+    result.exit_code == 0
+        && result
+            .output
+            .lines()
+            .rfind(|line| !line.trim().is_empty())
+            .map(str::trim)
+            == Some("aarch64")
+}
+
 /// Run the pinned ARM64 probe image and report how it went.
+///
+/// `uname -m` is passed as the container's command rather than through
+/// `--entrypoint /bin/sh`, which keeps this identical to the probe in
+/// `scripts/check-arm64-emulation.sh` -- where a leading-slash argument is not
+/// survivable, because Git Bash rewrites it into a Windows path before the
+/// native docker.exe ever sees it.
 fn probe_arm64(engine: &Path, cancellation: &Arc<AtomicBool>) -> io::Result<ProcessResult> {
     let arguments = [
         "run",
         "--rm",
         "--platform",
         "linux/arm64",
-        "--entrypoint",
-        "/bin/sh",
         EMULATION_PROBE_IMAGE,
-        "-c",
-        "test \"$(uname -m)\" = aarch64",
+        "uname",
+        "-m",
     ]
     .map(str::to_owned);
     run_process(
@@ -762,7 +781,7 @@ pub fn ensure_arm64_emulation(
     }
     progress("Running a pinned ARM64 container to confirm emulation is registered...");
     let probe = probe_arm64(&engine, cancellation)?;
-    if probe.exit_code == 0 {
+    if reports_aarch64(&probe) {
         progress("ARM64 emulation is registered on this workstation.");
         return Ok(());
     }
@@ -789,7 +808,7 @@ pub fn ensure_arm64_emulation(
     }
     progress("Re-running the pinned ARM64 container...");
     let confirmed = probe_arm64(&engine, cancellation)?;
-    if confirmed.exit_code != 0 {
+    if !reports_aarch64(&confirmed) {
         return Err(io::Error::other(emulation_failure(
             kind,
             ON_WINDOWS,
@@ -1102,6 +1121,34 @@ mod tests {
         // Nothing to quote when the engine printed nothing, and a message that
         // ends in a blank line reads like output was lost.
         assert!(!unix.ends_with('\n'), "{unix}");
+    }
+
+    /// The reported failure: a Windows workstation whose emulation was
+    /// registered and working, told that it was not. The probe named
+    /// `/bin/sh` as an entrypoint, and Git Bash rewrote that argument into a
+    /// Windows path before Docker saw it. The verdict is now the machine name
+    /// the container printed, which cannot be reached by an argument at all --
+    /// and an engine that has to pull the image first prints progress ahead of
+    /// that name.
+    #[test]
+    fn the_probe_verdict_is_the_machine_name_the_container_printed() {
+        let result = |exit_code, output: &str| ProcessResult {
+            exit_code,
+            output: output.to_owned(),
+        };
+        assert!(reports_aarch64(&result(0, "aarch64\n")));
+        assert!(reports_aarch64(&result(
+            0,
+            "Unable to find image locally\nbookworm-slim: Pulling from library/debian\naarch64\r\n"
+        )));
+        assert!(!reports_aarch64(&result(0, "x86_64\n")));
+        assert!(!reports_aarch64(&result(
+            1,
+            "exec /bin/sh: exec format error"
+        )));
+        // Answering and then failing is not an answer: the run has to have
+        // completed for the name it printed to describe a working emulator.
+        assert!(!reports_aarch64(&result(125, "aarch64\n")));
     }
 
     /// Registration is attempted before the message is written, so the two
