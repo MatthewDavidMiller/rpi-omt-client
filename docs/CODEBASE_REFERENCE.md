@@ -128,12 +128,22 @@ are POST and CSRF protected.
 | Deployment contract | `deploy/manifest-v3.txt`, `deploy/transaction.sh` |
 | CLI deployment | `scripts/deploy.sh` |
 | Deployer validation, fixed actions, SSH/SFTP, deploy, and Wi-Fi | `crates/omt-deployer-core/src/lib.rs`, `crates/omt-deployer-core/src/ssh.rs`, `crates/omt-deployer-core/src/ops.rs` |
+| Workstation tooling: executable discovery, prerequisites, winget installs, and the image-build plan | `crates/omt-deployer-core/src/tools.rs` |
 | Secure command-line deployer | `crates/rpi-omt-deploy/src/main.rs` |
 | Deployer CLI contract | `tests/native/test_deployer_cli.sh` |
 | egui desktop deployer, its button-gating and display-scaling rules, and embedded legal texts | `crates/rpi-omt-deployer/` |
 | Hash-locked Rust dependencies and supply-chain gates | `Cargo.lock`, `deny.toml`, `supply-chain/`, `scripts/check-supply-chain.sh` |
 | Windows cross build | `scripts/build-windows-deployer.sh` |
 | Local toolchain provisioning | `scripts/install-dev-deps.sh`, `scripts/install-hadolint.sh`, `scripts/install-trivy.sh`, `scripts/install-arm64-emulation.sh` |
+
+`tools.rs` is where the deployer's answers about the *operator's* machine live,
+as opposed to `ops.rs`, which is about the Pi. Every rule in it is a pure
+function over probed values -- which `PATHEXT` suffixes to try, where Git for
+Windows installs, whether a `bash.exe` is really the WSL launcher, which
+program the image build should be spawned as -- because a Linux publisher is
+the only host this project's gates ever run on. `Prerequisite` rows are shared
+verbatim by the GUI's Setup view and the CLI's `prerequisites` subcommand, so
+the two cannot describe the same workstation differently.
 
 The native deployers default to the user's OpenSSH `known_hosts` file and can
 select an alternate verified file when deployment automation keeps host keys

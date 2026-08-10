@@ -2,8 +2,9 @@
 
 use clap::{Args, Parser, Subcommand};
 use omt_deployer_core::{
-    AuthMethod, Connection, DeployOptions, ManagementAction, Secret, WifiSettings, apply_wifi,
-    deploy, load_manifest, manage, validate_connection, validate_options, validate_wifi,
+    AuthMethod, Connection, DeployOptions, ManagementAction, ON_WINDOWS, Prerequisite, Secret,
+    WifiSettings, apply_wifi, check_arm64_emulation, deploy, install_packages, load_manifest,
+    manage, missing_packages, prerequisites, validate_connection, validate_options, validate_wifi,
 };
 use serde::{Deserialize, Serialize};
 use std::io::{self, Read};
@@ -44,12 +45,26 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     Check,
+    /// Report the local tooling a deployment needs from this workstation.
+    Prerequisites(PrerequisiteArgs),
     SetupEmulation,
     Deploy(DeployArgs),
     Status,
     Logs,
     Restart,
     Wifi(WifiArgs),
+}
+#[derive(Args)]
+struct PrerequisiteArgs {
+    /// Install the missing prerequisites that have a winget package. Windows
+    /// only, and each installer raises its own approval prompt.
+    #[arg(long)]
+    install: bool,
+    /// Also run a pinned ARM64 container to prove emulation is registered.
+    #[arg(long)]
+    check_emulation: bool,
+    #[arg(long, default_value = "omt-client-arm64.tar.gz")]
+    tarball_name: String,
 }
 #[derive(Args)]
 struct DeployArgs {
@@ -167,7 +182,27 @@ fn connection(cli: &Cli, mut values: SecretInput) -> Result<Connection, String> 
     Ok(connection)
 }
 fn needs_connection(command: &Command) -> bool {
-    !matches!(command, Command::Check | Command::SetupEmulation)
+    !matches!(
+        command,
+        Command::Check | Command::Prerequisites(_) | Command::SetupEmulation
+    )
+}
+
+/// One prerequisite as a line an operator or a wrapping script can read.
+fn prerequisite_line(row: &Prerequisite) -> String {
+    let mark = if row.satisfied {
+        "ok"
+    } else if row.required {
+        "MISSING"
+    } else {
+        "optional"
+    };
+    let mut line = format!("[{mark}] {}: {}", row.name, row.detail);
+    if !row.satisfied && !row.remedy.is_empty() {
+        line.push_str(" -- ");
+        line.push_str(&row.remedy);
+    }
+    line
 }
 fn progress_emitter(json: bool) -> impl FnMut(&str) {
     move |message: &str| {
@@ -209,6 +244,48 @@ fn run(cli: Cli) -> Result<(), (i32, String)> {
                 cli.json,
                 "result",
                 "Project capsule passed local validation.",
+                Some(true),
+            );
+        }
+        Command::Prerequisites(args) => {
+            let root = cli
+                .project
+                .clone()
+                .ok_or_else(|| (2, "--project is required".into()))?;
+            let mut progress = progress_emitter(cli.json);
+            if args.install {
+                let rows = prerequisites(&root, &args.tarball_name, &cancellation);
+                install_packages(&missing_packages(&rows), &cancellation, &mut progress)
+                    .map_err(|e| (1, e.to_string()))?;
+            }
+            // Probed after any installation, so the report describes the
+            // machine as it now is rather than as it was.
+            let rows = prerequisites(&root, &args.tarball_name, &cancellation);
+            for row in &rows {
+                emit(cli.json, "progress", &prerequisite_line(row), None);
+            }
+            if args.check_emulation {
+                check_arm64_emulation(&cancellation, &mut progress)
+                    .map_err(|e| (1, e.to_string()))?;
+            }
+            let blocking = rows.iter().filter(|row| row.blocking()).count();
+            if blocking > 0 {
+                return Err((
+                    1,
+                    format!(
+                        "{blocking} required workstation prerequisite(s) are missing{}",
+                        if ON_WINDOWS && !args.install {
+                            "; rerun with --install to install the ones winget can supply"
+                        } else {
+                            ""
+                        }
+                    ),
+                ));
+            }
+            emit(
+                cli.json,
+                "result",
+                "This workstation can build and deploy the appliance.",
                 Some(true),
             );
         }

@@ -3,8 +3,8 @@
 use crate::ssh::{RemoteResult, SshSession};
 use crate::{
     Connection, DeployOptions, ManagementAction, Secret, WifiSettings, derive_wpa_psk, hex_encode,
-    load_manifest, random_token, run_process, secure_relative, sha256_file, shell_quote,
-    validate_connection, validate_options, validate_wifi,
+    image_build_plan, load_manifest, random_token, run_process, secure_relative, sha256_file,
+    shell_quote, validate_connection, validate_options, validate_wifi,
 };
 use std::fs;
 use std::io;
@@ -386,7 +386,8 @@ fn build_image(
             return Err(io::Error::new(
                 io::ErrorKind::NotFound,
                 format!(
-                    "{} not found; run make build-arm64 or enable image build",
+                    "{} not found; build the appliance image or copy an archive built \
+                     elsewhere into the project root",
                     tarball.display()
                 ),
             ));
@@ -394,10 +395,16 @@ fn build_image(
         return Ok(());
     }
     progress("Building the ARM64 appliance image...");
+    // Resolved before the spawn, so a workstation without the build tooling is
+    // told which tool is missing and how to get it. The spawn's own error is
+    // "program not found", which named neither.
+    let plan = image_build_plan(&options.tarball_name)?;
+    progress(&format!("Running {}", plan.summary()));
     let result = run_process(
-        "make",
-        &["build-arm64".into()],
+        &plan.program,
+        &plan.args,
         &options.project_root,
+        &plan.env,
         Arc::clone(cancellation),
     )?;
     if result.exit_code != 0 {

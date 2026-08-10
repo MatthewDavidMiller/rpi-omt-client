@@ -58,6 +58,27 @@ trap 'rm -rf "${empty}"' EXIT INT TERM
 expect_status 1 "check reports a directory with no manifest as a failed run" \
     "${deployer}" --project "${empty}" check
 
+# `prerequisites` describes the workstation, so it needs no remote either. It
+# reports a directory that is not a project as a failed run rather than a usage
+# error: the command ran, and what it found is the failure.
+expect_status 0 "prerequisites accepts this workstation" \
+    "${deployer}" --project "${project}" prerequisites
+expect_status 1 "prerequisites reports a directory with no capsule as a failed run" \
+    "${deployer}" --project "${empty}" prerequisites
+expect_status 2 "prerequisites without a project" "${deployer}" prerequisites
+
+# Every row is a line, and the failure names what is missing rather than only
+# that something is.
+report="$(${deployer} --project "${empty}" prerequisites 2>&1 || true)"
+case "${report}" in
+    *'[MISSING] Project source tree'*) ;;
+    *) fail "prerequisites does not name the missing entry: ${report}" ;;
+esac
+case "$(${deployer} --project "${project}" prerequisites)" in
+    *'[ok] Container engine'*) ;;
+    *) fail "prerequisites does not report the container engine" ;;
+esac
+
 # Missing required arguments leave the command unrun.
 expect_status 2 "check without a project" "${deployer}" check
 expect_status 2 "deploy without a project" "${deployer}" deploy

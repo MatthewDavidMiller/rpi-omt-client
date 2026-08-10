@@ -2,9 +2,15 @@
 
 mod ops;
 mod ssh;
+mod tools;
 
 pub use ops::{apply_wifi, connect, deploy, manage, test_connection};
 pub use ssh::{RemoteResult, SshSession};
+pub use tools::{
+    BuildPlan, DOCKER_DESKTOP, GIT_FOR_WINDOWS, ON_WINDOWS, PYTHON, Package, Prerequisite,
+    check_arm64_emulation, find_bash, find_container_engine, find_executable, image_build_plan,
+    install_packages, missing_packages, prerequisites,
+};
 
 use hmac::Hmac;
 use pbkdf2::pbkdf2;
@@ -350,19 +356,35 @@ pub struct ProcessResult {
     pub exit_code: i32,
     pub output: String,
 }
+/// Run `program` to completion, streaming both its output streams into a
+/// bounded buffer and killing it if `cancelled` is set.
+///
+/// A failed spawn is reported with the program in the message. `ErrorKind`'s
+/// own text is "program not found", which on a workstation missing one of
+/// several possible build tools names neither the tool nor the remedy.
 pub fn run_process(
-    program: &str,
+    program: &Path,
     args: &[String],
     directory: &Path,
+    env: &[(String, String)],
     cancelled: Arc<AtomicBool>,
 ) -> io::Result<ProcessResult> {
-    let mut child = Command::new(program)
+    let mut command = Command::new(program);
+    command
         .args(args)
         .current_dir(directory)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
+        .stderr(Stdio::piped());
+    for (name, value) in env {
+        command.env(name, value);
+    }
+    let mut child = command.spawn().map_err(|error| {
+        io::Error::new(
+            error.kind(),
+            format!("cannot run {}: {error}", program.display()),
+        )
+    })?;
     let stdout = child
         .stdout
         .take()

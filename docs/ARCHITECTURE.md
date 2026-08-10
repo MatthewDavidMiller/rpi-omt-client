@@ -195,8 +195,8 @@ Windows x86-64. A Linux workstation publishes both: `scripts/check-deployer.sh
 cross-compiles the Windows packages. Both consume the same `Cargo.lock`;
 registry packages are checksum locked and Git dependencies are denied.
 `rpi-omt-deploy` provides human and JSON-lines CLI surfaces, while
-`rpi-omt-deployer` presents responsive egui Connection, Deploy, Manage, Wi-Fi,
-Activity, and About views. Both reuse validators and typed management actions
+`rpi-omt-deployer` presents responsive egui Setup, Connection, Deploy, Manage,
+Wi-Fi, Activity, and About views. Both reuse validators and typed management actions
 from `omt-deployer-core`; secrets are zeroized and never accepted through
 arguments or environment variables. That covers every buffer a secret passes
 through, not only the ones it is stored in: the sudo stdin a deployment holds
@@ -221,6 +221,25 @@ healthy first install on a Pi.
 The explicit root credential takes priority over an ambiguous `doas` probe:
 stock Alpine can describe its inert rule set as authorization-capable and then
 refuse the actual non-PTY command.
+
+Deployment builds the appliance image on the operator's own machine, so what
+that machine provides is part of the deployment contract rather than an
+assumption. `omt-deployer-core`'s `tools` module owns it: executable discovery
+that follows `PATHEXT`, the Windows shell locations Git for Windows installs
+into, the winget packages that supply a missing prerequisite, and the plan for
+invoking the image build. The Setup view and the CLI's `prerequisites`
+subcommand are two renderings of the same probe.
+
+Windows reaches `scripts/build-arm64.sh` through that shell directly rather
+than through GNU Make. The Makefile recipe is a call to the script, so make
+without a POSIX shell hands it to `cmd.exe`, and make with one adds nothing --
+which leaves Git for Windows and Docker Desktop as the only two prerequisites
+an operator has to install. Resolving the build program before spawning it is
+what replaced a bare `ErrorKind::NotFound`, whose text named neither the tool
+nor the remedy. Nothing in that path is observable from a Linux publisher, so
+every Windows rule is a pure function tested with the Windows answer supplied,
+and the behaviour of the resulting `.exe` on a real desktop remains a
+validation boundary.
 
 How the deployer's window answers a display is a set of rules, not a set of
 widgets, so they live outside its view alongside the button-gating rules:

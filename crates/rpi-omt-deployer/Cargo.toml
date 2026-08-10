@@ -7,11 +7,12 @@ rust-version.workspace = true
 
 [features]
 default = []
-desktop = ["dep:eframe", "dep:egui"]
+desktop = ["dep:eframe", "dep:egui", "dep:rfd"]
 
 [dependencies]
 eframe = { workspace = true, optional = true }
 egui = { workspace = true, optional = true }
+rfd = { workspace = true, optional = true }
 omt-deployer-core = { version = "0.9.41", path = "../omt-deployer-core" }
 zeroize.workspace = true
 

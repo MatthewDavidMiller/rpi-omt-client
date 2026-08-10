@@ -29,6 +29,10 @@ pbkdf2 = "0.12.2"
 futures-lite = "2.6.1"
 getrandom = "0.3.3"
 quick-xml = "0.41.0"
+# Native folder and file pickers. The xdg-portal backend is the one that needs
+# no GTK development headers, which is what keeps the Windows cross build and
+# the Linux publisher on the same dependency set.
+rfd = { version = "0.17.2", default-features = false, features = ["xdg-portal", "wayland"] }
 rpassword = "7.4.0"
 sha2 = "0.10.9"
 serde = { version = "1.0.228", features = ["derive"] }

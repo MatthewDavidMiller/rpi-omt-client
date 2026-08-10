@@ -122,15 +122,56 @@ Python 3, and Docker Desktop's Linux engine on `PATH`. Either path emits the
 CLI and egui executables; the appliance build itself
 still runs entirely in the pinned Linux containers.
 
+### Workstation prerequisites
+
+Deployment builds the ARM64 appliance image on the machine running the
+deployer, so that machine needs a container engine and a POSIX shell of its
+own. The Setup view checks for them and names what is missing:
+
+| Entry | Needed for | Windows |
+|---|---|---|
+| Container engine | building and exporting the image | Docker Desktop, Linux engine running |
+| POSIX shell | running the pinned `scripts/build-arm64.sh` | Git for Windows |
+| GNU Make | the documented entry point on Linux | not used; the shell is called directly |
+| Python 3 | stamping the exact release version | optional; the Git tag is the fallback |
+| Project source tree | the manifest-v3 capsule that is uploaded | the checkout of this repository |
+| Appliance image archive | the image the Pi loads | built by Deploy, or copied in |
+
+On Windows, **Install missing prerequisites** installs the entries that have a
+package through `winget`; Windows raises an approval prompt for each. Git for
+Windows is found where it installs even when it is not yet on the `PATH` of the
+running deployer, so no restart is needed between installing it and deploying.
+A `bash.exe` under `System32` is deliberately ignored: that is the WSL
+launcher, which runs in a file system where the project path does not exist.
+
+**Check ARM64 emulation** runs a small pinned container to prove the engine can
+execute `linux/arm64`, which the appliance build needs because the image
+installs packages during its own build. It downloads that image the first time.
+
+The same report is available without a display:
+
+```bash
+rpi-omt-deploy --project . prerequisites
+rpi-omt-deploy --project . prerequisites --install --check-emulation
+```
+
+It exits 1 when a required entry is missing, naming each one.
+
+A workstation with no build tooling at all can still deploy an archive built
+elsewhere: clear **Build the appliance image** on the Deploy view (or pass
+`--no-build` to the CLI) and put `omt-client-arm64.tar.gz` in the project root.
+
 Run `.build/deployer-publish/bin/rpi-omt-deployer` (or the `.exe` produced on
 Windows) with Docker, a Pi key already trusted in `~/.ssh/known_hosts`,
 administrator SSH/sudo credentials, and this source tree. The Connection view
 accepts separate optional sudo and initial-root passwords and an optional
-alternate `known_hosts` path; the CLI equivalents are the `sudo_password` and
+alternate `known_hosts` path, each with a Browse button; the CLI equivalents
+are the `sudo_password` and
 `bootstrap_root_password` fields in `--secrets-stdin` and
 `--known-hosts <path>`. Connect validates Alpine 3.24
 aarch64 and a supported device-tree model.
-Deploy builds, verifies, uploads, and installs the capsule. Manage reads
+Deploy builds, verifies, uploads, and installs the capsule; its Project root
+has a Browse button and its build step can be cleared. Manage reads
 container status/logs or restarts the OpenRC service through sudo for a
 non-root SSH account. Restart uses the service boundary so it can also start a
 freshly installed appliance whose container has not been created yet.
