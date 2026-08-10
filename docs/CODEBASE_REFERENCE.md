@@ -128,7 +128,7 @@ are POST and CSRF protected.
 | Deployment contract | `deploy/manifest-v3.txt`, `deploy/transaction.sh` |
 | CLI deployment | `scripts/deploy.sh` |
 | Deployer validation, fixed actions, SSH/SFTP, deploy, and Wi-Fi | `crates/omt-deployer-core/src/lib.rs`, `crates/omt-deployer-core/src/ssh.rs`, `crates/omt-deployer-core/src/ops.rs` |
-| Workstation tooling: executable discovery, prerequisites, winget installs, and the image-build plan | `crates/omt-deployer-core/src/tools.rs` |
+| Workstation tooling: executable discovery, prerequisites, winget installs, ARM64 emulation, and the image-build plan | `crates/omt-deployer-core/src/tools.rs` |
 | Secure command-line deployer | `crates/rpi-omt-deploy/src/main.rs` |
 | Deployer CLI contract | `tests/native/test_deployer_cli.sh` |
 | egui desktop deployer, its button-gating and display-scaling rules, and embedded legal texts | `crates/rpi-omt-deployer/` |

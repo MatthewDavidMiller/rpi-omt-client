@@ -8,7 +8,7 @@ pub use ops::{apply_wifi, connect, deploy, manage, test_connection};
 pub use ssh::{RemoteResult, SshSession};
 pub use tools::{
     BuildPlan, DOCKER_DESKTOP, GIT_FOR_WINDOWS, ON_WINDOWS, PYTHON, Package, Prerequisite,
-    check_arm64_emulation, find_bash, find_container_engine, find_executable, image_build_plan,
+    ensure_arm64_emulation, find_bash, find_container_engine, find_executable, image_build_plan,
     install_packages, missing_packages, prerequisites,
 };
 

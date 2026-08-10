@@ -2,9 +2,10 @@
 
 use crate::ssh::{RemoteResult, SshSession};
 use crate::{
-    Connection, DeployOptions, ManagementAction, Secret, WifiSettings, derive_wpa_psk, hex_encode,
-    image_build_plan, load_manifest, random_token, run_process, secure_relative, sha256_file,
-    shell_quote, validate_connection, validate_options, validate_wifi,
+    Connection, DeployOptions, ManagementAction, ON_WINDOWS, Secret, WifiSettings, derive_wpa_psk,
+    ensure_arm64_emulation, hex_encode, image_build_plan, load_manifest, random_token, run_process,
+    secure_relative, sha256_file, shell_quote, validate_connection, validate_options,
+    validate_wifi,
 };
 use std::fs;
 use std::io;
@@ -395,6 +396,16 @@ fn build_image(
         return Ok(());
     }
     progress("Building the ARM64 appliance image...");
+    // Windows engines forget their binfmt registration whenever the VM
+    // restarts, so a Setup view that was green an hour ago proves nothing
+    // about now. Re-establishing it here costs one small container and spares
+    // the operator a build that fails minutes in with "exec format error".
+    // Linux hosts register it persistently through
+    // `scripts/install-arm64-emulation.sh`, and `scripts/build-arm64.sh`
+    // checks it there.
+    if ON_WINDOWS {
+        ensure_arm64_emulation(cancellation, progress)?;
+    }
     // Resolved before the spawn, so a workstation without the build tooling is
     // told which tool is missing and how to get it. The spawn's own error is
     // "program not found", which named neither.

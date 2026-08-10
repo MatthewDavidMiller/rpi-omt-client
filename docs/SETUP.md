@@ -144,15 +144,31 @@ running deployer, so no restart is needed between installing it and deploying.
 A `bash.exe` under `System32` is deliberately ignored: that is the WSL
 launcher, which runs in a file system where the project path does not exist.
 
-**Check ARM64 emulation** runs a small pinned container to prove the engine can
-execute `linux/arm64`, which the appliance build needs because the image
-installs packages during its own build. It downloads that image the first time.
+**Set up ARM64 emulation** makes the engine able to execute `linux/arm64`,
+which the appliance build needs because the image installs packages during its
+own build. It runs a small pinned container to check, and on Windows registers
+the emulator from a pinned `binfmt` image first and checks again. Both images
+are downloaded the first time.
+
+Docker Desktop does not arrive with the ARM64 `binfmt_misc` handler registered,
+and the registration lives in its Linux VM, so it is lost whenever that VM
+restarts. Nothing on Windows makes it permanent, and
+`make setup-arm64-emulation` is a Linux systemd install that does not run
+there. A deployment therefore registers it again before it builds, so an
+operator never has to remember it; the button exists to prove the machine is
+ready before a deployment is attempted. If it still fails after registering,
+Docker Desktop is in Windows-container mode or its Linux engine is not running.
+
+On Linux the handler belongs in the host's own kernel, where
+`make setup-arm64-emulation` installs it persistently and verifies it as root.
+That is what the button reports on, and what it tells you to run.
 
 The same report is available without a display:
 
 ```bash
 rpi-omt-deploy --project . prerequisites
 rpi-omt-deploy --project . prerequisites --install --check-emulation
+rpi-omt-deploy setup-emulation
 ```
 
 It exits 1 when a required entry is missing, naming each one.

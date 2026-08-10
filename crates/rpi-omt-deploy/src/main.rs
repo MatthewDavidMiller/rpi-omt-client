@@ -3,7 +3,7 @@
 use clap::{Args, Parser, Subcommand};
 use omt_deployer_core::{
     AuthMethod, Connection, DeployOptions, ManagementAction, ON_WINDOWS, Prerequisite, Secret,
-    WifiSettings, apply_wifi, check_arm64_emulation, deploy, install_packages, load_manifest,
+    WifiSettings, apply_wifi, deploy, ensure_arm64_emulation, install_packages, load_manifest,
     manage, missing_packages, prerequisites, validate_connection, validate_options, validate_wifi,
 };
 use serde::{Deserialize, Serialize};
@@ -47,6 +47,9 @@ enum Command {
     Check,
     /// Report the local tooling a deployment needs from this workstation.
     Prerequisites(PrerequisiteArgs),
+    /// Make this workstation able to run ARM64 containers. On Windows it
+    /// registers the emulator in the container engine and verifies it; on
+    /// Linux it names the target that installs it persistently.
     SetupEmulation,
     Deploy(DeployArgs),
     Status,
@@ -60,7 +63,8 @@ struct PrerequisiteArgs {
     /// only, and each installer raises its own approval prompt.
     #[arg(long)]
     install: bool,
-    /// Also run a pinned ARM64 container to prove emulation is registered.
+    /// Also prove the container engine can run ARM64 containers, registering
+    /// the emulator first on Windows, where the engine needs that done for it.
     #[arg(long)]
     check_emulation: bool,
     #[arg(long, default_value = "omt-client-arm64.tar.gz")]
@@ -265,7 +269,7 @@ fn run(cli: Cli) -> Result<(), (i32, String)> {
                 emit(cli.json, "progress", &prerequisite_line(row), None);
             }
             if args.check_emulation {
-                check_arm64_emulation(&cancellation, &mut progress)
+                ensure_arm64_emulation(&cancellation, &mut progress)
                     .map_err(|e| (1, e.to_string()))?;
             }
             let blocking = rows.iter().filter(|row| row.blocking()).count();
@@ -289,12 +293,29 @@ fn run(cli: Cli) -> Result<(), (i32, String)> {
                 Some(true),
             );
         }
-        Command::SetupEmulation => emit(
-            cli.json,
-            "result",
-            "Run `make setup-arm64-emulation` with administrator approval.",
-            Some(true),
-        ),
+        // On Windows there is no `make setup-arm64-emulation` to run: that
+        // target installs a systemd binfmt unit on a Linux host. The engine's
+        // own VM is where the handler belongs there, and this puts it there.
+        Command::SetupEmulation => {
+            if ON_WINDOWS {
+                let mut progress = progress_emitter(cli.json);
+                ensure_arm64_emulation(&cancellation, &mut progress)
+                    .map_err(|e| (1, e.to_string()))?;
+                emit(
+                    cli.json,
+                    "result",
+                    "This workstation can run ARM64 containers.",
+                    Some(true),
+                );
+            } else {
+                emit(
+                    cli.json,
+                    "result",
+                    "Run `make setup-arm64-emulation` with administrator approval.",
+                    Some(true),
+                );
+            }
+        }
         Command::Deploy(args) => {
             let options = DeployOptions {
                 project_root: cli

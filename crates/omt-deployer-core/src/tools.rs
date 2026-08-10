@@ -25,6 +25,15 @@ use std::sync::atomic::AtomicBool;
 /// this module exists for.
 const EMULATION_PROBE_IMAGE: &str = "docker.io/library/debian:bookworm-slim@sha256:4724b8cc51e33e398f0e2e15e18d5ec2851ff0c2280647e1310bc1642182655d";
 
+/// The same pinned binfmt installer `scripts/install-arm64-emulation.sh` takes
+/// its emulator from. Run with `--install`, it registers the handler in the
+/// kernel it runs against instead of handing the binary out.
+const BINFMT_INSTALLER_IMAGE: &str = "docker.io/tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0";
+
+/// The architectures the installer registers. `arm` rides along because it
+/// costs nothing and an ARM64 base image can still carry a 32-bit helper.
+const BINFMT_ARCHITECTURES: &str = "arm64,arm";
+
 /// Whether this binary is running on Windows.
 ///
 /// A runtime constant rather than `#[cfg]` around each rule: the rules below
@@ -642,38 +651,8 @@ fn report_install(
     }
 }
 
-/// Confirm the container engine can execute ARM64 containers here.
-///
-/// The appliance image installs packages during its own build, so this is a
-/// hard requirement rather than a nicety. It is not part of `prerequisites`
-/// because answering it means pulling and running a small pinned image.
-pub fn check_arm64_emulation(
-    cancellation: &Arc<AtomicBool>,
-    progress: &mut dyn FnMut(&str),
-) -> io::Result<()> {
-    let (engine, kind) = find_container_engine().ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::NotFound,
-            "no container engine is installed, so ARM64 emulation cannot be checked",
-        )
-    })?;
-    let directory = engine_probe_directory();
-    if kind == "docker" {
-        let arguments = ["buildx", "version"].map(str::to_owned);
-        let buildx = run_process(
-            &engine,
-            &arguments,
-            &directory,
-            &[],
-            Arc::clone(cancellation),
-        )?;
-        if buildx.exit_code != 0 {
-            return Err(io::Error::other(
-                "Docker buildx is not available, so the ARM64 image cannot be exported",
-            ));
-        }
-    }
-    progress("Running a pinned ARM64 container to confirm emulation is registered...");
+/// Run the pinned ARM64 probe image and report how it went.
+fn probe_arm64(engine: &Path, cancellation: &Arc<AtomicBool>) -> io::Result<ProcessResult> {
     let arguments = [
         "run",
         "--rm",
@@ -686,27 +665,143 @@ pub fn check_arm64_emulation(
         "test \"$(uname -m)\" = aarch64",
     ]
     .map(str::to_owned);
-    let result = run_process(
-        &engine,
+    run_process(
+        engine,
         &arguments,
-        &directory,
+        &engine_probe_directory(),
         &[],
         Arc::clone(cancellation),
-    )?;
-    if result.exit_code == 0 {
+    )
+}
+
+/// Register the ARM64 `binfmt_misc` handler in the kernel the engine runs on.
+///
+/// Privileged because writing `/proc/sys/fs/binfmt_misc` is the whole job. On
+/// Windows that kernel is the engine's own VM, not the operator's machine.
+fn register_arm64(engine: &Path, cancellation: &Arc<AtomicBool>) -> io::Result<ProcessResult> {
+    let arguments = [
+        "run",
+        "--rm",
+        "--privileged",
+        BINFMT_INSTALLER_IMAGE,
+        "--install",
+        BINFMT_ARCHITECTURES,
+    ]
+    .map(str::to_owned);
+    run_process(
+        engine,
+        &arguments,
+        &engine_probe_directory(),
+        &[],
+        Arc::clone(cancellation),
+    )
+}
+
+/// What to tell an operator whose engine still cannot run ARM64 containers.
+///
+/// `repaired` distinguishes the two failures that read alike and are not: a
+/// platform where registering the handler is not this deployer's call, and one
+/// where it just tried and the probe still fails.
+fn emulation_failure(kind: &str, windows: bool, repaired: bool, output: &str) -> String {
+    let remedy = if !windows {
+        "Register it once with `make setup-arm64-emulation`, then re-check."
+    } else if repaired {
+        "The emulator was registered from the pinned installer image and linux/arm64 still \
+         will not run. Docker Desktop must be running its Linux engine, not Windows containers: \
+         check Settings > General, then restart Docker Desktop and re-check."
+    } else {
+        "Start Docker Desktop's Linux engine, then re-check."
+    };
+    let output = output.trim();
+    if output.is_empty() {
+        format!("{kind} cannot execute linux/arm64 containers here.\n{remedy}")
+    } else {
+        format!("{kind} cannot execute linux/arm64 containers here.\n{remedy}\n{output}")
+    }
+}
+
+/// Confirm the container engine can execute ARM64 containers here, registering
+/// the emulator first where that is this deployer's job.
+///
+/// The appliance image installs packages during its own build, so this is a
+/// hard requirement rather than a nicety. It is not part of `prerequisites`
+/// because answering it means pulling and running a small pinned image.
+///
+/// Docker Desktop does not arrive with the ARM64 `binfmt_misc` handler
+/// registered, and whatever is registered is lost with its VM, so a Windows
+/// workstation that only asked the question could only ever report a failure
+/// the operator has no documented way to fix -- `make setup-arm64-emulation`
+/// is a Linux systemd install and does not run there. So on Windows this
+/// registers the handler from the pinned installer image and asks again. That
+/// is cheap enough to repeat, which it must be: the registration lasts only
+/// until the engine's VM restarts.
+pub fn ensure_arm64_emulation(
+    cancellation: &Arc<AtomicBool>,
+    progress: &mut dyn FnMut(&str),
+) -> io::Result<()> {
+    let (engine, kind) = find_container_engine().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::NotFound,
+            "no container engine is installed, so ARM64 emulation cannot be checked",
+        )
+    })?;
+    if kind == "docker" {
+        let arguments = ["buildx", "version"].map(str::to_owned);
+        let buildx = run_process(
+            &engine,
+            &arguments,
+            &engine_probe_directory(),
+            &[],
+            Arc::clone(cancellation),
+        )?;
+        if buildx.exit_code != 0 {
+            return Err(io::Error::other(
+                "Docker buildx is not available, so the ARM64 image cannot be exported",
+            ));
+        }
+    }
+    progress("Running a pinned ARM64 container to confirm emulation is registered...");
+    let probe = probe_arm64(&engine, cancellation)?;
+    if probe.exit_code == 0 {
         progress("ARM64 emulation is registered on this workstation.");
         return Ok(());
     }
-    Err(io::Error::other(format!(
-        "{kind} cannot execute linux/arm64 containers here.\n{}\n{}",
-        if ON_WINDOWS {
-            "Docker Desktop provides this once the Linux engine is running; make sure it is \
-             started and not in Windows-container mode."
-        } else {
-            "Register it once with `make setup-arm64-emulation`, then re-check."
-        },
-        result.output.trim()
-    )))
+    if !ON_WINDOWS {
+        return Err(io::Error::other(emulation_failure(
+            kind,
+            ON_WINDOWS,
+            false,
+            &probe.output,
+        )));
+    }
+    progress(
+        "ARM64 emulation is not registered. Installing it into the container engine with the \
+         pinned binfmt image...",
+    );
+    let install = register_arm64(&engine, cancellation)?;
+    if install.exit_code != 0 {
+        return Err(io::Error::other(format!(
+            "registering ARM64 emulation with {kind} failed (exit {}).\nDocker Desktop must be \
+             running its Linux engine for this to work.\n{}",
+            install.exit_code,
+            install.output.trim()
+        )));
+    }
+    progress("Re-running the pinned ARM64 container...");
+    let confirmed = probe_arm64(&engine, cancellation)?;
+    if confirmed.exit_code != 0 {
+        return Err(io::Error::other(emulation_failure(
+            kind,
+            ON_WINDOWS,
+            true,
+            &confirmed.output,
+        )));
+    }
+    progress(
+        "ARM64 emulation is registered. The container engine forgets this when it restarts, so \
+         a deployment that builds the image registers it again.",
+    );
+    Ok(())
 }
 
 #[cfg(test)]
@@ -987,5 +1082,35 @@ mod tests {
             .map(|error| error.to_string())
             .unwrap_or_default();
         assert!(error.contains("make install"), "{error}");
+    }
+
+    /// The reported failure: a Windows deployer whose ARM64 probe failed with
+    /// "exec format error" and a remedy that does not exist on Windows -- both
+    /// `make setup-arm64-emulation`, which is a Linux systemd install, and the
+    /// claim that Docker Desktop supplies the handler by being started, which
+    /// it does not. Whatever else a Windows operator is told, it must not be
+    /// either of those.
+    #[test]
+    fn the_windows_remedy_is_never_a_linux_only_installer() {
+        let windows = emulation_failure("docker", true, true, "exec /bin/sh: exec format error");
+        assert!(!windows.contains("make setup-arm64-emulation"), "{windows}");
+        assert!(windows.contains("Windows containers"), "{windows}");
+        assert!(windows.contains("exec format error"), "{windows}");
+
+        let unix = emulation_failure("podman", false, false, "");
+        assert!(unix.contains("make setup-arm64-emulation"), "{unix}");
+        // Nothing to quote when the engine printed nothing, and a message that
+        // ends in a blank line reads like output was lost.
+        assert!(!unix.ends_with('\n'), "{unix}");
+    }
+
+    /// Registration is attempted before the message is written, so the two
+    /// Windows failures must not read as the same dead end.
+    #[test]
+    fn a_failed_repair_is_reported_differently_from_an_unattempted_one() {
+        let attempted = emulation_failure("docker", true, true, "");
+        let untried = emulation_failure("docker", true, false, "");
+        assert_ne!(attempted, untried);
+        assert!(attempted.contains("still"), "{attempted}");
     }
 }

@@ -433,7 +433,7 @@ mod desktop {
     use eframe::egui;
     use omt_deployer_core::{
         AuthMethod, Connection, DeployOptions, ManagementAction, ON_WINDOWS, Prerequisite, Secret,
-        WifiSettings, apply_wifi, check_arm64_emulation, deploy, discover_project_root,
+        WifiSettings, apply_wifi, deploy, discover_project_root, ensure_arm64_emulation,
         install_packages, manage, missing_packages, prerequisites, test_connection, validate_wifi,
     };
     use std::path::{Path, PathBuf};
@@ -484,7 +484,8 @@ mod desktop {
         /// Install the missing prerequisites this workstation has a package
         /// for, then report what the machine looks like afterwards.
         Install,
-        /// Run a pinned ARM64 container to prove emulation is registered.
+        /// Prove the container engine can run ARM64, registering the
+        /// emulator first where the engine needs that done for it.
         Emulation,
     }
 
@@ -700,7 +701,7 @@ mod desktop {
                 Job::Wifi => "Applying Wi-Fi settings...".into(),
                 Job::Probe => "Checking this workstation...".into(),
                 Job::Install => "Installing prerequisites...".into(),
-                Job::Emulation => "Checking ARM64 emulation...".into(),
+                Job::Emulation => "Setting up ARM64 emulation...".into(),
             });
             thread::spawn(move || {
                 let result = run_job(request, &cancel, &tx);
@@ -938,11 +939,17 @@ mod desktop {
                     start = Some(Job::Install);
                 }
                 if ui
-                    .add_enabled(idle, egui::Button::new("Check ARM64 emulation"))
-                    .on_hover_text(
+                    .add_enabled(idle, egui::Button::new("Set up ARM64 emulation"))
+                    .on_hover_text(if ON_WINDOWS {
+                        "Registers ARM64 emulation in Docker's Linux VM and runs a small pinned \
+                         container to prove it works. Downloads both the first time. A \
+                         deployment does this again before it builds, because Docker forgets it \
+                         when it restarts."
+                    } else {
                         "Runs a small pinned container to prove ARM64 emulation is registered. \
-                         Downloads it the first time.",
-                    )
+                         Downloads it the first time. Register it with `make \
+                         setup-arm64-emulation`."
+                    })
                     .clicked()
                 {
                     start = Some(Job::Emulation);
@@ -1155,7 +1162,7 @@ mod desktop {
                 outcome
             }
             Job::Emulation => {
-                check_arm64_emulation(cancel, &mut progress).map_err(|error| error.to_string())
+                ensure_arm64_emulation(cancel, &mut progress).map_err(|error| error.to_string())
             }
         }
     }
