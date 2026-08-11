@@ -85,7 +85,13 @@ fn probe(options: &Options) -> Result<i32, String> {
     let mut measurement = Measurement::default();
     let mut failure = String::new();
 
-    match discovery::resolve(target, budget) {
+    // A direct target resolves without touching the network, but a discovered
+    // name costs a browse, and a browse runs for the whole window it is given
+    // rather than stopping at the first match. Handed the full budget it
+    // returned with the deadline already spent, so every probe of a name that
+    // resolved perfectly well still reported it unreachable. Half the budget
+    // discovers; the rest is left for the measurement that is the point.
+    match discovery::resolve(target, budget / 2) {
         None => failure = "OMT target was not discovered.".into(),
         Some(endpoint) => {
             let mut channel_error = String::new();

@@ -21,10 +21,15 @@ use std::time::{Duration, Instant};
 const DEFAULT_PORT_FIRST: u16 = 6400;
 const DEFAULT_PORT_LAST: u16 = 6600;
 const MAX_CLIENTS: usize = 8;
-const FRAME_RATE: u64 = 60;
+const DEFAULT_FRAME_RATE: u32 = 60;
+/// The receiver's absolute ceiling; a sender above it could only ever be
+/// refused, so the option stops short of producing one.
+const MAX_FRAME_RATE: u32 = 60;
 const OMT_TICKS_PER_SECOND: u64 = 10_000_000;
 const AUDIO_SAMPLE_RATE: i32 = 48_000;
 const AUDIO_SAMPLES: i32 = 800;
+/// Blocks per second implied by the fixed sample rate and block size.
+const AUDIO_BLOCKS_PER_SECOND: u32 = (AUDIO_SAMPLE_RATE / AUDIO_SAMPLES) as u32;
 const SUBSCRIPTION_TIMEOUT: Duration = Duration::from_secs(5);
 const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
 const GRADIENT_VMX: &[u8] = include_bytes!("../../../tests/vectors/vmx/gradient-1920x1080-709.vmx");
@@ -34,6 +39,10 @@ const FLAT_VMX: &[u8] = include_bytes!("../../../tests/vectors/vmx/flat-1920x108
 struct Options {
     bind: IpAddr,
     port: Option<u16>,
+    /// Whole frames per second, announced in the video header and used to pace
+    /// the stream. A board's decode ceiling admits a shape, so exercising one
+    /// takes a sender that can sit under it.
+    frame_rate: u32,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -58,10 +67,11 @@ impl Drop for ClientGuard {
 }
 
 fn usage() -> &'static str {
-    "Usage: omt-test-sender [--bind IP] [--port PORT]\n\
+    "Usage: omt-test-sender [--bind IP] [--port PORT] [--frame-rate FPS]\n\
      \n\
-     Streams reference VMX1 1920x1080p60 video and stereo FPA1 audio.\n\
-     Without --port, the first available TCP port in 6400-6600 is used."
+     Streams reference VMX1 1920x1080 video and stereo FPA1 audio.\n\
+     Without --port, the first available TCP port in 6400-6600 is used.\n\
+     Without --frame-rate, video is announced and paced at 60 fps."
 }
 
 fn parse_options<I, S>(arguments: I) -> Result<Command, String>
@@ -72,6 +82,7 @@ where
     let mut values = arguments.into_iter().map(Into::into);
     let mut bind = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
     let mut port = None;
+    let mut frame_rate = DEFAULT_FRAME_RATE;
     while let Some(argument) = values.next() {
         match argument.as_str() {
             "--help" | "-h" => return Ok(Command::Help),
@@ -96,10 +107,26 @@ where
                 }
                 port = Some(parsed);
             }
+            "--frame-rate" => {
+                let value = values
+                    .next()
+                    .ok_or_else(|| "--frame-rate requires whole frames per second".to_owned())?;
+                let parsed = value
+                    .parse::<u32>()
+                    .map_err(|_| format!("invalid frame rate: {value}"))?;
+                if parsed == 0 || parsed > MAX_FRAME_RATE {
+                    return Err(format!("frame rate must be between 1 and {MAX_FRAME_RATE}"));
+                }
+                frame_rate = parsed;
+            }
             _ => return Err(format!("unknown argument: {argument}")),
         }
     }
-    Ok(Command::Run(Options { bind, port }))
+    Ok(Command::Run(Options {
+        bind,
+        port,
+        frame_rate,
+    }))
 }
 
 fn listen(options: Options) -> io::Result<TcpListener> {
@@ -132,16 +159,18 @@ fn append_fixed_header(
     Ok(())
 }
 
-fn video_frame(vmx: &[u8]) -> io::Result<Vec<u8>> {
+fn video_frame(vmx: &[u8], frame_rate: u32) -> io::Result<Vec<u8>> {
     let data_length = VIDEO_HEADER_SIZE
         .checked_add(vmx.len())
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "VMX frame is too large"))?;
+    let numerator = i32::try_from(frame_rate)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "frame rate is out of range"))?;
     let mut output = Vec::with_capacity(HEADER_SIZE + data_length);
     append_fixed_header(&mut output, FrameType::Video, data_length)?;
     output.extend((Codec::Vmx1 as i32).to_le_bytes());
     output.extend(1920_i32.to_le_bytes());
     output.extend(1080_i32.to_le_bytes());
-    output.extend(60_i32.to_le_bytes());
+    output.extend(numerator.to_le_bytes());
     output.extend(1_i32.to_le_bytes());
     output.extend((16.0_f32 / 9.0).to_le_bytes());
     output.extend(0_u32.to_le_bytes());
@@ -223,16 +252,30 @@ fn read_subscription(stream: &mut TcpStream) -> io::Result<Subscription> {
     ))
 }
 
-fn stream_frames(stream: &mut TcpStream, subscription: Subscription) -> io::Result<()> {
+fn stream_frames(
+    stream: &mut TcpStream,
+    subscription: Subscription,
+    frame_rate: u32,
+) -> io::Result<()> {
     stream.set_write_timeout(Some(WRITE_TIMEOUT))?;
     let mut frames = match subscription {
-        Subscription::Video => vec![video_frame(GRADIENT_VMX)?, video_frame(FLAT_VMX)?],
+        Subscription::Video => vec![
+            video_frame(GRADIENT_VMX, frame_rate)?,
+            video_frame(FLAT_VMX, frame_rate)?,
+        ],
         Subscription::Audio => vec![audio_frame()?],
     };
+    // Audio keeps its own cadence. Each block carries a fixed number of samples
+    // at a fixed rate, so pacing it off the video rate would stretch or
+    // compress the sound rather than send fewer pictures.
+    let rate = u64::from(match subscription {
+        Subscription::Video => frame_rate,
+        Subscription::Audio => AUDIO_BLOCKS_PER_SECOND,
+    });
     let started = Instant::now();
     let mut sequence = 0_u64;
     loop {
-        let timestamp_u64 = sequence.saturating_mul(OMT_TICKS_PER_SECOND) / FRAME_RATE;
+        let timestamp_u64 = sequence.saturating_mul(OMT_TICKS_PER_SECOND) / rate;
         let timestamp = i64::try_from(timestamp_u64)
             .map_err(|_| io::Error::other("OMT timestamp exhausted"))?;
         let index =
@@ -245,7 +288,7 @@ fn stream_frames(stream: &mut TcpStream, subscription: Subscription) -> io::Resu
         stream.write_all(frame)?;
         sequence = sequence.saturating_add(1);
 
-        let elapsed_ns = sequence.saturating_mul(1_000_000_000) / FRAME_RATE;
+        let elapsed_ns = sequence.saturating_mul(1_000_000_000) / rate;
         let due = started + Duration::from_nanos(elapsed_ns);
         if let Some(delay) = due.checked_duration_since(Instant::now()) {
             thread::sleep(delay);
@@ -253,20 +296,20 @@ fn stream_frames(stream: &mut TcpStream, subscription: Subscription) -> io::Resu
     }
 }
 
-fn handle_client(mut stream: TcpStream, peer: SocketAddr) {
+fn handle_client(mut stream: TcpStream, peer: SocketAddr, frame_rate: u32) {
     let result = read_subscription(&mut stream).and_then(|subscription| {
         eprintln!("{peer} subscribed to {subscription:?}");
-        stream_frames(&mut stream, subscription)
+        stream_frames(&mut stream, subscription, frame_rate)
     });
     if let Err(error) = result {
         eprintln!("{peer} disconnected: {error}");
     }
 }
 
-fn serve(listener: TcpListener) -> io::Result<()> {
+fn serve(listener: TcpListener, frame_rate: u32) -> io::Result<()> {
     let address = listener.local_addr()?;
     println!("OMT test sender listening on omt://{address}");
-    println!("Video: VMX1 1920x1080p60; audio: FPA1 stereo 48 kHz");
+    println!("Video: VMX1 1920x1080p{frame_rate}; audio: FPA1 stereo 48 kHz");
     let clients = Arc::new(AtomicUsize::new(0));
     for incoming in listener.incoming() {
         let stream = incoming?;
@@ -281,7 +324,7 @@ fn serve(listener: TcpListener) -> io::Result<()> {
             .name("omt-test-client".to_owned())
             .spawn(move || {
                 let _guard = guard;
-                handle_client(stream, peer);
+                handle_client(stream, peer, frame_rate);
             })?;
     }
     Ok(())
@@ -293,7 +336,8 @@ fn run() -> Result<(), String> {
         Command::Version => println!("omt-test-sender {}", env!("CARGO_PKG_VERSION")),
         Command::Run(options) => {
             let listener = listen(options).map_err(|error| format!("unable to listen: {error}"))?;
-            serve(listener).map_err(|error| format!("sender failed: {error}"))?;
+            serve(listener, options.frame_rate)
+                .map_err(|error| format!("sender failed: {error}"))?;
         }
     }
     Ok(())
@@ -318,6 +362,7 @@ mod tests {
             Ok(Command::Run(Options {
                 bind: IpAddr::V4(Ipv4Addr::UNSPECIFIED),
                 port: None,
+                frame_rate: DEFAULT_FRAME_RATE,
             }))
         );
     }
@@ -329,15 +374,55 @@ mod tests {
             Ok(Command::Run(Options {
                 bind: IpAddr::V4(Ipv4Addr::LOCALHOST),
                 port: Some(6500),
+                frame_rate: DEFAULT_FRAME_RATE,
             }))
         );
         assert!(parse_options(["--port", "0"]).is_err());
         assert!(parse_options(["--bind", "host.example"]).is_err());
     }
 
+    /// A board's ceiling admits a shape, so the rate the sender announces is
+    /// what decides whether that board plays the stream or refuses it.
+    #[test]
+    fn the_frame_rate_is_selectable_within_the_protocol_limit() {
+        assert_eq!(
+            parse_options(["--frame-rate", "30"]),
+            Ok(Command::Run(Options {
+                bind: IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+                port: None,
+                frame_rate: 30,
+            }))
+        );
+        assert!(parse_options(["--frame-rate", "0"]).is_err());
+        assert!(parse_options(["--frame-rate", "61"]).is_err());
+        assert!(parse_options(["--frame-rate", "-1"]).is_err());
+        assert!(parse_options(["--frame-rate"]).is_err());
+    }
+
+    #[test]
+    fn the_announced_rate_is_the_requested_rate() {
+        let wire = video_frame(FLAT_VMX, 30).unwrap_or_else(|error| panic!("{error}"));
+        let header =
+            parse_frame_header(&wire[..HEADER_SIZE]).unwrap_or_else(|error| panic!("{error}"));
+        let video = parse_video_header(&header, &wire[HEADER_SIZE..])
+            .unwrap_or_else(|error| panic!("{error}"));
+        assert_eq!((video.frame_rate_n, video.frame_rate_d), (30, 1));
+    }
+
+    /// Audio blocks carry a fixed sample count at a fixed rate, so their
+    /// cadence is a property of the format rather than of the video rate.
+    #[test]
+    fn audio_keeps_its_own_cadence() {
+        assert_eq!(
+            AUDIO_SAMPLE_RATE,
+            AUDIO_SAMPLES * i32::try_from(AUDIO_BLOCKS_PER_SECOND).unwrap_or(0)
+        );
+    }
+
     #[test]
     fn reference_video_is_a_valid_receiver_frame() {
-        let wire = video_frame(GRADIENT_VMX).unwrap_or_else(|error| panic!("{error}"));
+        let wire =
+            video_frame(GRADIENT_VMX, DEFAULT_FRAME_RATE).unwrap_or_else(|error| panic!("{error}"));
         let header =
             parse_frame_header(&wire[..HEADER_SIZE]).unwrap_or_else(|error| panic!("{error}"));
         let video = parse_video_header(&header, &wire[HEADER_SIZE..])
@@ -365,7 +450,8 @@ mod tests {
 
     #[test]
     fn timestamp_updates_only_the_fixed_header_timestamp() {
-        let mut wire = video_frame(FLAT_VMX).unwrap_or_else(|error| panic!("{error}"));
+        let mut wire =
+            video_frame(FLAT_VMX, DEFAULT_FRAME_RATE).unwrap_or_else(|error| panic!("{error}"));
         let previous = wire.clone();
         set_timestamp(&mut wire, 123_456);
         assert_eq!(&wire[2..10], &123_456_i64.to_le_bytes());

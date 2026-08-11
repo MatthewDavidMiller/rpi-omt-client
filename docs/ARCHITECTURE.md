@@ -44,6 +44,28 @@ field, and every rejection -- a duplicate of any requested tag, a document type
 declaration, an unknown entity -- still refuses the whole document, so no field
 can be read out of one another field's reader would have discarded.
 
+The mDNS path deserializes Avahi's signals against their full signatures.
+`ItemNew` and `ItemRemove` carry six fields and `ServiceResolver.Found` carries
+eleven; zbus matches a body against a whole tuple's signature rather than a
+prefix of it, so a tuple that stopped one field early did not read part of the
+announcement, it failed outright and the browse ignored every service it was
+started for. The type aliases in `mdns.rs` are named after those interfaces so
+the arity has one place to be wrong. A browse that finds nothing and a browse
+that cannot parse anything are otherwise indistinguishable from the outside:
+both are an empty list, which is why this survived alongside a working
+transport.
+
+`endpoint_from_parts` then refuses an address no connect can use, rather than
+carrying it forward as a source that only fails once selected. A resolver
+answers once per address family, so a service on a dual-stack link produces an
+unscoped `fe80::` record beside its usable one, and the endpoint map keeps
+whichever arrived last. Reaching a link-local IPv6 address needs a zone index
+that neither the OMT target grammar nor the operator's direct-target box can
+express -- `Endpoint::resolve` already drops one from a host string -- so the
+source appeared on the dashboard and then timed out. IPv4 link-local is
+deliberately still accepted: a peer in that range is reached over the one link
+it is on, with no extra addressing.
+
 Connector selection tolerates a half-populated DRM tree: an unreadable
 `status`, a missing `connector_id`, a zero id, or an absent `/dev/dri` node
 disqualifies that card and the search continues to the next, because several
@@ -68,10 +90,29 @@ is admitted when it fits inside any one of them, which is how a Pi 4 takes
 either 1080p30 or 720p60 without a pixel-rate budget nobody could explain to an
 operator. The ceiling is policy layered above `omt-protocol`'s absolute
 1920x1080@60 limit, which still bounds every allocation, so no ceiling and no
-operator override can change what the decoder is sized for. The ceilings are
-targets derived from core count and clock rather than measurements, and sit on
-the hardware boundary described under trust and legal surfaces until
-`crates/vmx-decoder/tests/decode_bench.rs` has been run on each board.
+operator override can change what the decoder is sized for.
+
+The Pi 5 and Pi 4 ceilings are now measured rather than reasoned.
+`crates/vmx-decoder/tests/decode_bench.rs` run on the hardware puts the
+three-worker pool -- the row that decides a tier -- at 6.5 ms per 1080p
+gradient frame on the Pi 5 against a 16.7 ms budget, and 26.4 ms on the Pi 4
+against a 33.3 ms one. Both hold, the Pi 4 with the thinner margin, and a Pi 4
+pointed at a 1080p60 sender refuses it with a message naming its own limit.
+The Pi 3 and Zero 2 W tiers are still targets derived from core count and
+clock, and stay on the hardware boundary described under trust and legal
+surfaces until the bench has been run on them.
+
+The colour conversion has an AArch64 kernel for the same reason the inverse DCT
+does. Once the entropy decode is spread over the pool, packing 1080p into the
+8 MiB of BGRX a frame of scanout needs is what is left, and the portable kernel
+spends four one-byte stores per pixel doing it. `vst4q_u8` interleaves the four
+channels in the store unit instead, sixteen pixels at a time. On the Pi 5 that
+takes the conversion-dominated flat vector from 5.7 ms to 4.0 ms per frame; on
+the Pi 4, whose memory system rather than its arithmetic is the limit here, it
+is worth about five percent on the gradient vector and nothing on the flat one.
+Both kernels are checked against each other lane for lane, and the committed
+conformance vectors still decode bit-exactly against the reference decoder on
+both boards.
 
 Playback supports either HDMI connector on the two-output boards; the Pi 3 and
 Zero 2 W expose only `HDMI-A-1`, where `HDMI-A-2` simply never resolves and
@@ -87,6 +128,24 @@ output and register a single unindexed `vc4hdmi`. The receiver reads
 `/sys/class/sound/card*/id` and takes the indexed card when it exists, a lone
 `vc4hdmi` otherwise. Deriving the name from the connector alone is what made
 HDMI audio fail silently on the single-output boards while video kept playing.
+
+The PCM is opened non-blocking, so a momentarily full ring buffer answers a
+write with `EAGAIN`. That is back-pressure and it happens in steady playback
+whenever the writer runs ahead of the sink; `snd_pcm_recover` handles underrun
+and suspend and hands `EAGAIN` straight back, so routing it there reported a
+working HDMI sink as lost and dropped playback to `degraded` on both the Pi 4
+and the Pi 5. It now waits for room on the same bounded budget a device that
+accepts nothing gets, which still ends the audio session for a sink that has
+genuinely vanished.
+
+The audio worker reads on the same slice as the video loop. Its frames are a
+fraction of a video frame's size, but a read that stalls after its first byte
+cannot be resumed and ends the session, and on a link already carrying this
+session's own video the smaller frame is no less likely to stall. The fifth of
+the budget it used to get was not a smaller need; it was a fivefold better
+chance of tearing audio down, which is what a two-board test over one Wi-Fi
+radio produced repeatedly while video kept playing. The cost of the longer wait
+is a recoverable ALSA underrun.
 
 The presenter returns a typed `PresentOutcome`, so the play loop distinguishes a
 stream this display cannot show — which keeps the session and reports
@@ -134,6 +193,17 @@ before invoking Compose. Alpine's supervised Docker service can report itself
 started while dockerd is still initializing containerd; ordering only on the
 OpenRC service otherwise leaves a clean boot stopped after a one-time socket
 race.
+
+The filtered Avahi proxy runs under the container's own UID, not as `nobody`.
+`xdg-dbus-proxy` serves its socket through GDBus, whose default authorization
+accepts an authenticated peer only when that peer's credentials name the
+server's own user, so the group grant that reaches the socket is not what
+decides whether a connection survives the D-Bus handshake. Running the proxy as
+anyone else drops every connection from the receiver before its first method
+call, and because discovery is best-effort by design the failure surfaced as an
+empty source list returned instantly rather than as an error. The installer
+already resolves the image-owned UID for the state files and now publishes it
+to the proxy service as well.
 
 Fresh diagnostics use a separate fixed-inode request channel. The Web process
 writes a versioned nonce and `capture_pcap=0|1`, collects container-side data

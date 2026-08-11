@@ -158,11 +158,23 @@ impl Announcement {
 
 /// Re-validates a discovered address through the shared direct-target grammar
 /// so discovery cannot introduce a target the CLI would have rejected.
+///
+/// An address a socket cannot be pointed at is refused here rather than
+/// carried forward as a source that only fails on connect. A resolver answers
+/// with one record per address family, and on a dual-stack link the IPv6 one
+/// is an unscoped `fe80::` literal: reaching it needs the zone index that
+/// neither the OMT target grammar nor the operator's direct-target box can
+/// express, so the source resolved, appeared on the dashboard, and then timed
+/// out. Discarding it leaves the usable record of the same service.
 pub fn endpoint_from_parts(address: &str, port: u16) -> Option<Endpoint> {
     if port == 0 {
         return None;
     }
-    let candidate = if address.parse::<IpAddr>().is_ok_and(|value| value.is_ipv6()) {
+    let parsed_address = address.parse::<IpAddr>();
+    if parsed_address.as_ref().is_ok_and(undiallable) {
+        return None;
+    }
+    let candidate = if parsed_address.is_ok_and(|value| value.is_ipv6()) {
         format!("omt://[{address}]:{port}")
     } else {
         format!("omt://{address}:{port}")
@@ -172,6 +184,24 @@ pub fn endpoint_from_parts(address: &str, port: u16) -> Option<Endpoint> {
         host: parsed.host,
         port: parsed.port,
     })
+}
+
+/// True for a literal address no connect can use as it stands.
+///
+/// IPv4 link-local is deliberately absent: a `169.254.0.0/16` peer is reached
+/// over the one link it is on with no extra addressing, which is the whole
+/// point of that range. IPv6 link-local is not, because it repeats per
+/// interface and needs the zone the grammar has nowhere to put.
+fn undiallable(address: &IpAddr) -> bool {
+    match address {
+        IpAddr::V4(value) => value.is_unspecified() || value.is_multicast(),
+        IpAddr::V6(value) => {
+            value.is_unspecified()
+                || value.is_multicast()
+                // `Ipv6Addr::is_unicast_link_local` is still unstable.
+                || (value.segments()[0] & 0xFFC0) == 0xFE80
+        }
+    }
 }
 
 #[cfg(test)]
@@ -187,10 +217,30 @@ mod tests {
                 port: 6400
             })
         );
-        assert!(endpoint_from_parts("fe80::1", 6400).is_some());
+        assert!(endpoint_from_parts("2001:db8::1", 6400).is_some());
         assert_eq!(endpoint_from_parts("192.0.2.10", 0), None);
         assert_eq!(endpoint_from_parts("not a host", 6400), None);
         assert_eq!(endpoint_from_parts("192.0.2.10/../x", 6400), None);
+    }
+
+    /// A resolver answers per address family, so on a dual-stack link one of
+    /// the two records for a service is an unscoped `fe80::` literal that no
+    /// connect can use. Refusing it here is what leaves the other one.
+    #[test]
+    fn refuses_addresses_no_connect_can_use() {
+        assert_eq!(endpoint_from_parts("fe80::e65f:1ff:fe2e:9f04", 6400), None);
+        assert_eq!(endpoint_from_parts("febf::1", 6400), None);
+        assert_eq!(endpoint_from_parts("::", 6400), None);
+        assert_eq!(endpoint_from_parts("ff02::1", 6400), None);
+        assert_eq!(endpoint_from_parts("0.0.0.0", 6400), None);
+        assert_eq!(endpoint_from_parts("239.0.0.1", 6400), None);
+
+        // An IPv4 link-local peer needs no zone, and a hostname is resolved by
+        // the connect itself, so neither is swept up by the rule above.
+        assert!(endpoint_from_parts("169.254.10.20", 6400).is_some());
+        assert!(endpoint_from_parts("source.example", 6400).is_some());
+        // `fec0::` was site-local, not link-local, and stays inside the mask.
+        assert!(endpoint_from_parts("fec0::1", 6400).is_some());
     }
 
     #[test]

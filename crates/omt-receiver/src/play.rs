@@ -316,7 +316,15 @@ fn audio_loop(context: &AudioContext) {
         ) {
             Ok(()) => {
                 while context.wanted() {
-                    let deadline = Instant::now() + Duration::from_millis(100);
+                    // The same slice the video loop reads on. An audio frame
+                    // is a fraction of a video frame's size, but a read that
+                    // stalls after its first byte cannot be resumed and ends
+                    // the session, and on a link busy carrying this session's
+                    // own video the smaller frame is no less likely to stall.
+                    // A fifth of the budget was not a smaller need, it was a
+                    // fivefold better chance of tearing audio down; the cost
+                    // of the longer wait is a recoverable ALSA underrun.
+                    let deadline = Instant::now() + RECEIVE_SLICE;
                     match channel.receive(deadline) {
                         Ok(frame) if frame.header.frame_type == FrameType::Audio => {
                             let frame = channel.frame();

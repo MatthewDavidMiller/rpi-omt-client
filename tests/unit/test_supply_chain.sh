@@ -22,18 +22,20 @@ literal "${PROJECT_ROOT}/deny.toml" 'unknown-git = "deny"' "Unreviewed Git depen
 literal "${PROJECT_ROOT}/deny.toml" 'name = "libssh2-sys"' "Legacy libssh2 is banned"
 literal "${PROJECT_ROOT}/crates/omt-protocol/src/lib.rs" 'VIDEO_MAX_SIZE: usize = 10 * 1024 * 1024' "Video frames are bounded"
 literal "${PROJECT_ROOT}/crates/vmx-decoder/src/lib.rs" 'WORKER_STACK_SIZE: usize = 512 * 1024' "VMX worker stacks are bounded"
-# Unsafe is allowed only in the VMX SIMD kernel and the persistent decode
+# Unsafe is allowed only in the two VMX SIMD kernels and the persistent decode
 # worker pool (frame-local Send pointers joined before the decoder drops).
 literal "${PROJECT_ROOT}/crates/vmx-decoder/Cargo.toml" 'unsafe_op_in_unsafe_fn = "deny"' "VMX unsafe is individually justified"
-literal "${PROJECT_ROOT}/crates/vmx-decoder/src/idct/neon.rs" '#![allow(unsafe_code)]' "VMX SIMD kernel is the declared unsafe carve-out"
+literal "${PROJECT_ROOT}/crates/vmx-decoder/src/convert/neon.rs" '#![allow(unsafe_code)]' "VMX colour SIMD kernel is a declared unsafe carve-out"
+literal "${PROJECT_ROOT}/crates/vmx-decoder/src/idct/neon.rs" '#![allow(unsafe_code)]' "VMX transform SIMD kernel is a declared unsafe carve-out"
 literal "${PROJECT_ROOT}/crates/vmx-decoder/src/pool.rs" '#![allow(unsafe_code)]' "VMX decode pool is the declared unsafe carve-out"
 allowing_unsafe="$(grep -rl 'allow(unsafe_code)' "${PROJECT_ROOT}/crates" | sort || true)"
-expected_unsafe="${PROJECT_ROOT}/crates/vmx-decoder/src/idct/neon.rs
+expected_unsafe="${PROJECT_ROOT}/crates/vmx-decoder/src/convert/neon.rs
+${PROJECT_ROOT}/crates/vmx-decoder/src/idct/neon.rs
 ${PROJECT_ROOT}/crates/vmx-decoder/src/pool.rs"
 if [[ "${allowing_unsafe}" == "${expected_unsafe}" ]]; then
-    pass "No crate outside the VMX SIMD kernel and decode pool allows unsafe"
+    pass "No crate outside the VMX SIMD kernels and decode pool allows unsafe"
 else
-    fail "No crate outside the VMX SIMD kernel and decode pool allows unsafe"
+    fail "No crate outside the VMX SIMD kernels and decode pool allows unsafe"
 fi
 literal "${PROJECT_ROOT}/crates/omt-receiver-core/src/lib.rs" 'Duration::from_millis(500)' "Status heartbeat remains 500 ms"
 literal "${PROJECT_ROOT}/crates/omt-deployer-core/src/lib.rs" 'OUTPUT_LIMIT: usize = 4 * 1024 * 1024' "Deployer output is bounded"

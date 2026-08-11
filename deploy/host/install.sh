@@ -617,8 +617,8 @@ done
 rm -f -- "${AVAHI_PROXY_SOCKET}"
 install -d -m 0755 -o root -g root "${HOST_STATE_DIR}"
 # Group-writable, unlike the diagnostics directories below: xdg-dbus-proxy runs
-# as nobody:${OMT_GID} and has to *create* its socket in here. At 0750 the group
-# got r-x, so every install ended with "Error binding to address
+# as ${OMT_UID}:${OMT_GID} and has to *create* its socket in here. At 0750 the
+# group got r-x, so every install ended with "Error binding to address
 # (GUnixSocketAddress): Permission denied" and a proxy that never came up.
 # Setgid so the socket carries the group the container is granted through.
 install -d -m 2770 -o root -g "${OMT_GID}" "${AVAHI_STATE_DIR}"
@@ -639,6 +639,7 @@ OMT_RECOVERY_MANIFEST=${DEPLOY_RECOVERY_MANIFEST}
 EOF
 host_publish_openrc_conf /etc/conf.d/omt-client-avahi-proxy <<EOF
 OMT_AVAHI_PROXY_SOCKET=${AVAHI_PROXY_SOCKET}
+OMT_UID=${OMT_UID}
 OMT_GID=${OMT_GID}
 EOF
 host_publish_openrc_conf /etc/conf.d/omt-client-host-diagnostics <<EOF

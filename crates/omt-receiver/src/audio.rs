@@ -16,6 +16,14 @@ use std::time::{Duration, Instant};
 const BUFFER: Duration = Duration::from_millis(80);
 /// A device that will not accept a sample for this long has failed.
 const WRITE_TIMEOUT: Duration = Duration::from_secs(1);
+/// `EAGAIN`, spelled out rather than pulled in from libc for one integer.
+///
+/// The PCM is opened non-blocking, so a ring buffer that is momentarily full
+/// reports this instead of blocking. It is ordinary back-pressure and it does
+/// happen in steady playback, whenever the writer runs ahead of the sink.
+/// `snd_pcm_recover` handles only underrun and suspend and hands EAGAIN back
+/// unchanged, so routing it there reported a working HDMI sink as lost.
+const AGAIN: i32 = 11;
 
 pub struct Output {
     pcm: Option<PCM>,
@@ -133,31 +141,38 @@ impl Output {
                 .get(start..samples * channels)
                 .ok_or_else(|| "Audio buffer underflow".to_owned())?;
             match io.writei(slice) {
-                Ok(0) => {
-                    let since = *stalled_since.get_or_insert_with(Instant::now);
-                    if since.elapsed() > WRITE_TIMEOUT {
-                        return Err("Audio device remained unavailable for one second".into());
-                    }
-                    let _ = pcm.wait(Some(100));
-                }
+                Ok(0) => stall(pcm, &mut stalled_since)?,
                 Ok(written) => {
                     offset += written;
                     stalled_since = None;
                 }
+                // A full ring buffer is the device asking for time, not
+                // reporting a fault, so it waits for room on the same budget a
+                // device that accepts nothing gets.
+                Err(error) if error.errno() == AGAIN => stall(pcm, &mut stalled_since)?,
                 Err(error) => {
                     // Recover from an underrun or a suspended device once; a
                     // second failure means the sink is gone.
                     pcm.try_recover(error, true)
                         .map_err(|error| format!("Unable to write audio: {error}"))?;
-                    let since = *stalled_since.get_or_insert_with(Instant::now);
-                    if since.elapsed() > WRITE_TIMEOUT {
-                        return Err("Audio device remained unavailable for one second".into());
-                    }
+                    stall(pcm, &mut stalled_since)?;
                 }
             }
         }
         Ok(())
     }
+}
+
+/// Waits for the device to take more samples, giving up once one write has
+/// made no progress for `WRITE_TIMEOUT`. The wait is bounded, so a sink that
+/// has vanished ends the audio session rather than the playback loop.
+fn stall(pcm: &PCM, stalled_since: &mut Option<Instant>) -> Result<(), String> {
+    let since = *stalled_since.get_or_insert_with(Instant::now);
+    if since.elapsed() > WRITE_TIMEOUT {
+        return Err("Audio device remained unavailable for one second".into());
+    }
+    let _ = pcm.wait(Some(100));
+    Ok(())
 }
 
 /// Expands one planar OMT body into the interleaved buffer ALSA is fed.

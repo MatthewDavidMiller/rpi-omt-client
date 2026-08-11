@@ -15,7 +15,8 @@
 | OMT wire transport and validation | `crates/omt-protocol/src/lib.rs` |
 | Status projection and atomic publication | `crates/omt-receiver-core/src/lib.rs` |
 | Decode-only VMX1 implementation | `crates/vmx-decoder/` |
-| VMX bitstream and colour conversion | `crates/vmx-decoder/src/bitstream.rs`, `crates/vmx-decoder/src/convert.rs` |
+| VMX bitstream | `crates/vmx-decoder/src/bitstream.rs` |
+| Colour conversion: portable definition, AArch64 NEON BGRX kernel, and the choice between them | `crates/vmx-decoder/src/convert/scalar.rs`, `crates/vmx-decoder/src/convert/neon.rs`, `crates/vmx-decoder/src/convert/mod.rs` |
 | Inverse DCT: portable definition, AArch64 NEON kernel, and the choice between them | `crates/vmx-decoder/src/idct/scalar.rs`, `crates/vmx-decoder/src/idct/neon.rs`, `crates/vmx-decoder/src/idct/mod.rs` |
 | VMX conformance vectors captured from the reference decoder | `tests/vectors/vmx/` |
 | First-party Rust OMT A/V test sender | `crates/omt-test-sender/`, `scripts/build-omt-test-sender.sh`, `scripts/omt-test-sender.sh` |

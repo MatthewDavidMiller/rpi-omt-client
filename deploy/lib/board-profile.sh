@@ -12,10 +12,11 @@
 # same string and owns admission at runtime; the tests below and its own unit
 # tests are the two ends of that contract.
 #
-# The ceilings are engineering targets derived from core count and clock, not
-# measurements. Confirm each on hardware with
-# `cargo test --release -p vmx-decoder --test decode_bench -- --ignored` before
-# release, and lower the tier here if a board cannot hold it.
+# The Pi 5 and Pi 4 ceilings have been confirmed on hardware with
+# `cargo test --release -p vmx-decoder --test decode_bench -- --ignored`; the
+# margins are recorded beside each. The Pi 3 and Zero 2 W tiers remain targets
+# derived from core count and clock. Run the bench on those boards before
+# release and lower the tier here if one cannot hold it.
 
 # Absolute limits, matching omt-protocol's parse_video_header. No profile and
 # no operator override may exceed these: they bound the decoder's allocations.
@@ -43,13 +44,18 @@ host_board_profile() {
             board_id=pi5
             board_label="Raspberry Pi 5"
             connectors=2
+            # Measured on a Pi 5: the three-worker pool decodes the 1080p
+            # gradient vector in 6.5 ms against a 16.7 ms budget.
             ceiling="1920x1080@60"
             ;;
         "Raspberry Pi 4 Model B"*)
             board_id=pi4
             board_label="Raspberry Pi 4 Model B"
             connectors=2
-            # A72 at 1.8 GHz: either full-rate 720p or half-rate 1080p.
+            # A72 at 1.5 GHz: either full-rate 720p or half-rate 1080p.
+            # Measured on a Pi 4 Model B: the three-worker pool decodes the
+            # 1080p gradient vector in 26.4 ms against a 33.3 ms budget, so
+            # 1080p30 holds with roughly a fifth of the interval spare.
             ceiling="1920x1080@30,1280x720@60"
             ;;
         "Raspberry Pi 3 Model "*)

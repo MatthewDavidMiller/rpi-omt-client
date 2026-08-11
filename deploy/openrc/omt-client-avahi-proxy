@@ -4,7 +4,14 @@ description="Filtered Avahi system bus proxy for OMT Client"
 supervisor=supervise-daemon
 command=/usr/bin/xdg-dbus-proxy
 command_args="unix:path=/run/dbus/system_bus_socket ${OMT_AVAHI_PROXY_SOCKET} --filter --talk=org.freedesktop.Avahi"
-command_user="nobody:${OMT_GID}"
+# The proxy must run under the same UID the container's receiver connects with.
+# xdg-dbus-proxy serves its socket through GDBus, whose default authorization
+# accepts an authenticated peer only when the peer's credentials name the
+# server's own user. Running as nobody left every client connection from the
+# omt user dropped during the D-Bus handshake, so mDNS discovery returned an
+# empty set immediately instead of browsing: a group grant cannot substitute
+# for the UID match.
+command_user="${OMT_UID}:${OMT_GID}"
 umask=0117
 respawn_delay=1
 respawn_max=0
@@ -25,7 +32,7 @@ start_post() {
         # accepts the bash double-bracket form only because Alpine happens to
         # build it with the bash compatibility option enabled.
         if [ -S "${OMT_AVAHI_PROXY_SOCKET}" ]; then
-            chown "nobody:${OMT_GID}" "${OMT_AVAHI_PROXY_SOCKET}"
+            chown "${OMT_UID}:${OMT_GID}" "${OMT_AVAHI_PROXY_SOCKET}"
             chmod 0660 "${OMT_AVAHI_PROXY_SOCKET}"
             return 0
         fi

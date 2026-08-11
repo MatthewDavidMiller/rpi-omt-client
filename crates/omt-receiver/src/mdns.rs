@@ -30,6 +30,31 @@ const MAX_RESOLVERS: usize = 256;
 /// Cap on remembered removals so a flapping network cannot grow the set without bound.
 const MAX_REMOVED: usize = 256;
 
+/// `org.freedesktop.Avahi.ServiceBrowser.ItemNew` and `ItemRemove`, whose
+/// bodies are `iisssu`: interface, protocol, name, type, domain, flags.
+///
+/// zbus matches a body against the whole tuple's signature, so a tuple that
+/// stops one field early does not read a prefix -- it fails to deserialize and
+/// the browse silently ignores every announcement it was started for.
+type BrowserItem = (i32, i32, String, String, String, u32);
+
+/// `org.freedesktop.Avahi.ServiceResolver.Found`, whose body is
+/// `iissssisqaayu`: the browser item's five leading fields, then host,
+/// address protocol, address, port, the TXT records, and flags.
+type ResolvedItem = (
+    i32,
+    i32,
+    String,
+    String,
+    String,
+    String,
+    i32,
+    String,
+    u16,
+    Vec<Vec<u8>>,
+    u32,
+);
+
 /// True when the system bus is reachable and Avahi is registered on it.
 #[must_use]
 pub fn available() -> bool {
@@ -83,9 +108,8 @@ async fn browse_inner(deadline: Instant, capacity: usize) -> zbus::Result<Vec<So
         let header = message.header();
         match header.member().map(zbus::names::MemberName::as_str) {
             Some("ItemNew") if resolvers.len() < MAX_RESOLVERS => {
-                if let Ok((interface, protocol, name, kind, domain)) = message
-                    .body()
-                    .deserialize::<(i32, i32, String, String, String)>()
+                if let Ok((interface, protocol, name, kind, domain, _flags)) =
+                    message.body().deserialize::<BrowserItem>()
                     && kind == SERVICE_TYPE
                     && let Ok(resolver) = server
                         .call::<_, _, OwnedObjectPath>(
@@ -98,10 +122,7 @@ async fn browse_inner(deadline: Instant, capacity: usize) -> zbus::Result<Vec<So
                 }
             }
             Some("ItemRemove") => {
-                if let Ok((_, _, name, _, _)) = message
-                    .body()
-                    .deserialize::<(i32, i32, String, String, String)>()
-                {
+                if let Ok((_, _, name, _, _, _)) = message.body().deserialize::<BrowserItem>() {
                     found.remove(&name);
                     if removed.len() < MAX_REMOVED {
                         removed.insert(name);
@@ -134,11 +155,19 @@ async fn browse_inner(deadline: Instant, capacity: usize) -> zbus::Result<Vec<So
 
 /// `org.freedesktop.Avahi.ServiceResolver.Found`.
 fn resolved_source(message: &Message) -> Option<Source> {
-    let (_interface, _protocol, name, _kind, _domain, _host, _address_protocol, address, port) =
-        message
-            .body()
-            .deserialize::<(i32, i32, String, String, String, String, i32, String, u16)>()
-            .ok()?;
+    let (
+        _interface,
+        _protocol,
+        name,
+        _kind,
+        _domain,
+        _host,
+        _address_protocol,
+        address,
+        port,
+        _txt,
+        _flags,
+    ) = message.body().deserialize::<ResolvedItem>().ok()?;
     if !is_valid_source_name(&name) {
         return None;
     }
