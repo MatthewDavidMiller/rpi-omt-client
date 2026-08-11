@@ -7,7 +7,7 @@ rust-version.workspace = true
 publish = false
 
 [dependencies]
-omt-protocol = { version = "0.9.44", path = "../omt-protocol" }
+omt-protocol = { version = "0.9.45", path = "../omt-protocol" }
 
 [lints]
 workspace = true
