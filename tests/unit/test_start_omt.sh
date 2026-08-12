@@ -21,7 +21,7 @@ run_start() {
     OMT_STORAGE_PATH="${CASE_DIR}/config/omt" \
     OMT_RECEIVER_COMMAND="${CASE_DIR}/receiver" \
     OMT_HDMI_CONNECTOR="${1:-auto}" \
-    PYTHONPATH="${ROOT}/src${PYTHONPATH:+:${PYTHONPATH}}" \
+    PATH="${ROOT}/target/debug:${PATH}" \
         "${START}"
 }
 

@@ -57,11 +57,10 @@ assert_equals "0.2.0" \
 
 mkdir -p "${tmpdir}/rpi-omt-client-main"
 printf '%s\n' \
-    '[build-system]' \
-    'version = "not-the-project-version"' \
+    '[workspace]' \
     '' \
-    '[project]' \
-    'version = "4.5.6"' >"${tmpdir}/rpi-omt-client-main/pyproject.toml"
+    '[workspace.package]' \
+    'version = "4.5.6"' >"${tmpdir}/rpi-omt-client-main/Cargo.toml"
 git -C "${tmpdir}/rpi-omt-client-main" init --quiet
 git -C "${tmpdir}/rpi-omt-client-main" \
     -c user.name="Version Test" \

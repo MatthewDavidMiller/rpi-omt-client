@@ -4,10 +4,8 @@
 from __future__ import annotations
 
 import argparse
-import importlib.metadata
 import json
 import re
-import subprocess
 import sys
 from pathlib import Path
 
@@ -15,18 +13,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from cargo_lock import LockGraph  # noqa: E402
 
-FIRST_PARTY_DISTRIBUTION = "rpi-omt-client"
-# The image ships the receiver binary alone; the deployer never enters it.
-RUNTIME_ROOTS = ["omt-receiver"]
-
-
-def command(*arguments: str) -> str:
-    return subprocess.run(
-        arguments,
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout
+# The image ships the receiver and Rust Web binaries; the deployer never enters it.
+RUNTIME_ROOTS = ["omt-receiver", "omt-web"]
 
 
 def license_value(value: str) -> dict[str, object]:
@@ -36,28 +24,19 @@ def license_value(value: str) -> dict[str, object]:
     return {"license": {"name": normalized}}
 
 
-def metadata_value(distribution: importlib.metadata.Distribution, key: str) -> str:
-    """Read one optional distribution header without assuming a mapping API.
-
-    ``Distribution.metadata`` is typed as the ``PackageMetadata`` protocol, which
-    does not expose ``get``. Test membership first: indexing a missing header
-    returns None today but is deprecated and will raise, and the implicit-None
-    lookup emits a DeprecationWarning during the image build.
-    """
-    if key not in distribution.metadata:
-        return ""
-    value = distribution.metadata[key]
-    return str(value) if value else ""
-
-
-def alpine_components() -> list[dict[str, object]]:
+def alpine_components(installed_database: str) -> list[dict[str, object]]:
     components: list[dict[str, object]] = []
-    for name in sorted(command("apk", "info").splitlines(), key=str.casefold):
-        versioned = command("apk", "info", "-e", "-v", name).strip()
-        version = versioned.removeprefix(f"{name}-")
-        details = command("apk", "info", "-a", name)
-        match = re.search(r"\n[^:\n]+ license:\n([^\n]+)", details)
-        license_name = match.group(1).strip() if match else "NOASSERTION"
+    records = Path(installed_database).read_text(encoding="utf-8").split("\n\n")
+    packages = []
+    for record in records:
+        fields = dict(
+            line.split(":", 1)
+            for line in record.splitlines()
+            if ":" in line and line[:1] in {"P", "V", "L"}
+        )
+        if "P" in fields and "V" in fields:
+            packages.append((fields["P"], fields["V"], fields.get("L", "NOASSERTION")))
+    for name, version, license_name in sorted(packages, key=lambda item: item[0].casefold()):
         components.append(
             {
                 "type": "library",
@@ -66,38 +45,6 @@ def alpine_components() -> list[dict[str, object]]:
                 "purl": f"pkg:apk/alpine/{name}@{version}",
                 "licenses": [license_value(license_name)],
                 "properties": [{"name": "distribution", "value": "Alpine Linux 3.23"}],
-            }
-        )
-    return components
-
-
-def python_components() -> list[dict[str, object]]:
-    components: list[dict[str, object]] = []
-    for distribution in sorted(
-        importlib.metadata.distributions(),
-        key=lambda item: metadata_value(item, "Name").casefold(),
-    ):
-        name = metadata_value(distribution, "Name")
-        # The application itself is installed as a wheel in the same venv. It is
-        # already this document's metadata.component, and it has no PyPI
-        # identity, so listing it here would misreport first-party code as a
-        # third-party dependency.
-        if not name or name.lower().replace("_", "-") == FIRST_PARTY_DISTRIBUTION:
-            continue
-        license_name = (
-            metadata_value(distribution, "License-Expression")
-            or metadata_value(distribution, "License")
-            or "NOASSERTION"
-        )
-        version = distribution.version
-        components.append(
-            {
-                "type": "library",
-                "name": name,
-                "version": version,
-                "purl": f"pkg:pypi/{name.lower().replace('_', '-')}@{version}",
-                "licenses": [license_value(license_name)],
-                "properties": [{"name": "runtime", "value": "Python"}],
             }
         )
     return components
@@ -121,8 +68,9 @@ def main() -> int:
     parser.add_argument("--output", required=True)
     parser.add_argument("--version", default="unknown")
     parser.add_argument("--cargo-lock", required=True)
+    parser.add_argument("--apk-installed", default="/lib/apk/db/installed")
     arguments = parser.parse_args()
-    components = alpine_components() + python_components() + rust_components(arguments.cargo_lock)
+    components = alpine_components(arguments.apk_installed) + rust_components(arguments.cargo_lock)
     document = {
         "bomFormat": "CycloneDX",
         "specVersion": "1.6",

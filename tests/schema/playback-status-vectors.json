@@ -2,7 +2,7 @@
   "comment": [
     "Shared contract between the Rust status producer and the Python status consumer.",
     "Producer: crates/omt-receiver-core/src/lib.rs",
-    "Consumer: src/omt_client/playback_status.py",
+    "Consumer: crates/omt-web/src/playback.rs",
     "Python requires set(document) == fields exactly, so a field added on only one",
     "side would make every status record unparseable and pin the dashboard to",
     "'Playback status stale'. Both test suites assert against this file.",

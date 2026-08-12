@@ -122,7 +122,7 @@ done
 # Docker exposes the image probe as .Config.Healthcheck, Podman as .HealthCheck,
 # so match the whole inspect document rather than either engine's field path.
 health_test="$("${CONTAINER_ENGINE}" inspect --format '{{json .}}' "${IMAGE_TAG}" 2>/dev/null)"
-[[ "${health_test}" == *'"/opt/venv/bin/python"'* && "${health_test}" == *'/login'* ]] ||
+[[ "${health_test}" == *'wget'* && "${health_test}" == *'/login'* ]] ||
     fail "image declares no usable HEALTHCHECK command"
 pass "image declares a HEALTHCHECK command"
 
@@ -139,15 +139,14 @@ runtime_state="$("${CONTAINER_ENGINE}" exec "${CONTAINER_NAME}" /bin/sh -c '
 pass "per-boot receiver state is a private tmpfs directory off the config volume"
 
 "${CONTAINER_ENGINE}" exec "${CONTAINER_NAME}" \
-    /opt/venv/bin/python -c \
-    'import os, ssl, urllib.request; urllib.request.urlopen("https://127.0.0.1:" + os.environ["WEB_PORT"] + "/login", timeout=4, context=ssl._create_unverified_context())' ||
+    /bin/sh -c 'wget -q --spider --no-check-certificate "https://127.0.0.1:${WEB_PORT}/login"' ||
     fail "HEALTHCHECK probe failed against the live listener"
 pass "HEALTHCHECK probe succeeds against the live listener"
 
 unauthenticated_code="$(
     curl_app --output /dev/null --write-out '%{http_code}' "${BASE_URL}/about"
 )"
-[[ "${unauthenticated_code}" == "302" ]] ||
+[[ "${unauthenticated_code}" == "303" ]] ||
     fail "About page is not authentication-protected"
 pass "About page redirects unauthenticated users"
 
@@ -161,7 +160,7 @@ login_code="$(
         --data-urlencode "password=${TEST_PASSWORD}" \
         --data-urlencode "csrf_token=${login_csrf}"
 )"
-[[ "${login_code}" == "302" ]] || fail "valid login was rejected"
+[[ "${login_code}" == "303" ]] || fail "valid login was rejected"
 pass "password authentication and CSRF-protected login work"
 
 about_page="$(

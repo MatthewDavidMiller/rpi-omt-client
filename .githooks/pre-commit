@@ -22,7 +22,7 @@ export SECURITY_SCAN_IMAGE_TAG=omt-client:test-build
 # smoke/network test sequence so Make, manual runs, and this hook cannot drift.
 ./scripts/test-local.sh --full
 
-echo "Running Python dependency audit..."
+echo "Running Python tooling dependency audit..."
 ./scripts/audit-python-deps.sh
 
 echo "Running security scans..."

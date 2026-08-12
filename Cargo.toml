@@ -5,6 +5,7 @@ members = [
   "crates/vmx-decoder",
   "crates/omt-receiver-core",
   "crates/omt-receiver",
+  "crates/omt-web",
   "crates/omt-test-sender",
   "crates/omt-deployer-core",
   "crates/rpi-omt-deploy",
@@ -12,12 +13,14 @@ members = [
 ]
 
 [workspace.package]
-version = "0.9.46"
+version = "0.9.47"
 edition = "2024"
 license = "MIT"
 rust-version = "1.97.1"
 
 [workspace.dependencies]
+axum = "0.8.9"
+axum-server = { version = "0.8.0", default-features = false, features = ["tls-rustls-no-provider"] }
 alsa = "0.12.1"
 async-io = "2.6.0"
 clap = { version = "4.5.48", features = ["derive"] }
@@ -25,7 +28,10 @@ drm = "0.15.0"
 eframe = { version = "0.32.3", default-features = false, features = ["accesskit", "glow", "wayland", "x11"] }
 egui = "0.32.3"
 hmac = "0.12.1"
+libc = "0.2.176"
 pbkdf2 = "0.12.2"
+minijinja = "2.23.0"
+nix = { version = "0.30.1", features = ["signal", "process"] }
 futures-lite = "2.6.1"
 getrandom = "0.3.3"
 quick-xml = "0.41.0"
@@ -37,14 +43,20 @@ rpassword = "7.4.0"
 sha2 = "0.10.9"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
+serde_urlencoded = "0.7.1"
 sha1 = "0.10.6"
 signal-hook = "0.3.18"
+subtle = "2.6.1"
 unicode-normalization = "0.1.24"
 zbus = { version = "5.18.0", default-features = false, features = ["async-io"] }
 zeroize = { version = "1.8.2", features = ["derive"] }
 russh = { version = "0.62.5", default-features = false, features = ["flate2", "ring", "rsa"] }
 russh-sftp = "2.4.0"
 tokio = { version = "1.53.1", features = ["rt", "macros", "net", "io-util", "time", "sync"] }
+rustls = { version = "0.23.37", default-features = false, features = ["ring", "std", "tls12"] }
+scrypt = "0.11.0"
+time = { version = "0.3.55", features = ["formatting", "parsing", "macros"] }
+zip = { version = "7.2.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

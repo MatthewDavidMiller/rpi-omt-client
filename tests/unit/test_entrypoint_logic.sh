@@ -7,36 +7,40 @@ CASE_DIR="$(mktemp -d)"
 trap 'rm -rf "${CASE_DIR}"' EXIT
 mkdir -p "${CASE_DIR}/config"
 
-cat > "${CASE_DIR}/gunicorn" <<'EOF'
+cat > "${CASE_DIR}/omt-web" <<'EOF'
 #!/bin/bash
-printf '%s\n' "$*" > "${ENTRYPOINT_GUNICORN_RECORD}"
+if [[ "${1:-}" == initialize ]]; then
+    exec "${REAL_OMT_WEB}" initialize
+fi
+printf '%s\n' "$*" > "${ENTRYPOINT_WEB_RECORD}"
 EOF
 cat > "${CASE_DIR}/control" <<'EOF'
 #!/bin/bash
 printf '%s\n' "$*" > "${ENTRYPOINT_CONTROL_RECORD}"
 EOF
-chmod 0755 "${CASE_DIR}/gunicorn" "${CASE_DIR}/control"
+chmod 0755 "${CASE_DIR}/omt-web" "${CASE_DIR}/control"
 
 run_entrypoint() {
     OMT_CONFIG_DIR="${CASE_DIR}/config" \
     OMT_STORAGE_PATH="${CASE_DIR}/config/omt" \
-    GUNICORN_CMD="${CASE_DIR}/gunicorn" \
+    OMT_WEB_CMD="${CASE_DIR}/omt-web" \
     CONTROL_OMT_CMD="${CASE_DIR}/control" \
-    ENTRYPOINT_GUNICORN_RECORD="${CASE_DIR}/gunicorn.args" \
+    REAL_OMT_WEB="${ROOT}/target/debug/omt-web" \
+    ENTRYPOINT_WEB_RECORD="${CASE_DIR}/web.args" \
     ENTRYPOINT_CONTROL_RECORD="${CASE_DIR}/control.args" \
     WEB_PORT=5443 \
         "${ENTRYPOINT}"
 }
 
 run_entrypoint >/dev/null
-[[ -s "${CASE_DIR}/config/flask_secret" ]]
+[[ -s "${CASE_DIR}/config/web_secret" ]]
 [[ -s "${CASE_DIR}/config/web_password" ]]
-[[ "$(stat -c '%a' "${CASE_DIR}/config/flask_secret")" == 600 ]]
+[[ "$(stat -c '%a' "${CASE_DIR}/config/web_secret")" == 600 ]]
 [[ "$(stat -c '%a' "${CASE_DIR}/config/web_password")" == 600 ]]
 [[ -s "${CASE_DIR}/config/ssl/key.pem" ]]
 [[ -s "${CASE_DIR}/config/ssl/cert.pem" ]]
 grep -q '<Settings />' "${CASE_DIR}/config/omt/settings.xml"
-grep -q -- '--bind 0.0.0.0:5443' "${CASE_DIR}/gunicorn.args"
+[[ -f "${CASE_DIR}/web.args" ]]
 [[ ! -e "${CASE_DIR}/control.args" ]]
 
 printf '%s\n' '{"schema":1,"kind":"discovered","name":"Camera"}' \
@@ -56,9 +60,10 @@ run_entrypoint_with_runtime() {
     OMT_CONFIG_DIR="${CASE_DIR}/config" \
     OMT_STORAGE_PATH="${CASE_DIR}/config/omt" \
     OMT_RUNTIME_DIR="$1" \
-    GUNICORN_CMD="${CASE_DIR}/gunicorn" \
+    OMT_WEB_CMD="${CASE_DIR}/omt-web" \
     CONTROL_OMT_CMD="${CASE_DIR}/control" \
-    ENTRYPOINT_GUNICORN_RECORD="${CASE_DIR}/gunicorn.args" \
+    REAL_OMT_WEB="${ROOT}/target/debug/omt-web" \
+    ENTRYPOINT_WEB_RECORD="${CASE_DIR}/web.args" \
     ENTRYPOINT_CONTROL_RECORD="${CASE_DIR}/control.args" \
     WEB_PORT=5443 \
         "${ENTRYPOINT}"
@@ -88,13 +93,13 @@ if run_entrypoint_with_runtime "${CASE_DIR}/runtime/state" >/dev/null 2>&1; then
 fi
 
 # Whitespace-only secrets are not usable credentials; regenerate them.
-printf '   \n' > "${CASE_DIR}/config/flask_secret"
-chmod 600 "${CASE_DIR}/config/flask_secret"
-BEFORE_SECRET="$(stat -c '%i %s' -- "${CASE_DIR}/config/flask_secret")"
+printf '   \n' > "${CASE_DIR}/config/web_secret"
+chmod 600 "${CASE_DIR}/config/web_secret"
+BEFORE_SECRET="$(stat -c '%i %s' -- "${CASE_DIR}/config/web_secret")"
 run_entrypoint >/dev/null 2>&1
-AFTER_SECRET="$(stat -c '%i %s' -- "${CASE_DIR}/config/flask_secret")"
+AFTER_SECRET="$(stat -c '%i %s' -- "${CASE_DIR}/config/web_secret")"
 [[ "${BEFORE_SECRET}" != "${AFTER_SECRET}" ]]
-CONTENT="$(tr -d '[:space:]' < "${CASE_DIR}/config/flask_secret")"
+CONTENT="$(tr -d '[:space:]' < "${CASE_DIR}/config/web_secret")"
 [[ -n "${CONTENT}" ]]
 
 echo "OMT entrypoint tests passed"

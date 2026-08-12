@@ -24,8 +24,7 @@ if [[ ! -x "${PYTHON_TEST_BIN}" ]]; then
     echo -e "${RED}FAILED${NC}: Python test venv not set up. Run: make test-setup"
     exit 1
 fi
-# Shell integration tests execute application commands such as Werkzeug's
-# password helper. Keep all repo-local Python tools resolvable after a checkout
+# Keep all repo-local Python tools resolvable after a checkout
 # is moved without relying on generated console-script shebangs.
 export PATH="${PYTEST_VENV}/bin:${PATH}"
 
@@ -78,7 +77,8 @@ run_test() {
 }
 
 # ─── Unit Tests ───────────────────────────────────────────────
-run_test "Flask App Syntax" "${PROJECT_ROOT}/tests/unit/test_flask_app_syntax.sh"
+run_test "Rust Web frontend" cargo test --locked -p omt-web
+run_test "Rust Web executable" cargo build --locked -p omt-web
 run_test "OMT Controller" "${PROJECT_ROOT}/tests/unit/test_control_omt.sh"
 run_test "Entrypoint Logic" "${PROJECT_ROOT}/tests/unit/test_entrypoint_logic.sh"
 run_test "Start OMT Script" "${PROJECT_ROOT}/tests/unit/test_start_omt.sh"
@@ -119,16 +119,11 @@ else
     run_test "Windows Deployer Cross Build" "${PROJECT_ROOT}/scripts/build-windows-deployer.sh"
 fi
 
-# ─── Python Unit Tests ────────────────────────────────────────
-echo "=== Python Unit Tests ==="
-if "${PYTHON_TEST_BIN}" -m pytest tests/unit \
-    --cov=src/omt_client --cov-report=term-missing --cov-fail-under=100 -q --tb=short; then
-    echo -e "${GREEN}PASSED${NC}: Python unit tests"
-else
-    echo -e "${RED}FAILED${NC}: Python unit tests"
-    exit 1
-fi
-echo ""
+# ─── Python repository/shell-boundary tests ──────────────────
+run_test "Repository contract tests" "${PYTHON_TEST_BIN}" -m pytest \
+    tests/unit/test_cross_file_invariants.py \
+    tests/unit/test_documentation.py \
+    tests/unit/test_runtime_validation.py -q --tb=short
 
 if [[ "${QUICK_MODE}" == "true" ]]; then
     echo -e "${GREEN}=== Quick tests completed successfully ===${NC}"

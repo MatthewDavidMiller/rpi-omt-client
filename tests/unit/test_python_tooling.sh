@@ -11,7 +11,7 @@ if grep -ERn --include='Makefile' --include='*.sh' \
     echo "FAIL: Python tooling invokes a generated virtualenv console script" >&2
     exit 1
 fi
-grep -Fq '$(TEST_PYTHON) -m pytest' "${ROOT}/Makefile"
+grep -Fq '"${PYTHON_TEST_BIN}" -m pytest' "${ROOT}/scripts/test-local.sh"
 grep -Fq '$(TEST_PYTHON) -m pip install' "${ROOT}/Makefile"
 grep -Fq '"${PYTHON_VENV}" -m pip_audit' "${ROOT}/scripts/audit-python-deps.sh"
 
@@ -21,7 +21,6 @@ FIXTURE="${CASE_DIR}/moved-checkout"
 OUTSIDE="${CASE_DIR}/outside"
 mkdir -p \
     "${FIXTURE}/scripts" \
-    "${FIXTURE}/src/omt_client" \
     "${FIXTURE}/deploy" \
     "${FIXTURE}/tests/.venv/bin" \
     "${FIXTURE}/fake-bin" \
@@ -32,8 +31,7 @@ touch \
     "${FIXTURE}/deploy/Dockerfile" \
     "${FIXTURE}/deploy/compose.yml" \
     "${FIXTURE}/docker-compose.dev.yml" \
-    "${FIXTURE}/.yamllint.yml" \
-    "${FIXTURE}/src/omt_client/__init__.py"
+    "${FIXTURE}/.yamllint.yml"
 
 for command_name in cargo cargo-deny cargo-vet shellcheck hadolint; do
     cat > "${FIXTURE}/fake-bin/${command_name}" <<'EOF'
@@ -62,7 +60,7 @@ chmod +x "${FIXTURE}/tests/.venv/bin/python"
         "${FIXTURE}/scripts/lint.sh" >/dev/null
 )
 # ruff runs twice (check, then format --check) and mypy runs twice (strict over
-# src/ and scripts/, then relaxed over tests/).
+# scripts/ and tools/, then relaxed over tests/).
 printf 'yamllint\nruff\nruff\nmypy\nmypy\n' > "${CASE_DIR}/expected.log"
 cmp "${CASE_DIR}/expected.log" "${CASE_DIR}/module.log"
 

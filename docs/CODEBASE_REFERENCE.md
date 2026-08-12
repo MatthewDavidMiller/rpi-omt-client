@@ -24,86 +24,55 @@
 | Shared validation, status, and forbidden-code-point contracts | `tests/schema/` |
 | Per-artifact SBOM closures from `Cargo.lock` | `scripts/cargo_lock.py` |
 | OMT provenance | `third_party/omt/PROVENANCE.md`, `third_party/omt/libvmx/LICENSE.txt` |
-| Flask composition | `src/omt_client/factory.py`, `src/omt_client/wsgi.py` |
-| Service composition | `src/omt_client/services/composition.py` |
-| Typed service protocols | `src/omt_client/services/protocols.py` |
-| Authentication, playback, network, host system | `src/omt_client/services/` |
-| Diagnostics, split by trust boundary | `src/omt_client/services/diagnostics/` |
-| Container-side checks and their JSON archive members | `src/omt_client/services/diagnostics/checks.py` |
-| Correlated host request channel and PCAP validation | `src/omt_client/services/diagnostics/host.py` |
-| `RuntimeDiagnostics` and the support-archive layout | `src/omt_client/services/diagnostics/bundle.py` |
-| Routes | `src/omt_client/routes/` |
-| Safe I/O and persistent state | `src/omt_client/safe_io.py`, `src/omt_client/state_store.py` |
-| Shared host `key=value` record parsing | `src/omt_client/records.py` |
-| Strict schema-bound JSON parsing | `src/omt_client/json_document.py` |
-| Receiver status contract (consumer half) | `src/omt_client/playback_status.py` |
-| Discovery and URI validation | `src/omt_client/discovery.py` |
-| Shared ASCII host grammar | `src/omt_client/hostnames.py` |
-| OMT XML settings | `src/omt_client/network_config.py` |
-| Templates and CSS | `src/omt_client/templates/`, `src/omt_client/static/` |
-| About route (presentation) | `src/omt_client/routes/about.py` |
-| Build version and legal texts (service) | `RuntimeAbout` in `src/omt_client/services/about.py` |
-| Web design tokens and layout | `src/omt_client/static/style.css`, `src/omt_client/static/favicon.svg` |
-| Dev-only preview fakes | `src/omt_client_preview/` |
+| HTTPS composition, routes, headers, CSRF, and rate limits | `crates/omt-web/src/app.rs` |
+| Credentials, legacy hash compatibility, and persistent sessions | `crates/omt-web/src/auth.rs` |
+| Source discovery, playback, and status projection | `crates/omt-web/src/playback.rs` |
+| Diagnostics, support archives, PCAP validation, and host actions | `crates/omt-web/src/diagnostics.rs` |
+| Safe bounded/atomic I/O | `crates/omt-web/src/io.rs` |
+| Persistent source and video-limit state | `crates/omt-web/src/state.rs` |
+| OMT discovery-server XML | `crates/omt-web/src/network.rs` |
+| Validated runtime configuration | `crates/omt-web/src/settings.rs` |
+| Bounded subprocess execution | `crates/omt-web/src/command.rs` |
+| Templates and design assets | `crates/omt-web/templates/`, `crates/omt-web/static/` |
 | Shell process lifecycle | `deploy/container/runtime-lib.sh`, `deploy/container/start-omt.sh`, `deploy/container/control-omt.sh`, `deploy/container/entrypoint.sh` |
 | Container | `deploy/Dockerfile`, `deploy/compose.yml` |
 | Alpine OpenRC services | `deploy/openrc/`, `deploy/host/host-event-watcher.sh` |
 
-`RuntimeAbout` is the single owner of the build version. The About page, the
-diagnostics page, and the `version.txt` member of a support bundle all read it
-through that one service, so an archive cannot name a different build than the
-UI that produced it. `DiagnosticsService` therefore has no `version()` of its
-own; `RuntimeDiagnostics` receives the About service instead. Build entry
-points prefer an explicit `RPI_OMT_CLIENT_VERSION`, then the canonical version
-in `pyproject.toml`, before falling back to release metadata from Git or a
-versioned source directory.
+The Rust Web service has one version reader used by About, Diagnostics, and the
+`version.txt` support-bundle member. Build entry points prefer an explicit
+`RPI_OMT_CLIENT_VERSION`, then the canonical workspace version in `Cargo.toml`,
+before falling back to release metadata from Git or a versioned source directory.
 
-`src/omt_client/services/diagnostics/` is split by trust boundary rather than
-by type:
-`checks.py` runs only what the container can answer itself, `host.py` owns the
-correlated request channel to the privileged collector, and `bundle.py`
-composes both and lays out the zip. Members reach `bundle.py` already resolved,
-including their stated failure reasons, so the archive layout decides nothing
-about content. `RuntimeDiagnostics` remains the only name outside the package.
-Its `runtime()` returns the check *and* the controller status that check
-observed, so the diagnostics page header cannot contradict the check rendered
-beneath it.
+`diagnostics.rs` owns both sides of the correlated host request boundary and
+lays out the support ZIP. It returns the runtime check together with the exact
+controller observation rendered beside it, so one page cannot contradict
+itself. Raw capture is opt-in and accepted only after request-ID, size, magic,
+and SHA-256 checks.
 
-`deploy/Dockerfile` builds a wheel from the `packages` list in `pyproject.toml`
-and installs it into `/opt/venv`, so the appliance imports `omt_client` from
-site-packages rather than a copied tree. That list names only `omt_client*`, so
-`src/omt_client_preview/` (the in-memory fakes behind
-`scripts/preview-web-ui.py` and the route tests) never reaches the appliance
-image. Nothing under `src/omt_client/` may import it;
-`tests/unit/test_preview_services.py` enforces that.
-
-`runtime-sha256.manifest` covers `/app`, `/usr/local/bin`, **and**
-the installed `omt_client` package with its `.dist-info`, so the integrity
-check still spans the application code after the move. The first-party wheel is
-excluded from the third-party notice sweep and from the SBOM's PyPI components;
-`tests/integration/test_docker_build.sh` asserts all of this.
+`deploy/Dockerfile` builds stripped `omt-receiver` and `omt-web` binaries. The
+final appliance contains no Python interpreter, virtual environment, pip
+package, or Web source tree. `runtime-sha256.manifest` covers `/app` and every
+runtime binary/script under `/usr/local/bin`; the runtime SBOM contains both
+Rust binary dependency closures and the final Alpine package database.
 
 A source name's forbidden code points have one published definition, in
-`tests/schema/omt-target-vectors.json`: the Python validator derives them from
-`unicodedata` and `omt-protocol` compiles them into a table it asserts against
-that file. Both suites read it, so a name the receiver would play cannot be one
-the dashboard silently drops.
+`tests/schema/omt-target-vectors.json`. `omt-protocol` owns the compiled table
+and both Rust binaries reuse that crate, so a name the receiver would play
+cannot be one the dashboard silently drops.
 
 Playback states are pinned the same way, in
 `tests/schema/playback-status-vectors.json`. Every state in it is reachable:
-the Rust suite asserts `video_states` is exactly what `video_name` produces and
-the Python suite asserts `PUBLIC_STATES` is total over `receiver_states`, so a
-state cannot be added on one side alone, nor left behind once no producer emits
-it.
+the receiver suite asserts `video_states` is exactly what `video_name` produces,
+and Rust Web tests assert every receiver state has a public projection.
 
-The receiver is built with checksum-locked Cargo dependencies and Rust 1.97.1
+The runtime is built with checksum-locked Cargo dependencies and Rust 1.97.1
 in a digest-pinned Alpine builder stage. A `scratch` stage contains only the
-stripped `omt-receiver`, so neither the SDK nor build toolchain is part of the
-deployed image.
-The ARM64 publisher fingerprints the receiver's complete local source closure
+stripped `omt-receiver` and `omt-web`, so neither the SDK nor build toolchain is
+part of the deployed image.
+The ARM64 publisher fingerprints both binaries' complete local source closure
 into that scratch stage: Podman's cross-stage cache can otherwise compile a
 changed receiver and still reuse the old copied binary.
-The builder copies only the four receiver-side crates plus the deployer
+The builder copies only the receiver/Web crates plus the deployer
 manifests and inert target stubs needed to preserve the locked workspace, so a
 desktop or SSH-client source edit does not trigger another emulated ARM64
 receiver compile.
@@ -112,7 +81,7 @@ Public routes are `/login`, `/logout`, `/`, `/sources/select`,
 `/sources/refresh`, `/playback/restart`, `/playback/clear`,
 `/settings/network`, `/settings/direct-source`, `/diagnostics`,
 `/diagnostics/discovery`, `/diagnostics/runtime`, `/diagnostics/direct`,
-`/diagnostics/download`, `/system`, `/system/reboot`, and `/about`.
+`/diagnostics/download`, `/system`, `/system/video-limit`, `/system/reboot`, and `/about`.
 All routes other than login require a current persistent session. Mutations
 are POST and CSRF protected.
 
@@ -162,6 +131,6 @@ connection secret is redacted before that summary reaches progress output.
 ## Legal and release
 
 `LICENSE`, `THIRD_PARTY_NOTICES.txt`, and `THIRD_PARTY_SOURCE.md` are release
-inputs. `scripts/check-legal-notices.py` compares shipped Python and native
+inputs. `scripts/check-legal-notices.py` compares shipped Rust and Alpine
 dependencies to the notices. `scripts/generate-runtime-sbom.py` and
 `scripts/generate-deployer-sbom.py` create CycloneDX inventories.

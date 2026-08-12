@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>{% block title %}{{ hostname }} OMT Client{% endblock %}</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark light">
+    <meta name="theme-color" content="#0a1119" media="(prefers-color-scheme: dark)">
+    <meta name="theme-color" content="#eef2f8" media="(prefers-color-scheme: light)">
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <a class="skip-link" href="#main-content">Skip to main content</a>
+    <header class="site-header">
+        <div class="header-inner">
+            <p class="brand">{{ hostname }} OMT Client</p>
+            {% if authenticated %}
+            <nav class="nav-strip" aria-label="Primary navigation">
+                <a href="/"{% if endpoint and endpoint == 'dashboard.dashboard' %} aria-current="page"{% endif %}>Dashboard</a>
+                <a href="/settings/network"{% if endpoint and endpoint == 'network.network_settings' %} aria-current="page"{% endif %}>Network Settings</a>
+                <a href="/diagnostics"{% if endpoint and endpoint == 'diagnostics.diagnostics' %} aria-current="page"{% endif %}>Diagnostics</a>
+                <a href="/system"{% if endpoint and endpoint == 'system.system' or endpoint == 'system.confirm_reboot' or endpoint == 'system.reboot' %} aria-current="page"{% endif %}>System</a>
+                <a href="/about"{% if endpoint and endpoint == 'about.about' %} aria-current="page"{% endif %}>About</a>
+            </nav>
+            <form class="header-actions" method="POST" action="/logout">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <button type="submit" class="button button-secondary">Log out</button>
+            </form>
+            {% endif %}
+        </div>
+    </header>
+    <main id="main-content" class="page{% block page_class %}{% endblock %}">
+        {% set messages = flashes %}
+        {% if messages %}
+        <ul class="flash-list" aria-live="polite" aria-label="Action results">
+            {% for category, message in messages %}
+            <li class="flash flash-{{ category }}">{{ message }}</li>
+            {% endfor %}
+        </ul>
+        {% endif %}
+        {% block content %}{% endblock %}
+    </main>
+</body>
+</html>

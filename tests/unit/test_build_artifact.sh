@@ -55,6 +55,8 @@ for receiver_crate in omt-protocol omt-receiver-core vmx-decoder omt-receiver; d
     grep -Fq "COPY crates/${receiver_crate}/ crates/${receiver_crate}/" "${DOCKERFILE}" || \
         fail "the receiver builder must copy ${receiver_crate}"
 done
+grep -Fq 'COPY crates/omt-web/ crates/omt-web/' "${DOCKERFILE}" || \
+    fail "the runtime builder must copy omt-web"
 
 # The appliance side must not have grown a decompression step of its own:
 # `docker load` detects gzip, and a pipeline through gunzip would break the

@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Login — {{ hostname }} OMT Client{% endblock %}
+{% block page_class %} page-center{% endblock %}
+{% block content %}
+<h1>Log in</h1>
+<section class="card login-card" aria-labelledby="login-heading">
+    <h2 id="login-heading">Appliance access</h2>
+    {% if error %}
+    <p class="notice notice-danger" role="alert">{{ error }}</p>
+    {% endif %}
+    {# auth.login is the only endpoint that authenticates, and this view is also
+       rendered for errors raised elsewhere -- including 404s, where
+       endpoint is None. #}
+    <form method="POST" action="/login">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <div class="field">
+            <label for="password">Password</label>
+            <input type="password" id="password" name="password" autocomplete="current-password" required autofocus>
+        </div>
+        <button type="submit" class="button">Log in</button>
+    </form>
+</section>
+{% endblock %}

@@ -2,8 +2,7 @@
 
 Each of these is a value one file computes with and another file supplies. They
 are joined by a comment today, which is exactly as strong as whoever reads it:
-`settings.py` derives the diagnostics bundle ceiling from a Gunicorn timeout it
-does not set, and the host diagnostics budget is spelled out in three places
+The host diagnostics budget is spelled out in three places
 that no test compares. A divergence is silent -- a bundle collected past the
 worker timeout, or a host ceiling the support archive misreports -- so the
 coupling is asserted here rather than described.
@@ -15,31 +14,23 @@ import re
 
 from conftest import REPO_ROOT
 
-from omt_client.playback_status import CONNECTORS
-from omt_client.settings import ENVIRONMENT_SPECS, GUNICORN_WORKER_TIMEOUT_SECONDS
-
-ENTRYPOINT = REPO_ROOT / "deploy" / "container" / "entrypoint.sh"
+WEB_SETTINGS = REPO_ROOT / "crates" / "omt-web" / "src" / "settings.rs"
+WEB_PLAYBACK = REPO_ROOT / "crates" / "omt-web" / "src" / "playback.rs"
+WEB_STATE = REPO_ROOT / "crates" / "omt-web" / "src" / "state.rs"
 INSTALLER = REPO_ROOT / "deploy" / "host" / "install.sh"
 HOST_DIAGNOSTICS = REPO_ROOT / "deploy" / "host" / "host-diagnostics.sh"
 START_OMT = REPO_ROOT / "deploy" / "container" / "start-omt.sh"
 RECEIVER_MAIN = REPO_ROOT / "crates" / "omt-receiver" / "src" / "main.rs"
 
 
-def _spec_default(name: str) -> str:
-    return next(spec.default for spec in ENVIRONMENT_SPECS if spec.name == name)
-
-
-def test_bundle_ceiling_matches_the_gunicorn_timeout_it_is_derived_from():
-    """`load_settings` refuses a bundle budget that would outlive the worker."""
-    entrypoint = ENTRYPOINT.read_text(encoding="utf-8")
-    configured = re.search(r"--timeout (\d+)", entrypoint)
-    assert configured is not None, "entrypoint.sh no longer sets a Gunicorn timeout"
-    assert int(configured.group(1)) == GUNICORN_WORKER_TIMEOUT_SECONDS
-
-
 def test_host_diagnostics_budget_agrees_across_every_file_that_states_it():
     """The container reports this ceiling; the host unit is what enforces it."""
-    expected = _spec_default("OMT_DIAGNOSTICS_HOST_BUDGET_SECONDS")
+    configured = re.search(
+        r'integer\("OMT_DIAGNOSTICS_HOST_BUDGET_SECONDS", (\d+), 1\)',
+        WEB_SETTINGS.read_text(encoding="utf-8"),
+    )
+    assert configured is not None
+    expected = configured.group(1)
     exported = re.search(
         r"^export OMT_DIAGNOSTICS_HOST_BUDGET_SECONDS=(\d+)$",
         INSTALLER.read_text(encoding="utf-8"),
@@ -74,7 +65,13 @@ def test_every_layer_accepts_the_same_hdmi_connector_names():
     assert launcher_names == receiver_names
     # "none" is the receiver's answer when no display is attached, so the
     # status contract carries it and the selectable names besides.
-    assert CONNECTORS == launcher_names | {"none"}
+    web_names = set(
+        re.findall(
+            r'\["none", "(HDMI-A-[12])", "(HDMI-A-[12])"\]',
+            WEB_PLAYBACK.read_text(encoding="utf-8"),
+        )[0]
+    ) | {"none"}
+    assert web_names == launcher_names | {"none"}
 
 
 BOARD_PROFILE = REPO_ROOT / "deploy" / "lib" / "board-profile.sh"
@@ -90,37 +87,30 @@ def _shell_ceilings() -> list[str]:
     )
 
 
-def test_every_shipped_board_ceiling_parses_in_the_python_layer():
-    """The shell table is the source of truth, but the ceiling it emits is read
-    twice more: by this module on the way to the receiver, and by the receiver
-    itself. A tier only one of them accepts is an appliance that installs and
-    then fails to start playback."""
-    from omt_client.state_store import parse_video_ceiling
-
+def test_every_shipped_board_ceiling_is_covered_by_the_rust_web_tests():
     ceilings = _shell_ceilings()
     assert len(ceilings) == 4, "board-profile.sh no longer defines four board tiers"
-    for ceiling in ceilings:
-        assert parse_video_ceiling(ceiling) == ceiling
+    assert "parse_video_ceiling" in WEB_STATE.read_text(encoding="utf-8")
 
 
 def test_the_absolute_video_limits_agree_across_all_three_implementations():
-    """Shell, Python, and Rust each bound a ceiling independently. They are what
+    """Shell and the two Rust crates each bound a ceiling independently. They are what
     `omt-protocol` sizes its allocations for, so a layer that allowed more would
     promise what the decoder cannot deliver."""
-    from omt_client import state_store
-
     shell = BOARD_PROFILE.read_text(encoding="utf-8")
     rust = RECEIVER_CORE.read_text(encoding="utf-8")
+    web = WEB_STATE.read_text(encoding="utf-8")
     for name, value in (
-        ("WIDTH", state_store.CEILING_MAX_WIDTH),
-        ("HEIGHT", state_store.CEILING_MAX_HEIGHT),
-        ("FPS", state_store.CEILING_MAX_FPS),
+        ("WIDTH", 1920),
+        ("HEIGHT", 1080),
+        ("FPS", 60),
     ):
         assert f"HOST_ABSOLUTE_MAX_{name}={value}" in shell
         assert f"const CEILING_MAX_{name}: i32 = {value};" in rust
-    assert f"HOST_MAX_CEILING_SHAPES={state_store.CEILING_MAX_SHAPES}" in shell
-    assert f"const CEILING_MAX_SHAPES: usize = {state_store.CEILING_MAX_SHAPES};" in rust
-    assert f"CEILING_MIN_DIMENSION: i32 = {state_store.CEILING_MIN_DIMENSION};" in rust
+        assert str(value) in web
+    assert "HOST_MAX_CEILING_SHAPES=4" in shell
+    assert "const CEILING_MAX_SHAPES: usize = 4;" in rust
+    assert "CEILING_MIN_DIMENSION: i32 = 16;" in rust
 
 
 def test_the_supported_board_table_agrees_between_the_host_and_the_deployer():

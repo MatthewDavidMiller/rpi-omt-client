@@ -88,8 +88,8 @@ fi
 if [[ -x "${PYTHON_VENV}/bin/python" ]] && \
    "${PYTHON_VENV}/bin/python" -c 'import ruff' 2>/dev/null; then
     echo "Running Ruff..."
-    "${PYTHON_VENV}/bin/python" -m ruff check src scripts tools tests
-    "${PYTHON_VENV}/bin/python" -m ruff format --check src scripts tools tests
+    "${PYTHON_VENV}/bin/python" -m ruff check scripts tools tests
+    "${PYTHON_VENV}/bin/python" -m ruff format --check scripts tools tests
 else
     missing_tool "ruff"
 fi
@@ -101,7 +101,7 @@ if [[ -x "${PYTHON_VENV}/bin/python" ]] && \
     echo "Running mypy over tests (relaxed)..."
     # A separate cache: sharing .mypy_cache with the strict pass above makes each
     # run invalidate the other's module metadata, so neither is ever warm.
-    MYPYPATH=src "${PYTHON_VENV}/bin/python" -m mypy \
+    "${PYTHON_VENV}/bin/python" -m mypy \
         --cache-dir .mypy_cache-tests \
         --check-untyped-defs --allow-untyped-defs --allow-untyped-calls \
         --allow-incomplete-defs --allow-untyped-decorators tests

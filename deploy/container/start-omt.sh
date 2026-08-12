@@ -20,14 +20,14 @@ if [[ ! "${OMT_HDMI_CONNECTOR}" =~ ^(auto|HDMI-A-1|HDMI-A-2)$ ]]; then
     exit 2
 fi
 
-# One shared reader with the Flask services: schema, size, symlink, and
-# validation rules live in omt_client.state_store rather than a second copy here.
-target="$(python3 -m omt_client.state_store play-target "${OMT_SOURCE_TARGET_FILE}")"
+# One shared reader with the Rust Web service: schema, size, symlink, and
+# validation rules live in omt-web rather than a second copy here.
+target="$(omt-web play-target "${OMT_SOURCE_TARGET_FILE}")"
 
 # The board's decode ceiling, or the operator's override of it. Resolved by the
-# same module for the same reason: the ceiling grammar and its bounds live in
+# same binary for the same reason: the ceiling grammar and its bounds live in
 # one place rather than being restated by whoever builds the argument vector.
-ceiling="$(python3 -m omt_client.state_store video-ceiling \
+ceiling="$(omt-web video-ceiling \
     "${OMT_VIDEO_CEILING_FILE}" "${OMT_VIDEO_CEILING}")"
 
 mkdir -p "$(dirname -- "${OMT_PLAYBACK_STATUS_FILE}")"

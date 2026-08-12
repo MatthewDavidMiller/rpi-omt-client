@@ -4,8 +4,7 @@ services:
     container_name: omt-client
     restart: unless-stopped
     # Reap receiver descendants after failures and forward termination cleanly
-    # instead of making Gunicorn, which is the application process, act as an
-    # init system as well.
+    # instead of making the Rust Web process act as an init system as well.
     init: true
     # The receiver decodes directly into three scanout buffers, so the complete
     # appliance stays inside a 256 MiB budget even on the 512 MiB design target.

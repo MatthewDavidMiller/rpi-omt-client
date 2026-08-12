@@ -7,7 +7,7 @@ export HOME="${HOME:-${OMT_CONFIG_DIR}}"
 export OMT_STORAGE_PATH="${OMT_STORAGE_PATH:-${OMT_CONFIG_DIR}/omt}"
 export OMT_RUNTIME_DIR="${OMT_RUNTIME_DIR:-${OMT_CONFIG_DIR}/run}"
 CONTROL_OMT_CMD="${CONTROL_OMT_CMD:-/usr/local/bin/control-omt.sh}"
-GUNICORN_CMD="${GUNICORN_CMD:-/opt/venv/bin/gunicorn}"
+OMT_WEB_CMD="${OMT_WEB_CMD:-/usr/local/bin/omt-web}"
 WEB_PORT="${WEB_PORT:-5000}"
 
 mkdir -p "${OMT_CONFIG_DIR}" "${OMT_STORAGE_PATH}"
@@ -40,32 +40,23 @@ safe_nonempty_file() {
     [[ -n "${content}" ]]
 }
 
-if ! safe_nonempty_file "${OMT_CONFIG_DIR}/flask_secret" 256; then
-    secret_tmp="$(mktemp "${OMT_CONFIG_DIR}/.flask_secret.XXXXXX")"
-    trap 'rm -f -- "${secret_tmp}"' EXIT
-    python3 -c "import secrets; print(secrets.token_hex(32))" > "${secret_tmp}"
-    chmod 600 "${secret_tmp}"
-    sync_replace "${secret_tmp}" "${OMT_CONFIG_DIR}/flask_secret"
-    trap - EXIT
-fi
-chmod 600 "${OMT_CONFIG_DIR}/flask_secret"
-
-if ! safe_nonempty_file "${OMT_CONFIG_DIR}/web_password" 16384; then
-    password="$(python3 -c "import secrets; print(secrets.token_urlsafe(16))")"
-    password_tmp="$(mktemp "${OMT_CONFIG_DIR}/.web_password.XXXXXX")"
-    trap 'rm -f -- "${password_tmp}"' EXIT
-    PLAINTEXT_WEB_PASSWORD="${password}" python3 -c \
-        "import os; from werkzeug.security import generate_password_hash; print(generate_password_hash(os.environ['PLAINTEXT_WEB_PASSWORD']))" \
-        > "${password_tmp}"
-    chmod 600 "${password_tmp}"
-    sync_replace "${password_tmp}" "${OMT_CONFIG_DIR}/web_password"
-    trap - EXIT
+password="$(${OMT_WEB_CMD} initialize)"
+if [[ -n "${password}" ]]; then
     printf '%s\n' "============================================"
     printf '%s\n' " Web UI password (save this now):"
     printf ' %s\n' "${password}"
     printf '%s\n' "============================================"
-    unset password
 fi
+unset password
+safe_nonempty_file "${OMT_CONFIG_DIR}/web_secret" 256 || {
+    echo "Rust Web secret was not initialized safely" >&2
+    exit 1
+}
+chmod 600 "${OMT_CONFIG_DIR}/web_secret"
+safe_nonempty_file "${OMT_CONFIG_DIR}/web_password" 16384 || {
+    echo "Rust Web password was not initialized safely" >&2
+    exit 1
+}
 chmod 600 "${OMT_CONFIG_DIR}/web_password"
 
 settings_file="${OMT_STORAGE_PATH}/settings.xml"
@@ -127,6 +118,6 @@ if [[ -f "${OMT_CONFIG_DIR}/source_target.json" &&
     fi
 fi
 
-exec "${GUNICORN_CMD}" --workers 1 --bind "0.0.0.0:${WEB_PORT}" \
-    --timeout 90 --certfile="${ssl_cert}" --keyfile="${ssl_key}" \
-    omt_client.wsgi:app --access-logfile -
+export OMT_TLS_CERT_FILE="${ssl_cert}"
+export OMT_TLS_KEY_FILE="${ssl_key}"
+exec "${OMT_WEB_CMD}"

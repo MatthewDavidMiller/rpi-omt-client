@@ -12,7 +12,9 @@
 | `OMT_STORAGE_PATH` | `/etc/omt/omt`, native OMT settings storage |
 | `OMT_RUNTIME_CONFIG_FILE` | `$OMT_STORAGE_PATH/settings.xml` |
 | `OMT_PASSWORD_FILE` | `$OMT_CONFIG_DIR/web_password` |
-| `OMT_WEB_PASSWORD` | Emergency plaintext password override (unset in production). When set, the password file is ignored and the value is compared with a constant-time digest rather than a Werkzeug hash. Prefer a hashed `web_password` file. |
+| `OMT_WEB_PASSWORD` | Emergency plaintext password override (unset in production). When set, the password file is ignored and the value is compared in constant time. Prefer a hashed `web_password` file. |
+| `OMT_TLS_CERT_FILE` | `$OMT_CONFIG_DIR/ssl/cert.pem` |
+| `OMT_TLS_KEY_FILE` | `$OMT_CONFIG_DIR/ssl/key.pem` |
 | `OMT_SESSION_LIFETIME_SECONDS` | `43200` |
 | `OMT_MAX_REQUEST_BYTES` | `16384` request body ceiling, minimum `1024` |
 | `OMT_LOGIN_RATE_LIMIT` | `5 per minute` |
@@ -33,7 +35,7 @@
 | `OMT_DIAGNOSTICS_HOST_PCAP_METADATA_FILE` | `/host-diagnostics/host-network-pcap.txt` |
 | `OMT_DIAGNOSTICS_HOST_TIMEOUT_SECONDS` | `30`; must not exceed the bundle budget |
 | `OMT_DIAGNOSTICS_HOST_BUDGET_SECONDS` | `25` (host action; exported by the OpenRC watcher — container env only mirrors this into support bundles) |
-| `OMT_DIAGNOSTICS_BUNDLE_BUDGET_SECONDS` | `60`; must stay at most `85` so collection finishes before the fixed Gunicorn `--timeout` of `90` seconds in `deploy/container/entrypoint.sh` |
+| `OMT_DIAGNOSTICS_BUNDLE_BUDGET_SECONDS` | `60`; must stay at most the Rust Web service's bounded collection ceiling of `85` seconds |
 | `OMT_DIAGNOSTICS_RECEIVE_PROBE` | `1` (enabled); accepts `1/0`, `true/false`, `yes/no`, or `on/off` |
 | `OMT_DIAGNOSTICS_DOWNLOAD_LIMIT` | `10 per hour` |
 | `OMT_DIAGNOSTICS_ACTION_LIMIT` | `30 per hour` |
@@ -47,10 +49,9 @@
 
 Numeric settings reject malformed, non-finite, and out-of-range values during
 application creation. Bundle budget and host timeout are cross-checked so a
-misconfigured wait cannot outlive the Gunicorn worker. The four rate limits are
-parsed with Flask-Limiter's own parser at startup: it skips a limit string it
-cannot parse and serves the request unthrottled, so an unvalidated typo in
-`OMT_LOGIN_RATE_LIMIT` would remove brute-force protection silently. Legacy
+misconfigured wait cannot exceed the bounded collection budget. The four rate
+limits are parsed by the Rust service during startup, so a typo fails startup
+instead of silently removing brute-force protection. Legacy
 `OMT_DEBUG_*`,
 `OMT_HOST_DEBUG_*`, and `PIPELINE_STATUS_STALE_SECONDS` variables fail startup
 with migration guidance.
@@ -62,9 +63,9 @@ startup instead of silently enabling the diagnostics receive probe.
 
 | File | Contract |
 |---|---|
-| `flask_secret` | Mode 0600 signing/HMAC secret |
-| `web_password` | Mode 0600 Werkzeug password hash |
-| `web_sessions.json` | Bounded HMAC-digested session registry |
+| `web_secret` | Mode 0600 HMAC secret. An upgrade migrates and removes the legacy `flask_secret` file. |
+| `web_password` | Mode 0600 PBKDF2-SHA256 password hash. Legacy Werkzeug PBKDF2 and scrypt hashes remain accepted. |
+| `web_sessions.json` | Schema 2 bounded HMAC-digested session registry |
 | `source_target.json` | Schema 1; either `{"kind":"discovered","name":...}` or `{"kind":"direct","uri":"omt://..."}` |
 | `omt/settings.xml` | `<Settings>` with at most one `<DiscoveryServer>` |
 | `ssl/key.pem`, `ssl/cert.pem` | Entrypoint-managed HTTPS key/certificate |

@@ -1,86 +1,25 @@
-[build-system]
-requires = ["setuptools>=77"]
-build-backend = "setuptools.build_meta"
-
-[project]
-name = "rpi-omt-client"
-# The canonical release number. Unless explicitly overridden,
-# scripts/detect-version.sh uses this for image labels and the About page.
-version = "0.9.46"
-description = "Raspberry Pi OMT Client web application"
-requires-python = ">=3.11"
-license = "MIT"
-license-files = ["LICENSE"]
-# Names only. requirements/runtime.txt holds the hash-pinned versions that the
-# image installs, so the two files cannot disagree about a version.
-dependencies = [
-    "flask",
-    "flask-limiter",
-    "flask-wtf",
-    "gunicorn",
-]
-
-[project.urls]
-Homepage = "https://github.com/matthewdavidmiller/rpi-omt-client"
-
-[tool.setuptools]
-package-dir = {"" = "src"}
-# Only the shipped package. src/omt_client_preview is a dev-only sibling and is
-# deliberately absent, so it cannot reach the appliance image.
-packages = [
-    "omt_client",
-    "omt_client.routes",
-    "omt_client.services",
-    "omt_client.services.diagnostics",
-]
-
-[tool.setuptools.package-data]
-omt_client = ["templates/*.html", "static/*.css", "static/*.svg"]
-
 [tool.ruff]
 target-version = "py311"
 line-length = 100
-extend-exclude = [
-    "tests/.venv",
-]
+extend-exclude = ["tests/.venv"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests/unit"]
-addopts = "-q --tb=short"
-# The suite imports omt_client and its dev-only sibling omt_client_preview
-# straight from the tree, without an install step.
-pythonpath = ["src"]
-
-[tool.coverage.run]
-branch = true
-# Only the package that ships in the appliance image. The preview fakes live in
-# src/omt_client_preview and must not inflate this number.
-source = ["src/omt_client"]
-
-[tool.coverage.report]
-show_missing = true
-skip_covered = true
-exclude_also = [
-    "if __name__ == .__main__.:",
-    "def main\\(",
+testpaths = [
+    "tests/unit/test_cross_file_invariants.py",
+    "tests/unit/test_documentation.py",
+    "tests/unit/test_runtime_validation.py",
 ]
+addopts = "-q --tb=short"
 
 [tool.mypy]
 python_version = "3.11"
-mypy_path = "src"
-files = ["src/omt_client", "src/omt_client_preview", "scripts"]
+files = ["scripts"]
 strict = true
 warn_unreachable = true
 exclude = ["tests/.venv"]
 
-[[tool.mypy.overrides]]
-module = ["flask_limiter.*", "flask_wtf.*"]
-ignore_missing_imports = true
-
 # scripts/lint.sh runs a second, relaxed mypy pass over tests/: real type errors
-# are caught, but pytest fixtures and cases need not be annotated. Tests are not
-# listed in `files` above because mypy resolves them as top-level modules (there
-# is no tests/__init__.py), so a `tests.*` override cannot select them.
+# are caught, but pytest fixtures and cases need not be annotated.

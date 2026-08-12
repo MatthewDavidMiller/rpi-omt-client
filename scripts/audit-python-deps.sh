@@ -1,5 +1,5 @@
 #!/bin/bash
-# Audit Python requirement files for known vulnerabilities.
+# Audit build/test Python tooling for known vulnerabilities.
 # Usage: ./scripts/audit-python-deps.sh
 
 set -euo pipefail
@@ -31,18 +31,6 @@ fi
 mkdir -p "${PIP_AUDIT_CACHE_DIR}"
 cd "${PROJECT_ROOT}"
 
-audit_hash_locked() {
-    local req_file="$1"
-    echo "=== pip-audit: ${req_file} ==="
-    "${PIP_AUDIT_COMMAND[@]}" \
-        --require-hashes \
-        --disable-pip \
-        --strict \
-        --cache-dir "${PIP_AUDIT_CACHE_DIR}" \
-        --progress-spinner off \
-        -r "${req_file}"
-}
-
 audit_pinned_no_deps() {
     local req_file="$1"
     echo "=== pip-audit: ${req_file} ==="
@@ -67,7 +55,6 @@ run_audit() {
     echo ""
 }
 
-run_audit audit_hash_locked "requirements/runtime.txt"
 run_audit audit_pinned_no_deps "tests/requirements-dev.txt"
 
 if (( failures > 0 )); then

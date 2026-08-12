@@ -18,7 +18,7 @@ BUILD_METADATA_DIR="${BUILD_METADATA_DIR:-${PROJECT_ROOT}/.build}"
 RPI_OMT_CLIENT_VERSION="${RPI_OMT_CLIENT_VERSION:-$("${PROJECT_ROOT}/scripts/detect-version.sh" "${PROJECT_ROOT}")}"
 
 # Podman's layered cache does not always connect a changed source stage to a
-# later cross-stage COPY. Hash the receiver's complete build closure and feed
+# later cross-stage COPY. Hash the runtime binaries' complete build closure and feed
 # it into the scratch stage, where the Dockerfile makes it part of the COPY's
 # parent image. This preserves useful dependency caches without publishing an
 # old receiver after spending time compiling a new one.
@@ -28,7 +28,7 @@ receiver_files_fingerprint="$(
         printf '%s\0' Cargo.toml Cargo.lock rust-toolchain.toml
         find .cargo -type f -print0
         find crates/omt-protocol crates/omt-receiver-core crates/vmx-decoder \
-            crates/omt-receiver -type f -print0
+            crates/omt-receiver crates/omt-web -type f -print0
     } | sort -z | xargs -0 sha256sum | sha256sum | awk '{print $1}'
 )"
 RECEIVER_SOURCE_FINGERPRINT="$(

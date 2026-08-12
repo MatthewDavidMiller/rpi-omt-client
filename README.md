@@ -3,7 +3,7 @@
 Raspberry Pi OMT Client receives Open Media Transport (OMT) video and audio on
 a Raspberry Pi and presents it directly on HDMI. It combines a bounded
 Rust 2024 OMT receiver, direct DRM/KMS video output, ALSA audio, a hardened
-Flask Web GUI, and a portable native deployment GUI.
+Rust HTTPS Web GUI, and a portable native deployment GUI.
 
 The supported appliance hosts are the Raspberry Pi 5, Raspberry Pi 4 Model B,
 Raspberry Pi 3 Model A+/B/B+, and Raspberry Pi Zero 2 W, each running Alpine

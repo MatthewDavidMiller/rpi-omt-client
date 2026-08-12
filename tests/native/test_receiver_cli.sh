@@ -2,7 +2,7 @@
 # Copyright (c) 2026 Matthew David Miller
 # SPDX-License-Identifier: MIT
 #
-# The receiver's CLI is a trust boundary: control-omt.sh and the Flask
+# The receiver's CLI is a trust boundary: control-omt.sh and the Rust Web
 # diagnostics service both build argument vectors for it, and every rejection
 # has to be a named exit-2 usage failure rather than a partially applied
 # command. Exit 3 is reserved for "the command ran and the answer was no", which

@@ -521,7 +521,7 @@ docker run --rm --user 0:0 --entrypoint /bin/sh -v "${STABLE_VOLUME}:/config" \
     omt-client -eu -c '
         uid=$1; gid=$2
         chown -R "$uid:$gid" /config
-        for file in flask_secret web_password web_sessions.json web_sessions.lock source_target.json omt/settings.xml ssl/key.pem; do
+        for file in flask_secret web_secret web_password web_sessions.json web_sessions.lock source_target.json omt/settings.xml ssl/key.pem; do
             [ ! -e "/config/$file" ] || chmod 600 "/config/$file"
         done
         [ ! -e /config/ssl/cert.pem ] || chmod 644 /config/ssl/cert.pem

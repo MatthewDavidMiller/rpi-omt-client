@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import re
 import sys
 import tomllib
 from pathlib import Path
@@ -22,19 +21,8 @@ def require_text(path: Path, value: str) -> None:
         fail(f"{path.relative_to(ROOT)} does not contain required text: {value}")
 
 
-def python_packages() -> set[str]:
-    text = (ROOT / "requirements/runtime.txt").read_text(encoding="utf-8")
-    return {
-        match.group(1).lower().replace("_", "-")
-        for match in re.finditer(r"^([A-Za-z0-9_.-]+)==", text, re.MULTILINE)
-    }
-
-
 def main() -> int:
     notices = (ROOT / "THIRD_PARTY_NOTICES.txt").read_text(encoding="utf-8").lower()
-    for package in sorted(python_packages()):
-        if package not in notices:
-            fail(f"Python runtime package is missing from notices: {package}")
     for package in (
         "serde/serde_json",
         "clap",
@@ -52,7 +40,7 @@ def main() -> int:
 
     for path in (
         ROOT / "LICENSE",
-        ROOT / "src/omt_client/templates/about.html",
+        ROOT / "crates/omt-web/templates/about.html",
         ROOT / "crates/rpi-omt-deployer/src/main.rs",
     ):
         require_text(path, COPYRIGHT)
@@ -70,7 +58,7 @@ def main() -> int:
         "third_party_notices.txt",
         "generate-runtime-sbom.py",
         "runtime-sbom.cdx.json",
-        "dist-info/licenses",
+        "omt-web",
     ):
         if required not in dockerfile:
             fail(f"Dockerfile does not retain required legal input: {required}")
@@ -85,10 +73,8 @@ def main() -> int:
     if missing:
         fail(f"deployment manifest omits legal artifacts: {sorted(missing)}")
 
-    print(
-        f"Legal notice check passed: {len(python_packages())} Python and "
-        f"{len(registry_packages)} checksum-locked Rust packages covered."
-    )
+    count = len(registry_packages)
+    print(f"Legal notice check passed: {count} checksum-locked Rust packages covered.")
     return 0
 
 

@@ -116,44 +116,34 @@ rm -f "${saved_image}"
 
 checks=(
     "test -x /usr/local/bin/omt-receiver"
+    "test -x /usr/local/bin/omt-web"
     "test -x /usr/local/bin/entrypoint.sh && test -x /usr/local/bin/control-omt.sh && test -x /usr/local/bin/start-omt.sh"
-    "/opt/venv/bin/python -c 'import importlib.resources as r; files=r.files(\"omt_client\"); assert (files / \"factory.py\").is_file(); assert all((files / \"templates\" / n).is_file() for n in (\"about.html\", \"system.html\", \"reboot_confirm.html\", \"login.html\")); assert (files / \"static\" / \"style.css\").is_file()'"
-    "/opt/venv/bin/python -c 'import importlib.metadata as m; assert m.version(\"rpi-omt-client\")'"
-    "! test -e /app/omt_client"
-    "grep -q 'site-packages/omt_client/factory.py' /app/runtime-sha256.manifest"
-    "! grep -q 'rpi_omt_client' /app/legal/THIRD_PARTY_NOTICES.txt"
-    "/opt/venv/bin/python -c 'import json; d=json.load(open(\"/app/legal/runtime-sbom.cdx.json\", encoding=\"utf-8\")); assert not [c for c in d[\"components\"] if \"rpi-omt-client\" in str(c[\"name\"]).lower()]'"
+    "! test -e /opt/venv && ! command -v python3 >/dev/null 2>&1"
+    "grep -q '/usr/local/bin/omt-web' /app/runtime-sha256.manifest"
     "test \"\$(cat /app/RPI_OMT_CLIENT_VERSION)\" = vtest"
     "test -s /app/legal/LICENSE && test -s /app/legal/THIRD_PARTY_NOTICES.txt"
-    "grep -Fq 'PYTHON PACKAGE LICENSE FILE: flask-3.1.3.dist-info/licenses/LICENSE.txt' /app/legal/THIRD_PARTY_NOTICES.txt"
     "grep -Fq 'Copyright (c) 2026 Matthew David Miller' /app/legal/LICENSE && grep -Fq 'MIT License' /app/legal/LICENSE"
     "/usr/local/bin/omt-receiver --version | grep -Fxq vtest"
-    "result=\$(/usr/local/bin/omt-receiver discover --wait-ms 0 --json) && printf '%s' \"\${result}\" | /opt/venv/bin/python -c 'import json,sys; assert isinstance(json.load(sys.stdin), list)'"
-    "/opt/venv/bin/python -c 'import flask, flask_limiter, flask_wtf, gunicorn'"
-    "/opt/venv/bin/python -c 'import decimal; assert str(decimal.Decimal(1) / 7).startswith(\"0.142857\")'"
+    "/usr/local/bin/omt-web --version | grep -Fxq vtest"
+    "test \"\$(/usr/local/bin/omt-receiver discover --wait-ms 0 --json)\" = '[]'"
     "! find /usr/lib -name 'libstdc++.so*' -print -quit | grep -q ."
-    "/opt/venv/bin/python -c 'import json; p=\"/app/legal/runtime-sbom.cdx.json\"; d=json.load(open(p, encoding=\"utf-8\")); assert d[\"bomFormat\"] == \"CycloneDX\"; assert d[\"specVersion\"] == \"1.6\"; assert d[\"metadata\"][\"component\"][\"version\"] == \"vtest\"; assert d[\"metadata\"][\"component\"][\"licenses\"] == [{\"license\": {\"id\": \"MIT\"}}]; names={x[\"name\"] for x in d[\"components\"]}; assert {\"serde\", \"serde_json\", \"unicode-normalization\"} <= names'"
+    "grep -Fq '\"bomFormat\": \"CycloneDX\"' /app/legal/runtime-sbom.cdx.json && grep -Fq '\"version\": \"vtest\"' /app/legal/runtime-sbom.cdx.json && grep -Fq '\"name\": \"axum\"' /app/legal/runtime-sbom.cdx.json && grep -Fq '\"name\": \"serde\"' /app/legal/runtime-sbom.cdx.json"
     "test -s /app/runtime-sha256.manifest && sha256sum --check /app/runtime-sha256.manifest >/dev/null"
     "! command -v gst-launch-1.0 >/dev/null 2>&1"
     "test \"\$HOME\" = /etc/omt && test \"\$(id -un)\" = omt"
 )
 labels=(
     "Rust OMT receiver is executable"
+    "Rust Web frontend is executable"
     "OMT runtime scripts are executable"
-    "Web views and static assets ship as package data"
-    "application wheel is installed with metadata"
-    "no stale copied application tree remains"
-    "integrity manifest covers the installed application"
-    "first-party wheel is not filed as a third-party notice"
-    "first-party wheel is not listed as a PyPI dependency"
+    "Python and its virtual environment are absent"
+    "integrity manifest covers the Rust Web frontend"
     "version file matches the build"
     "project license and third-party notices are packaged"
-    "installed Python package license files are appended"
     "project copyright is exact"
     "Rust receiver reports the build version"
+    "Rust Web frontend reports the build version"
     "zero-source discovery returns JSON"
-    "Python Web dependencies import"
-    "Python decimal falls back without a C++ runtime"
     "runtime image contains no C++ standard library"
     "runtime CycloneDX SBOM identifies Rust components"
     "runtime SHA-256 manifest verifies"
@@ -183,7 +173,7 @@ if [[ "${CONTAINER_ENGINE_KIND}" == "docker" ]]; then
     arm_build=(
         "${CONTAINER_ENGINE}" buildx build
         --platform linux/arm64
-        --target receiver-artifacts
+        --target runtime-artifacts
         --load
         -f deploy/Dockerfile
         -t "${ARM64_ARTIFACT_TAG}" .
@@ -194,7 +184,7 @@ else
         --format docker
         --layers=false
         --platform linux/arm64
-        --target receiver-artifacts
+        --target runtime-artifacts
         -f deploy/Dockerfile
         -t "${ARM64_ARTIFACT_TAG}" .
     )
@@ -213,14 +203,17 @@ fi
 "${CONTAINER_ENGINE}" create \
     --name "${ARM64_ARTIFACT_CONTAINER}" "${ARM64_ARTIFACT_TAG}" >/dev/null
 receiver_artifact="$(mktemp)"
+web_artifact="$(mktemp)"
 if "${CONTAINER_ENGINE}" cp \
        "${ARM64_ARTIFACT_CONTAINER}:/omt-receiver" "${receiver_artifact}" &&
-   [[ -s "${receiver_artifact}" ]]; then
-    pass "ARM64 builder produced the Rust receiver artifact"
+   "${CONTAINER_ENGINE}" cp \
+       "${ARM64_ARTIFACT_CONTAINER}:/omt-web" "${web_artifact}" &&
+   [[ -s "${receiver_artifact}" ]] && [[ -s "${web_artifact}" ]]; then
+    pass "ARM64 builder produced the Rust receiver and web artifacts"
 else
     fail "ARM64 builder artifacts are missing"
 fi
-if python3 - "${receiver_artifact}" <<'PY'
+if python3 - "${receiver_artifact}" "${web_artifact}" <<'PY'
 import struct
 import sys
 
@@ -238,7 +231,7 @@ then
 else
     fail "ARM64 builder artifacts have the wrong architecture"
 fi
-rm -f "${receiver_artifact}"
+rm -f "${receiver_artifact}" "${web_artifact}"
 
 echo "==========================================="
 echo -e "${GREEN}All Rust OMT image build tests passed!${NC}"

@@ -30,7 +30,7 @@ Fix the workstation with `make install` instead of narrowing the suite.
 Use the narrowest relevant gate:
 
 ```bash
-make test-py
+make test-web
 make test-receiver
 make test-deployer
 make build-windows-deployer
@@ -49,12 +49,10 @@ package dependency. Before calling a sender build Pi-compatible, build
 5 share that userspace ABI, while receiver throughput and HDMI behavior still
 require a display-path check on the board being qualified.
 
-`make test-py` covers validation, state, persistent auth, CSRF/rate limits,
-routes, diagnostics, and runtime adapters at a **100%** branch-coverage floor.
-The floor is 100 rather than a margin below it because a margin is only ever
-spent on branches nobody chose to leave uncovered: the two it was hiding were
-the receive probe's success path and a bundle collected against an unreadable
-target, both of which an operator reads directly out of a support archive.
+`make test-web` builds and tests the Rust HTTPS service. It covers target and
+network validation, state, legacy and current password hashes, persistent
+authentication, secure cookies, CSRF/rate limits, security headers, every
+authenticated page, diagnostics, and runtime adapters.
 
 `make test-receiver` builds and tests the Rust receiver crates. It exercises
 shared target vectors, bounded wire parsing, CLI exit-status contracts, detail
@@ -115,8 +113,7 @@ returned by a particular `stat` implementation.
 The supply-chain gate rejects every tracked C/C++ source, Git Cargo dependency,
 or unlocked registry package. `scripts/check-supply-chain.sh` also runs
 `cargo deny` and `cargo vet` against `deny.toml` and `supply-chain/`. Container
-integration checks that no C++ standard-library payload ships and that Python's
-decimal fallback remains functional.
+integration checks that neither Python nor a C++ standard-library payload ships.
 
 The ARM64 artifact contract also pins the receiver-source fingerprint at both
 of Podman's cross-stage COPY boundaries. A receiver change must alter the
@@ -212,21 +209,17 @@ physical tier must state the skipped Pi-specific checks.
 ## Cross-file and cross-language contracts
 
 `tests/unit/test_cross_file_invariants.py` asserts the constants one file
-computes with and another supplies: the Gunicorn worker timeout the diagnostics
-bundle ceiling is derived from, the host diagnostics budget spelled out in
-`settings.py`, `install.sh`, and `host-diagnostics.sh`, and the HDMI connector
+computes with and another supplies: the host diagnostics budget spelled out in
+the Rust Web settings, `install.sh`, and `host-diagnostics.sh`, and the HDMI connector
 names the container launcher, the receiver CLI, and the status contract must
 all accept.
 
 `tests/schema/omt-target-vectors.json` and
-`tests/schema/playback-status-vectors.json` are consumed by Python and the
-Rust tests. Both halves of the status contract are asserted against the shared
-file, so neither a state only one side knows nor one no producer emits can
-survive: Rust checks `video_states` is exactly what `video_name` produces, and
-Python checks `PUBLIC_STATES` is total over `receiver_states`. The target vectors also publish the forbidden source-name code
-points as ranges: the Python suite derives them from `unicodedata` and the
-receiver's compiled table is asserted against the published one, so neither
-validator can drift from the other or from a Unicode revision. `tests/vectors/vmx/vectors.json` indexes the VMX conformance
+`tests/schema/playback-status-vectors.json` are consumed by the Rust tests.
+Both binaries share `omt-protocol` target validation, while the receiver and
+Web suites assert the status projection. The target vectors publish forbidden
+source-name code points as ranges and the compiled table is asserted against
+them. `tests/vectors/vmx/vectors.json` indexes the VMX conformance
 streams and pins each expected image by SHA-256, which keeps the fixtures small
 while still asserting bit exactness.
 Update both implementations and their vectors together when a shared contract
@@ -242,5 +235,5 @@ ShellCheck, Hadolint, yamllint, Ruff, and mypy. The legal gate is:
 python3 scripts/check-legal-notices.py
 ```
 
-It checks shipped Python/native dependencies, legal/About surfaces, OMT
+It checks shipped Rust/Alpine dependencies, legal/About surfaces, OMT
 provenance, SBOM hooks, and the deployment capsule.

@@ -10,17 +10,10 @@ if [[ -n "${RPI_OMT_CLIENT_VERSION:-}" ]]; then
     exit 0
 fi
 
-project_file="${PROJECT_ROOT}/pyproject.toml"
-if [[ -f "${project_file}" ]]; then
-    if project_version="$(
-        python3 -c '
-import sys
-import tomllib
-
-with open(sys.argv[1], "rb") as project_file:
-    print(tomllib.load(project_file).get("project", {}).get("version", ""))
-' "${project_file}" 2>/dev/null
-    )" && [[ "${project_version}" =~ ^v?[0-9]+(\.[0-9]+){1,2}([._-][0-9A-Za-z][0-9A-Za-z._-]*)?$ ]]; then
+cargo_file="${PROJECT_ROOT}/Cargo.toml"
+if [[ -f "${cargo_file}" ]]; then
+    project_version="$(sed -n '/^\[workspace\.package\]$/,/^\[/s/^version = "\([^"]*\)"$/\1/p' "${cargo_file}" | head -n 1)"
+    if [[ "${project_version}" =~ ^v?[0-9]+(\.[0-9]+){1,2}([._-][0-9A-Za-z][0-9A-Za-z._-]*)?$ ]]; then
         printf 'v%s\n' "${project_version#v}"
         exit 0
     fi

@@ -14,7 +14,7 @@ OMT network
             └─ atomic playback status
 
 HTTPS operator
-  └─ Gunicorn / Flask
+  └─ omt-web (Rust, Axum + rustls)
        ├─ persistent authenticated sessions
        ├─ source/network/diagnostic services
        ├─ About
@@ -218,10 +218,8 @@ report carrying that nonce. Raw capture is never started unless selected for
 that download. Avahi proxy state, diagnostics, and host actions use separate
 least-privilege bind mounts.
 
-The shipped image contains no C/C++ toolchain or C++ standard library. Alpine's optional compiled
-Python decimal accelerator is removed with its `mpdecimal`/`libstdc++` payload;
-Python's standard pure-Python decimal implementation remains available and is
-checked during the image build.
+The shipped image contains no Python runtime, C/C++ toolchain, or C++ standard
+library. The Rust receiver and Web service are stripped release binaries.
 
 `host-reboot.sh` is installed root-owned. It accepts only a four-line
 versioned reboot record from the pre-created mode-0600 request file. It checks
@@ -342,8 +340,9 @@ reasoned from the pinned upstream sources rather than observed.
 runtime dependencies. The Web and Rust deployer About pages display those
 texts and their build version; the deployer compiles them into its executable
 with `include_str!` rather than reading files beside it, so a
-relocated binary still states its terms. The container and deployer publishers generate
-CycloneDX inventories from `Cargo.lock` and the Python lock.
+relocated binary still states its terms. The container publisher generates a
+CycloneDX inventory from `Cargo.lock` and the appliance's installed Alpine
+package database; the deployer publisher inventories its Cargo closure.
 
 The host is Alpine Linux 3.24 aarch64 in persistent sys mode on a Raspberry Pi
 5, Pi 4 Model B, Pi 3 Model A+/B/B+, or Zero 2 W. One `linux-rpi` kernel covers

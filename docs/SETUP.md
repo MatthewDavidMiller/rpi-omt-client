@@ -133,7 +133,7 @@ own. The Setup view checks for them and names what is missing:
 | Container engine | building and exporting the image | Docker Desktop, Linux engine running |
 | POSIX shell | running the pinned `scripts/build-arm64.sh` | Git for Windows |
 | GNU Make | the documented entry point on Linux | not used; the shell is called directly |
-| Python 3 | stamping the exact release version | optional; the Git tag is the fallback |
+| Python 3 | generating deployer SBOMs and repository gates | required for a release package |
 | Project source tree | the manifest-v3 capsule that is uploaded | the checkout of this repository |
 | Appliance image archive | the image the Pi loads | built by Deploy, or copied in |
 

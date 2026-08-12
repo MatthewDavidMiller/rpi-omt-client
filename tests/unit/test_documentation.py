@@ -2,10 +2,6 @@ import re
 
 from conftest import REPO_ROOT
 
-from omt_client import create_app
-from omt_client.settings import ENVIRONMENT_SPECS, RATE_LIMIT_SPECS, load_settings
-from omt_client_preview import preview_services
-
 
 def test_local_markdown_links_resolve():
     pattern = re.compile(r"\[[^]]*]\((?!https?://|#|mailto:)([^)#]+)(?:#[^)]+)?\)")
@@ -19,9 +15,14 @@ def test_local_markdown_links_resolve():
 
 def test_public_application_settings_are_documented():
     configuration = (REPO_ROOT / "docs" / "CONFIGURATION.md").read_text(encoding="utf-8")
-    settings_source = (REPO_ROOT / "src" / "omt_client" / "settings.py").read_text(encoding="utf-8")
-    public_names = {spec.name for spec in (*ENVIRONMENT_SPECS, *RATE_LIMIT_SPECS)}
-    public_names.update(re.findall(r'env\.get\("([A-Z][A-Z0-9_]+)"', settings_source))
+    settings_source = (REPO_ROOT / "crates" / "omt-web" / "src" / "settings.rs").read_text(
+        encoding="utf-8"
+    )
+    public_names = {
+        name
+        for name in re.findall(r'"(OMT_[A-Z0-9_]+)"', settings_source)
+        if not name.endswith("_")
+    }
     missing = [name for name in sorted(public_names) if f"`{name}`" not in configuration]
     assert not missing
 
@@ -38,9 +39,9 @@ def test_high_value_paths_are_documented():
     pins that the file map still mentions the entry points worth documenting."""
     reference = (REPO_ROOT / "docs" / "CODEBASE_REFERENCE.md").read_text(encoding="utf-8")
     paths = (
-        "src/omt_client/factory.py",
-        "src/omt_client/services/composition.py",
-        "src/omt_client/state_store.py",
+        "crates/omt-web/src/app.rs",
+        "crates/omt-web/src/auth.rs",
+        "crates/omt-web/src/state.rs",
         "deploy/container/runtime-lib.sh",
         "deploy/container/entrypoint.sh",
         "crates/omt-receiver/src/main.rs",
@@ -78,9 +79,11 @@ def test_file_maps_reference_existing_paths():
 
 
 def test_public_factory_routes_are_documented():
-    application = create_app(load_settings({}), preview_services())
+    app_source = (REPO_ROOT / "crates" / "omt-web" / "src" / "app.rs").read_text(encoding="utf-8")
     public_routes = {
-        rule.rule for rule in application.url_map.iter_rules() if rule.endpoint != "static"
+        route
+        for route in re.findall(r'\.route\("([^"{]+)"', app_source)
+        if not route.startswith("/static/")
     }
     route_docs = "\n".join(
         (REPO_ROOT / "docs" / name).read_text(encoding="utf-8")

@@ -48,8 +48,9 @@ RUST RUNTIME AND DEPLOYERS
 
 The checksum-locked Rust graph is recorded in Cargo.lock and the published
 CycloneDX inventories. Principal shipped libraries include serde/serde_json,
-clap, unicode-normalization, zeroize, hmac, sha1, sha2, pbkdf2, getrandom,
-rpassword, egui, eframe, rfd, winit, glow, AccessKit, and their locked
+clap, unicode-normalization, zeroize, hmac, sha1, sha2, pbkdf2, scrypt,
+getrandom, axum, hyper, rustls, minijinja, zip, rpassword, egui, eframe, rfd,
+winit, glow, AccessKit, and their locked
 transitive dependencies. These are distributed under the permissive MIT, Apache-2.0,
 BSD-2-Clause, BSD-3-Clause, ISC, Unicode-3.0, Zlib, or compatible dual-license
 terms accepted by deny.toml. The MIT text appears above; the Zlib and
@@ -121,54 +122,12 @@ GCC runtime library (libgcc)
     own MIT terms.
   Source: https://gcc.gnu.org/
 
-PYTHON WEB APPLICATION
-----------------------
-
-Python
-  Copyright (c) Python Software Foundation
-  License: Python Software Foundation License Version 2
-
-Flask, Werkzeug, Jinja2, ItsDangerous, Click, Blinker, MarkupSafe
-  Copyright (c) Pallets
-  Licenses: BSD-3-Clause (Click is BSD-3-Clause)
-
-Flask-WTF and WTForms
-  Copyright (c) WTForms contributors
-  License: BSD-3-Clause
-
-Flask-Limiter and limits
-  Copyright (c) Flask-Limiter contributors
-  License: MIT
-
-Gunicorn
-  Copyright (c) 2009-2026 Benoit Chesneau and contributors
-  License: MIT
-
-Deprecated, ordered-set
-  Copyright their respective contributors
-  License: MIT
-
-packaging
-  Copyright (c) PyPA contributors
-  Licenses: Apache License 2.0 or BSD-2-Clause
-
-typing-extensions
-  Copyright (c) Python Software Foundation
-  License: Python Software Foundation License Version 2
-
-wrapt
-  Copyright (c) 2013-2026 Graham Dumpleton
-  License: BSD-2-Clause
-
-The Web About page appends the original license files installed by every
-locked Python wheel to this notice at image-build time.
-
 ALPINE LINUX RUNTIME
 --------------------
 
 The runtime is based on Alpine Linux 3.23.5 and includes dynamically linked
-runtime packages such as musl, BusyBox, libdrm, ALSA lib, Avahi libraries,
-OpenSSL, ICU, Python, libgcc, zlib, bash, coreutils, and util-linux.
+runtime packages such as musl, BusyBox, ALSA lib, OpenSSL, libgcc, bash,
+coreutils, and util-linux.
 Each package remains governed by the license recorded in its Alpine package
 metadata. These include MIT/BSD/Apache-style licenses and copyleft licenses
 including GPL and LGPL.

@@ -89,13 +89,19 @@ exit 0
 EOF
 chmod +x "${fixture_root}/test-bin/docker"
 
+cat > "${fixture_root}/test-bin/cargo" <<'EOF'
+#!/bin/bash
+exit 0
+EOF
+chmod +x "${fixture_root}/test-bin/cargo"
+
 cat > "${fixture_root}/tests/.venv/bin/python" <<'EOF'
 #!/bin/bash
 set -euo pipefail
 [[ "${PWD}" == "${EXPECTED_PROJECT_ROOT}" ]]
 [[ "${1:-}" == "-m" ]]
 [[ "${2:-}" == "pytest" ]]
-[[ "${3:-}" == "tests/unit" ]]
+[[ "${3:-}" == "tests/unit/test_cross_file_invariants.py" ]]
 printf '%s\n' "${PWD}" > "${PROBE_RESULT}"
 EOF
 chmod +x "${fixture_root}/tests/.venv/bin/python"
@@ -103,7 +109,8 @@ chmod +x "${fixture_root}/tests/.venv/bin/python"
 probe_result="${case_dir}/pytest-cwd"
 if (
     cd "${outside_dir}"
-    EXPECTED_PROJECT_ROOT="${fixture_root}" \
+    PATH="${fixture_root}/test-bin:${PATH}" \
+        EXPECTED_PROJECT_ROOT="${fixture_root}" \
         PROBE_RESULT="${probe_result}" \
         CHECK_DEPLOYER_LOG="${case_dir}/quick-deployer" \
         WINDOWS_BUILD_LOG="${case_dir}/quick-windows" \

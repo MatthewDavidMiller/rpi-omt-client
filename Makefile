@@ -1,7 +1,7 @@
 # Raspberry Pi OMT Client Build System
 # Usage: make [target]
 
-.PHONY: help install setup-arm64-emulation build build-arm64 build-amd64 build-deployer build-windows-deployer build-omt-sender omt-sender-start omt-sender-stop omt-sender-status omt-sender-firewall-allow omt-sender-firewall-remove deploy up down logs lint test test-quick test-py test-receiver test-deployer test-setup security-scan clean
+.PHONY: help install setup-arm64-emulation build build-arm64 build-amd64 build-deployer build-windows-deployer build-omt-sender omt-sender-start omt-sender-stop omt-sender-status omt-sender-firewall-allow omt-sender-firewall-remove deploy up down logs lint test test-quick test-web test-receiver test-deployer test-setup security-scan clean
 
 IMAGE_NAME   := omt-client
 ARM64_TARBALL := omt-client-arm64.tar.gz
@@ -40,7 +40,7 @@ help:
 	@echo "  lint          Run ruff + hadolint + shellcheck + yamllint"
 	@echo "  test          Run all tests (unit + live container build)"
 	@echo "  test-quick    Run every unit suite, no container engine (~1m)"
-	@echo "  test-py       Run Python unit tests only (requires test-setup)"
+	@echo "  test-web      Run Rust Web frontend tests"
 	@echo "  test-receiver Build and test the Rust receiver and test sender"
 	@echo "  test-deployer Build and test the Rust deployer"
 	@echo "  test-setup    Bootstrap Python test tooling"
@@ -150,12 +150,9 @@ test:
 test-quick:
 	./scripts/test-local.sh --quick
 
-# Run Python unit tests only (requires 'make test-setup' first)
-test-py:
-	@if [ ! -x "$(TEST_PYTHON)" ]; then \
-		echo "Run 'make test-setup' first to install Python test tools"; exit 1; fi
-	$(TEST_PYTHON) -m pytest tests/unit \
-		--cov=src/omt_client --cov-report=term-missing --cov-fail-under=100 -v
+# Build and test the Rust Web frontend.
+test-web:
+	cargo test --locked -p omt-web
 
 test-receiver:
 	./tools/test-receiver.sh
@@ -172,7 +169,7 @@ test-setup:
 	python3 -m venv tests/.venv
 	$(TEST_PYTHON) -m pip install --upgrade pip -q
 	$(TEST_PYTHON) -m pip install -r tests/requirements-dev.txt
-	@echo "Done. Run: make test-py test-receiver test-deployer"
+	@echo "Done. Run: make test-web test-receiver test-deployer"
 
 # Clean build artifacts
 clean:
