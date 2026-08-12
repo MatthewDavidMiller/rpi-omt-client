@@ -91,6 +91,8 @@ forbid 'table inet omt_client' \
 require 'policy drop' "firewall input must default deny"
 require 'tcp dport.*SSH_PORT.*WEB_PORT' "firewall must retain SSH and Web access"
 forbid 'usermod.*docker' "installer must not grant root-equivalent Docker group access"
+require 'sudo docker compose --env-file.*logs omt-client' \
+    "password retrieval must work without Docker group membership"
 
 require 'host_publish_openrc_service' "OpenRC services must publish atomically"
 require 'for service in omt-client-avahi-proxy omt-client-host-diagnostics omt-client-reboot omt-client' "all OMT OpenRC services must be enabled"

@@ -57,9 +57,11 @@ const CASES: [Case; 3] = [
 ];
 
 fn vector(label: &str) -> Vec<u8> {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../tests/vectors/vmx")
-        .join(format!("{label}.vmx"));
+    let directory = std::env::var_os("VMX_VECTOR_DIR").map_or_else(
+        || PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/vectors/vmx"),
+        PathBuf::from,
+    );
+    let path = directory.join(format!("{label}.vmx"));
     std::fs::read(&path).unwrap_or_else(|error| panic!("{}: {error}", path.display()))
 }
 

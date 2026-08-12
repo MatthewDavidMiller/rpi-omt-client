@@ -5,7 +5,7 @@ use crate::{
     Connection, DeployOptions, ManagementAction, ON_WINDOWS, Secret, WifiSettings, derive_wpa_psk,
     ensure_arm64_emulation, hex_encode, image_build_plan, load_manifest, random_token, run_process,
     secure_relative, sha256_file, shell_quote, validate_connection, validate_options,
-    validate_wifi,
+    validate_web_password, validate_wifi,
 };
 use std::fs;
 use std::io;
@@ -17,6 +17,7 @@ use zeroize::Zeroizing;
 
 const PLATFORM_PROBE: &str = "uname -m && . /etc/os-release && printf '%s\\n' \"$ID\" && cat /etc/alpine-release && tr -d '\\000' < /proc/device-tree/model && printf '\\n'";
 const BOOTSTRAP_PASSWORD_READY: &str = "omt-bootstrap-password-ready";
+const WEB_PASSWORD_COMMAND: &str = "sh -eu -c 'docker exec -i omt-client /usr/local/bin/omt-web set-password && rc-service omt-client restart'";
 
 const WIFI_SCRIPT: &str = concat!(
     "marker=$3\n",
@@ -483,6 +484,43 @@ pub fn manage(
         progress(&output);
     }
     Ok(output)
+}
+
+/// Replace the appliance Web credential over stdin and restart the service.
+///
+/// The password is never interpolated into a command or emitted as progress.
+/// A single privileged process leaves stdin attached to `docker exec` after
+/// sudo consumes its own first line, matching the established Wi-Fi secret
+/// transport.
+pub fn change_web_password(
+    connection: &Connection,
+    password: &Secret,
+    cancellation: &AtomicBool,
+    progress: &mut dyn FnMut(&str),
+) -> io::Result<()> {
+    validate_connection(connection).map_err(map_validation)?;
+    validate_web_password(password).map_err(map_validation)?;
+    cancelled(cancellation)?;
+    progress("Changing Web GUI password and restarting the service...");
+    let mut session = connect(connection)?;
+    let command = privileged_stdin_command(connection, WEB_PASSWORD_COMMAND);
+    let mut stdin = sudo_input(connection);
+    stdin.push_str(password.expose());
+    stdin.push('\n');
+    let result = session.run(&command, &stdin, cancellation)?;
+    if !result.is_success() {
+        let detail = redact(&result.combined(), &[password.expose()]);
+        return Err(io::Error::other(format!(
+            "Web GUI password change failed{}",
+            if detail.trim().is_empty() {
+                String::new()
+            } else {
+                format!(":\n{detail}")
+            }
+        )));
+    }
+    progress("Web GUI password changed. Existing Web sessions were revoked.");
+    Ok(())
 }
 
 /// Apply Wi-Fi settings through `wpa_cli`, sending a derived PSK on stdin.
@@ -1000,6 +1038,16 @@ mod tests {
         assert!(sudo_input(&connection).is_empty());
         assert_eq!(sudo_prefix(&connection), "");
         assert_eq!(privileged_command(&connection, "docker ps"), "docker ps");
+    }
+
+    #[test]
+    fn web_password_action_uses_only_a_fixed_stdin_command() {
+        assert_eq!(
+            WEB_PASSWORD_COMMAND,
+            "sh -eu -c 'docker exec -i omt-client /usr/local/bin/omt-web set-password && rc-service omt-client restart'"
+        );
+        assert!(!WEB_PASSWORD_COMMAND.contains("$1"));
+        assert!(!WEB_PASSWORD_COMMAND.contains("printf"));
     }
 
     #[test]

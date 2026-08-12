@@ -81,8 +81,40 @@ sudo tail -n 200 /var/log/messages
 ```bash
 sudo rc-service omt-client status
 sudo rc-service omt-client restart
-docker compose -f /opt/omt-client/deploy/compose.yml logs -f
+sudo sh -c '. /etc/conf.d/omt-client; docker compose --env-file "$OMT_COMPOSE_ENV_FILE" -f "$OMT_COMPOSE_FILE" logs -f omt-client'
 ```
+
+To retrieve the initial Web GUI password before the bounded container log
+rotates, omit `-f` and filter the first-start message:
+
+```bash
+sudo sh -c '. /etc/conf.d/omt-client; docker compose --env-file "$OMT_COMPOSE_ENV_FILE" -f "$OMT_COMPOSE_FILE" logs omt-client' \
+  | sed -n '/Web UI password/,+1p'
+```
+
+The plaintext is emitted only when the password is first created. The
+persistent `web_password` value is a one-way hash, not a recoverable copy.
+
+### Change the Web GUI password
+
+In the desktop deployer, open **Manage**, enter and confirm a new password, and
+select **Change Web GUI password**. The password must contain 12-128 UTF-8 bytes
+and no control characters. The deployer sends it only over the authenticated
+SSH stdin channel, atomically replaces the PBKDF2-SHA256 hash, and restarts the
+appliance. Every existing Web session is invalid after the restart.
+
+The CLI exposes the same operation without placing a secret in process
+arguments:
+
+```bash
+printf '%s\n' \
+  '{"password":"SSH_PASSWORD","sudo_password":"SUDO_PASSWORD","web_password":"NEW_WEB_PASSWORD"}' \
+  | rpi-omt-deploy --host pi.example --username pi --secrets-stdin web-password
+```
+
+For root SSH, omit `sudo_password`. Prefer the desktop prompt or a protected
+input source in automation; the literal JSON is only a field-layout example.
+The operation refuses an active `OMT_WEB_PASSWORD` emergency override.
 
 Host security and low-memory state:
 
@@ -110,6 +142,10 @@ receiver.
 - Service does not start after install: confirm Alpine loaded `linux-rpi`, then
   inspect `/dev/dri`, `/dev/snd`, `dmesg`, Docker readiness, and
   `rc-service omt-client status`.
+- Web password is not in the logs: the one-time first-start message has rotated
+  or the appliance was initialized previously. Redeployment does not generate a
+  replacement because it preserves credentials. Do not delete or edit the
+  persistent hash while the service is running.
 - Wi-Fi save fails: reboot once after installation, then verify `wlan0`,
   `rc-service wpa_supplicant status`, and the `/run/wpa_supplicant/wlan0`
   control socket. The installer enables durable configuration updates.

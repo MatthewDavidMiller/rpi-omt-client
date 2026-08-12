@@ -3,8 +3,9 @@
 use clap::{Args, Parser, Subcommand};
 use omt_deployer_core::{
     AuthMethod, Connection, DeployOptions, ManagementAction, ON_WINDOWS, Prerequisite, Secret,
-    WifiSettings, apply_wifi, deploy, ensure_arm64_emulation, install_packages, load_manifest,
-    manage, missing_packages, prerequisites, validate_connection, validate_options, validate_wifi,
+    WifiSettings, apply_wifi, change_web_password, deploy, ensure_arm64_emulation,
+    install_packages, load_manifest, manage, missing_packages, prerequisites, validate_connection,
+    validate_options, validate_web_password, validate_wifi,
 };
 use serde::{Deserialize, Serialize};
 use std::io::{self, Read};
@@ -57,6 +58,8 @@ enum Command {
     Restart,
     /// Reboot the Raspberry Pi operating system after acknowledging the request.
     Reboot,
+    /// Change the Web GUI password and revoke every existing Web session.
+    WebPassword,
     Wifi(WifiArgs),
 }
 #[derive(Args)]
@@ -96,6 +99,7 @@ struct SecretInput {
     sudo_password: Option<String>,
     bootstrap_root_password: Option<String>,
     wifi_password: Option<String>,
+    web_password: Option<String>,
 }
 #[derive(Serialize)]
 struct OutputLine<'a> {
@@ -231,6 +235,7 @@ fn run(cli: Cli) -> Result<(), (i32, String)> {
                     sudo_password: secrets.sudo_password.take(),
                     bootstrap_root_password: secrets.bootstrap_root_password.take(),
                     wifi_password: None,
+                    web_password: None,
                 },
             )
             .map_err(|e| (2, e))?,
@@ -367,6 +372,33 @@ fn run(cli: Cli) -> Result<(), (i32, String)> {
             apply_wifi(&connection, &settings, &cancellation, &mut progress)
                 .map_err(|e| (1, e.to_string()))?;
             emit(cli.json, "result", "Wi-Fi settings applied.", Some(true));
+        }
+        Command::WebPassword => {
+            let value = if let Some(value) = secrets.web_password.take() {
+                value
+            } else if cli.interactive_secrets {
+                let first = rpassword::prompt_password("New Web GUI password: ")
+                    .map_err(|e| (1, e.to_string()))?;
+                let confirmation = rpassword::prompt_password("Confirm Web GUI password: ")
+                    .map_err(|e| (1, e.to_string()))?;
+                if first != confirmation {
+                    return Err((2, "Web GUI password confirmation does not match".into()));
+                }
+                first
+            } else {
+                return Err((
+                    2,
+                    "web_password is required through --secrets-stdin or an interactive prompt"
+                        .into(),
+                ));
+            };
+            let password = Secret::new(value).map_err(|e| (2, e.to_string()))?;
+            validate_web_password(&password).map_err(|e| (2, e.to_string()))?;
+            let connection = connection.ok_or_else(|| (2, "connection required".into()))?;
+            let mut progress = progress_emitter(cli.json);
+            change_web_password(&connection, &password, &cancellation, &mut progress)
+                .map_err(|e| (1, e.to_string()))?;
+            emit(cli.json, "result", "Web GUI password changed.", Some(true));
         }
         Command::Status | Command::Logs | Command::Restart | Command::Reboot => {
             let action = match cli.command {

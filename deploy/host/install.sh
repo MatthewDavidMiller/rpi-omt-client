@@ -819,9 +819,9 @@ echo "Security: nftables, SSH safeguards, kernel hardening, bounded Docker logs"
 echo "Memory:   ${ZRAM_MIB} MiB zram swap, 256 MiB container cap, bounded tmpfs"
 echo
 echo "Password: after startup, run:"
-echo "  docker compose -f ${COMPOSE_FILE} logs | grep -A 1 'Web UI password'"
+echo "  sudo docker compose --env-file ${COMPOSE_ENV_FILE} -f ${COMPOSE_FILE} logs omt-client | grep -A 1 'Web UI password'"
 echo "Status: sudo rc-service omt-client status"
-echo "Logs:   docker compose -f ${COMPOSE_FILE} logs -f"
+echo "Logs:   sudo docker compose --env-file ${COMPOSE_ENV_FILE} -f ${COMPOSE_FILE} logs -f omt-client"
 echo
 echo "A reboot is required to load the updated Pi kernel/firmware and KMS settings."
 # `make deploy` and the egui deployer both run this over a non-interactive SSH

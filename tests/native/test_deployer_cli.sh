@@ -119,6 +119,14 @@ expect_status_stdin 2 "wifi with an invalid passphrase" \
     '{"password":"pw","wifi_password":"short"}' \
     "${deployer}" --host pi.local --username root --secrets-stdin wifi --ssid studio
 
+# Web passwords use the same stdin-only secret channel and are validated before
+# any SSH connection is opened.
+expect_status 2 "web-password with no password source" \
+    "${deployer}" --host pi.local --username root web-password
+expect_status_stdin 2 "web-password rejects a short password" \
+    '{"password":"pw","web_password":"too-short"}' \
+    "${deployer}" --host pi.local --username root --secrets-stdin web-password
+
 # The JSON surface is one object per line, which is what a wrapper parses.
 json="$(${deployer} --project "${project}" --json check)"
 case "${json}" in

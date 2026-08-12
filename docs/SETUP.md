@@ -318,9 +318,33 @@ firmware, and KMS settings.
 
 ## First use
 
-Sign in at the HTTPS URL printed by the installer. Retrieve the generated first
-password using the exact Docker log command in its summary. Select a discovered
-source or save a direct target such as `omt://192.168.1.60:6400`.
+Sign in at the HTTPS URL printed by the installer. The container generates a
+random Web GUI password on its first successful start and prints it once. On
+the Pi, retrieve it with:
+
+```bash
+sudo sh -c '. /etc/conf.d/omt-client; docker compose --env-file "$OMT_COMPOSE_ENV_FILE" -f "$OMT_COMPOSE_FILE" logs omt-client' \
+  | sed -n '/Web UI password/,+1p'
+```
+
+The line after `Web UI password (save this now):` is the password. Store it in
+a password manager before Docker's bounded logs rotate. The persistent
+`web_password` file contains only a PBKDF2-SHA256 hash; it cannot be used to
+recover the plaintext, and upgrading or redeploying preserves that hash rather
+than generating another password.
+
+The desktop deployment application's **Logs** action and the CLI deployer's
+`logs` command show the same container output, so they can also be used while
+the first-start message is still retained.
+
+After signing in, rotate the generated credential from the desktop deployer's
+**Manage** view. Enter and confirm a 12-128 byte password, then select
+**Change Web GUI password**. The appliance restarts and all existing Web sessions are
+signed out. The password travels over SSH stdin and only its PBKDF2-SHA256 hash
+is persisted.
+
+Select a discovered source or save a direct target such as
+`omt://192.168.1.60:6400`.
 
 ## Upgrade and uninstall
 

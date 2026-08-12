@@ -17,6 +17,7 @@ ACK_CONTAINER_NAME="omt-client-reboot-ack"
 PORT=15000
 BASE_URL="https://127.0.0.1:${PORT}"
 TEST_PASSWORD="smoke-test-password"
+NEW_TEST_PASSWORD="rotated-smoke-password"
 TEST_ROOT="$(mktemp -d)"
 CONFIG_DIR="${TEST_ROOT}/config"
 HOST_ACTIONS_DIR="${TEST_ROOT}/host-actions"
@@ -162,6 +163,48 @@ login_code="$(
 )"
 [[ "${login_code}" == "303" ]] || fail "valid login was rejected"
 pass "password authentication and CSRF-protected login work"
+
+printf '%s\n' "${NEW_TEST_PASSWORD}" |
+    "${CONTAINER_ENGINE}" exec -i "${CONTAINER_NAME}" \
+        /usr/local/bin/omt-web set-password >/dev/null ||
+    fail "Web GUI password rotation command failed"
+stored_password="$(${CONTAINER_ENGINE} exec "${CONTAINER_NAME}" \
+    /bin/sh -c 'printf "%s " "$(stat -c "%a" /etc/omt/web_password)"; cat /etc/omt/web_password')"
+[[ "${stored_password}" == 600\ pbkdf2:sha256:* ]] ||
+    fail "rotated Web credential is not a mode-0600 PBKDF2 hash"
+[[ "${stored_password}" != *"${NEW_TEST_PASSWORD}"* ]] ||
+    fail "rotated Web credential contains the plaintext password"
+"${CONTAINER_ENGINE}" restart "${CONTAINER_NAME}" >/dev/null ||
+    fail "container restart after password rotation failed"
+for attempt in $(seq 1 30); do
+    if curl_app "${BASE_URL}/login" >/dev/null 2>&1; then break; fi
+    [[ "${attempt}" -ne 30 ]] || fail "Web GUI did not recover after password rotation"
+    sleep 1
+done
+old_session_code="$(curl_app --output /dev/null --write-out '%{http_code}' \
+    --cookie "${COOKIE_JAR}" "${BASE_URL}/about")"
+[[ "${old_session_code}" == "303" ]] ||
+    fail "password rotation did not revoke the existing Web session"
+
+rm -f "${COOKIE_JAR}"
+login_page="$(curl_app --cookie-jar "${COOKIE_JAR}" "${BASE_URL}/login")"
+login_csrf="$(printf '%s' "${login_page}" | csrf_from)"
+old_password_code="$(curl_app --output /dev/null --write-out '%{http_code}' \
+    --cookie "${COOKIE_JAR}" --cookie-jar "${COOKIE_JAR}" \
+    --request POST "${BASE_URL}/login" \
+    --data-urlencode "password=${TEST_PASSWORD}" \
+    --data-urlencode "csrf_token=${login_csrf}")"
+[[ "${old_password_code}" != "303" ]] || fail "old Web GUI password still authenticates"
+rm -f "${COOKIE_JAR}"
+login_page="$(curl_app --cookie-jar "${COOKIE_JAR}" "${BASE_URL}/login")"
+login_csrf="$(printf '%s' "${login_page}" | csrf_from)"
+new_password_code="$(curl_app --output /dev/null --write-out '%{http_code}' \
+    --cookie "${COOKIE_JAR}" --cookie-jar "${COOKIE_JAR}" \
+    --request POST "${BASE_URL}/login" \
+    --data-urlencode "password=${NEW_TEST_PASSWORD}" \
+    --data-urlencode "csrf_token=${login_csrf}")"
+[[ "${new_password_code}" == "303" ]] || fail "new Web GUI password was rejected"
+pass "password rotation stores only a hash, revokes sessions, and changes authentication"
 
 about_page="$(
     curl_app --cookie "${COOKIE_JAR}" "${BASE_URL}/about"

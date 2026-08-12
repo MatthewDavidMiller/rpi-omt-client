@@ -9,6 +9,7 @@ use omt_web::{
 };
 use std::{
     env,
+    io::{self, Read},
     net::{Ipv4Addr, SocketAddr},
     process::ExitCode,
 };
@@ -43,6 +44,25 @@ async fn main() -> ExitCode {
             Ok(None) => return ExitCode::SUCCESS,
             Err(error) => return fail(&error),
         },
+        [command] if command == "set-password" => {
+            let mut password = String::new();
+            if let Err(error) = io::stdin()
+                .take(u64::try_from(auth::MAXIMUM_PASSWORD_BYTES + 2).unwrap_or(u64::MAX))
+                .read_to_string(&mut password)
+            {
+                return fail(&format!("unable to read the new password: {error}"));
+            }
+            if password.ends_with('\n') {
+                password.pop();
+            }
+            match auth::replace_password(&settings, &password) {
+                Ok(()) => {
+                    println!("Web GUI password updated.");
+                    return ExitCode::SUCCESS;
+                }
+                Err(error) => return fail(&error),
+            }
+        }
         [command, path] if command == "play-target" => match state::read_source(path.as_ref()) {
             Ok(Some(target)) => {
                 println!("{}", target.value());
@@ -63,7 +83,7 @@ async fn main() -> ExitCode {
         [] => {}
         _ => {
             return fail(
-                "usage: omt-web [initialize | play-target PATH | video-ceiling PATH BOARD_DEFAULT]",
+                "usage: omt-web [initialize | set-password | play-target PATH | video-ceiling PATH BOARD_DEFAULT]",
             );
         }
     }

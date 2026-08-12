@@ -114,3 +114,24 @@ def test_headless_wifi_example_contains_the_required_fields():
     assert 'ssid="your-network-name"' in example
     assert 'psk="your-wifi-passphrase"' in example
     assert "key_mgmt=WPA-PSK" in example
+
+
+def test_first_use_documents_web_password_retrieval():
+    setup = (REPO_ROOT / "docs" / "SETUP.md").read_text(encoding="utf-8")
+    operations = (REPO_ROOT / "docs" / "OPERATIONS.md").read_text(encoding="utf-8")
+    for document in (setup, operations):
+        assert "Web UI password" in document
+        assert "/etc/conf.d/omt-client" in document
+        assert "logs omt-client" in document
+        assert "PBKDF2" in document or "one-way hash" in document
+
+
+def test_deployer_web_password_rotation_is_documented():
+    setup = (REPO_ROOT / "docs" / "SETUP.md").read_text(encoding="utf-8")
+    operations = (REPO_ROOT / "docs" / "OPERATIONS.md").read_text(encoding="utf-8")
+    configuration = (REPO_ROOT / "docs" / "CONFIGURATION.md").read_text(encoding="utf-8")
+    assert "Change Web GUI password" in setup
+    assert "web-password" in operations
+    assert "12-128" in operations
+    assert "SSH stdin" in operations
+    assert "invalidating existing sessions" in configuration

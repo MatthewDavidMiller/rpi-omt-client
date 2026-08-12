@@ -23,6 +23,8 @@ const PASSWORD_LIMIT: usize = 16 * 1024;
 const REGISTRY_LIMIT: usize = 64 * 1024;
 const MAXIMUM_SESSIONS: usize = 64;
 const PBKDF2_ITERATIONS: u32 = 600_000;
+pub const MINIMUM_PASSWORD_BYTES: usize = 12;
+pub const MAXIMUM_PASSWORD_BYTES: usize = 128;
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -344,6 +346,45 @@ fn keyed_hex(key: &[u8], value: &[u8]) -> Result<String, String> {
     Ok(hex_encode(&mac.finalize().into_bytes()))
 }
 
+pub fn validate_new_password(password: &str) -> Result<(), String> {
+    if !(MINIMUM_PASSWORD_BYTES..=MAXIMUM_PASSWORD_BYTES).contains(&password.len()) {
+        return Err(format!(
+            "The Web GUI password must contain {MINIMUM_PASSWORD_BYTES}-{MAXIMUM_PASSWORD_BYTES} UTF-8 bytes"
+        ));
+    }
+    if password.chars().any(char::is_control) {
+        return Err("The Web GUI password must not contain control characters".to_owned());
+    }
+    Ok(())
+}
+
+fn encoded_password(password: &str) -> Result<String, String> {
+    let salt = random_hex(16)?;
+    let mut digest = [0_u8; 32];
+    pbkdf2_hmac::<Sha256>(
+        password.as_bytes(),
+        salt.as_bytes(),
+        PBKDF2_ITERATIONS,
+        &mut digest,
+    );
+    Ok(format!(
+        "pbkdf2:sha256:{PBKDF2_ITERATIONS}${salt}${}\n",
+        hex_encode(&digest)
+    ))
+}
+
+pub fn replace_password(settings: &Settings, password: &str) -> Result<(), String> {
+    if env::var("OMT_WEB_PASSWORD").is_ok_and(|value| !value.is_empty()) {
+        return Err(
+            "OMT_WEB_PASSWORD overrides the password file; remove the emergency override first"
+                .to_owned(),
+        );
+    }
+    validate_new_password(password)?;
+    let encoded = encoded_password(password)?;
+    atomic_replace(&settings.password_file, encoded.as_bytes(), PASSWORD_LIMIT)
+}
+
 pub fn initialize(settings: &Settings) -> Result<Option<String>, String> {
     fs::create_dir_all(&settings.config_dir).map_err(|error| error.to_string())?;
     let secret_path = settings.config_dir.join("web_secret");
@@ -364,18 +405,7 @@ pub fn initialize(settings: &Settings) -> Result<Option<String>, String> {
         return Ok(None);
     }
     let password = random_hex(16)?;
-    let salt = random_hex(16)?;
-    let mut digest = [0_u8; 32];
-    pbkdf2_hmac::<Sha256>(
-        password.as_bytes(),
-        salt.as_bytes(),
-        PBKDF2_ITERATIONS,
-        &mut digest,
-    );
-    let encoded = format!(
-        "pbkdf2:sha256:{PBKDF2_ITERATIONS}${salt}${}\n",
-        hex_encode(&digest)
-    );
+    let encoded = encoded_password(&password)?;
     atomic_replace(&settings.password_file, encoded.as_bytes(), PASSWORD_LIMIT)?;
     Ok(Some(password))
 }
@@ -403,5 +433,20 @@ mod tests {
         let scrypt_hash = parse_password("scrypt:32768:8:1$07kZLpT9$d12f4706055d4d0812a754b965a9150e8c843b0ce3672d8db291df10e0bf144bc268bb049c9c3f209ea4614d5309a759eba4e123a4bd12e08daa002f95ccfe97".to_owned()).unwrap_or_else(|error| panic!("{error}"));
         assert!(scrypt_hash.verify("password"));
         assert!(!scrypt_hash.verify("not-password"));
+    }
+
+    #[test]
+    fn new_password_policy_and_encoding_are_bounded() {
+        assert!(validate_new_password("correct horse battery staple").is_ok());
+        assert!(validate_new_password("too-short").is_err());
+        assert!(validate_new_password(&"x".repeat(MAXIMUM_PASSWORD_BYTES + 1)).is_err());
+        assert!(validate_new_password("twelve bytes\n").is_err());
+
+        let encoded = encoded_password("correct horse battery staple")
+            .unwrap_or_else(|error| panic!("{error}"));
+        let parsed =
+            parse_password(encoded.trim().to_owned()).unwrap_or_else(|error| panic!("{error}"));
+        assert!(parsed.verify("correct horse battery staple"));
+        assert!(!parsed.verify("wrong password"));
     }
 }

@@ -194,6 +194,10 @@ one is not evidence for another:
    cargo test --release -p vmx-decoder --test decode_bench -- --ignored --nocapture
    ```
 
+   A cross-built standalone benchmark can read staged vectors from an explicit
+   directory with `VMX_VECTOR_DIR=/path/to/vectors`; otherwise it uses the
+   repository's `tests/vectors/vmx` directory.
+
    The 3-worker row is the one that decides a tier, because the receiver gives
    the decoder three of the four cores. The shipped ceilings in
    `deploy/lib/board-profile.sh` are derived from core count and clock rather

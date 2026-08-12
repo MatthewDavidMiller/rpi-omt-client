@@ -4,7 +4,7 @@ mod ops;
 mod ssh;
 mod tools;
 
-pub use ops::{apply_wifi, connect, deploy, manage, test_connection};
+pub use ops::{apply_wifi, change_web_password, connect, deploy, manage, test_connection};
 pub use ssh::{RemoteResult, SshSession};
 pub use tools::{
     BuildPlan, DOCKER_DESKTOP, GIT_FOR_WINDOWS, ON_WINDOWS, PYTHON, Package, Prerequisite,
@@ -31,6 +31,8 @@ pub const OUTPUT_LIMIT: usize = 4 * 1024 * 1024;
 pub const MAX_SECRET_BYTES: usize = 4096;
 pub const MAX_MANIFEST_MEMBERS: usize = 128;
 pub const MAX_MANIFEST_MEMBER_BYTES: usize = 240;
+pub const MINIMUM_WEB_PASSWORD_BYTES: usize = 12;
+pub const MAXIMUM_WEB_PASSWORD_BYTES: usize = 128;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum AuthMethod {
@@ -234,6 +236,20 @@ pub fn validate_wifi(value: &WifiSettings) -> Result<(), ValidationError> {
     {
         return Err(ValidationError(
             "Wi-Fi password must be 8-63 printable ASCII characters or a 64-digit hex PSK.",
+        ));
+    }
+    Ok(())
+}
+pub fn validate_web_password(value: &Secret) -> Result<(), ValidationError> {
+    let password = value.expose();
+    if !(MINIMUM_WEB_PASSWORD_BYTES..=MAXIMUM_WEB_PASSWORD_BYTES).contains(&password.len()) {
+        return Err(ValidationError(
+            "Web GUI password must contain 12-128 UTF-8 bytes.",
+        ));
+    }
+    if password.chars().any(char::is_control) {
+        return Err(ValidationError(
+            "Web GUI password must not contain control characters.",
         ));
     }
     Ok(())
@@ -455,6 +471,19 @@ mod tests {
         assert!(valid_username("pi_admin-1"));
         assert!(valid_remote_directory("/opt/omt-client"));
         assert_eq!(shell_quote("a'b"), "'a'\\''b'");
+        assert!(
+            validate_web_password(
+                &Secret::new("correct horse battery staple".into())
+                    .unwrap_or_else(|error| panic!("{error}"))
+            )
+            .is_ok()
+        );
+        assert!(
+            validate_web_password(
+                &Secret::new("too-short".into()).unwrap_or_else(|error| panic!("{error}"))
+            )
+            .is_err()
+        );
     }
     #[test]
     fn restart_manages_the_service_even_before_first_container_creation() {

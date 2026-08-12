@@ -127,6 +127,11 @@ initial root password drives the fixed bootstrap through a no-echo PTY and
 Successful native deployments surface the installer's final summary (including
 the authoritative Web URL) while omitting the noisy package transcript; every
 connection secret is redacted before that summary reaches progress output.
+Web-password rotation uses the same bounded, zeroizing stdin secret channel as
+Wi-Fi management: no credential is placed in an SSH command or progress line.
+The fixed action invokes `omt-web set-password` inside the unprivileged
+container and restarts OpenRC; Rust validates the value and atomically writes
+only a PBKDF2-SHA256 hash.
 
 ## Legal and release
 

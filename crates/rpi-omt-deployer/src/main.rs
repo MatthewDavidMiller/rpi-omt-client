@@ -12,7 +12,9 @@
 /// `cargo test -p rpi-omt-deployer` cannot quietly run nothing.
 #[cfg_attr(not(feature = "desktop"), allow(dead_code))]
 mod gates {
-    use omt_deployer_core::{Secret, WifiSettings, valid_host, valid_username, validate_wifi};
+    use omt_deployer_core::{
+        Secret, WifiSettings, valid_host, valid_username, validate_web_password, validate_wifi,
+    };
 
     /// The connection and deployment fields as the operator has typed them.
     pub struct Form<'a> {
@@ -22,6 +24,8 @@ mod gates {
         pub project_root: &'a str,
         pub wifi_ssid: &'a str,
         pub wifi_password: &'a str,
+        pub web_password: &'a str,
+        pub web_password_confirmation: &'a str,
     }
 
     impl Form<'_> {
@@ -45,6 +49,13 @@ mod gates {
                     .is_ok()
                 })
         }
+
+        pub fn can_change_web_password(&self) -> bool {
+            self.can_connect()
+                && self.web_password == self.web_password_confirmation
+                && Secret::new(self.web_password.to_owned())
+                    .is_ok_and(|password| validate_web_password(&password).is_ok())
+        }
     }
 
     #[cfg(test)]
@@ -59,6 +70,8 @@ mod gates {
                 project_root: "/src/rpi-omt-client",
                 wifi_ssid,
                 wifi_password,
+                web_password: "correct horse battery staple",
+                web_password_confirmation: "correct horse battery staple",
             }
         }
 
@@ -67,6 +80,7 @@ mod gates {
             let complete = form("", "");
             assert!(complete.can_connect());
             assert!(complete.can_deploy());
+            assert!(complete.can_change_web_password());
             for incomplete in [
                 Form {
                     host: "-pi.local",
@@ -84,6 +98,7 @@ mod gates {
                 assert!(!incomplete.can_connect());
                 assert!(!incomplete.can_deploy());
                 assert!(!incomplete.can_apply_wifi());
+                assert!(!incomplete.can_change_web_password());
             }
             assert!(
                 !Form {
@@ -108,6 +123,26 @@ mod gates {
             assert!(!form("", "passphrase").can_apply_wifi());
             assert!(!form(&"s".repeat(33), "passphrase").can_apply_wifi());
             assert!(!form("studio", "pass\u{7f}word").can_apply_wifi());
+        }
+
+        #[test]
+        fn the_web_password_button_requires_policy_and_confirmation() {
+            assert!(form("", "").can_change_web_password());
+            assert!(
+                !Form {
+                    web_password: "too-short",
+                    web_password_confirmation: "too-short",
+                    ..form("", "")
+                }
+                .can_change_web_password()
+            );
+            assert!(
+                !Form {
+                    web_password_confirmation: "a different secure password",
+                    ..form("", "")
+                }
+                .can_change_web_password()
+            );
         }
     }
 }
@@ -433,8 +468,9 @@ mod desktop {
     use eframe::egui;
     use omt_deployer_core::{
         AuthMethod, Connection, DeployOptions, ManagementAction, ON_WINDOWS, Prerequisite, Secret,
-        WifiSettings, apply_wifi, deploy, discover_project_root, ensure_arm64_emulation,
-        install_packages, manage, missing_packages, prerequisites, test_connection, validate_wifi,
+        WifiSettings, apply_wifi, change_web_password, deploy, discover_project_root,
+        ensure_arm64_emulation, install_packages, manage, missing_packages, prerequisites,
+        test_connection, validate_web_password, validate_wifi,
     };
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
@@ -477,6 +513,7 @@ mod desktop {
         Test,
         Deploy,
         Manage(ManagementAction),
+        WebPassword,
         Wifi,
         /// Probe this workstation's own tooling. Local: no Pi is contacted, so
         /// it runs before any connection details have been typed.
@@ -517,6 +554,8 @@ mod desktop {
         known_hosts: String,
         wifi_ssid: String,
         wifi_password: Zeroizing<String>,
+        web_password: Zeroizing<String>,
+        web_password_confirmation: Zeroizing<String>,
         wifi_connect: bool,
         project_root: String,
         remote_directory: String,
@@ -562,6 +601,8 @@ mod desktop {
                 known_hosts: String::new(),
                 wifi_ssid: String::new(),
                 wifi_password: Zeroizing::new(String::new()),
+                web_password: Zeroizing::new(String::new()),
+                web_password_confirmation: Zeroizing::new(String::new()),
                 wifi_connect: true,
                 project_root: project,
                 remote_directory: "/opt/omt-client".into(),
@@ -617,6 +658,8 @@ mod desktop {
                 project_root: &self.project_root,
                 wifi_ssid: &self.wifi_ssid,
                 wifi_password: &self.wifi_password,
+                web_password: &self.web_password,
+                web_password_confirmation: &self.web_password_confirmation,
             }
         }
 
@@ -679,6 +722,7 @@ mod desktop {
             // Setup jobs report into their own view, which is where their
             // result is read; everything else narrates into Activity.
             let reports_here = !job.needs_connection();
+            let changes_web_password = matches!(job, Job::WebPassword);
             let request = JobRequest {
                 job,
                 connection,
@@ -686,7 +730,12 @@ mod desktop {
                 wifi_ssid: self.wifi_ssid.clone(),
                 wifi_password: self.wifi_password.clone(),
                 wifi_connect: self.wifi_connect,
+                web_password: self.web_password.clone(),
             };
+            if changes_web_password {
+                self.web_password.clear();
+                self.web_password_confirmation.clear();
+            }
             let (tx, rx) = mpsc::channel();
             self.cancel.store(false, Ordering::Relaxed);
             let cancel = Arc::clone(&self.cancel);
@@ -703,6 +752,7 @@ mod desktop {
                 Job::Manage(ManagementAction::Reboot) => {
                     "Scheduling operating-system reboot...".into()
                 }
+                Job::WebPassword => "Changing Web GUI password...".into(),
                 Job::Wifi => "Applying Wi-Fi settings...".into(),
                 Job::Probe => "Checking this workstation...".into(),
                 Job::Install => "Installing prerequisites...".into(),
@@ -1106,6 +1156,7 @@ mod desktop {
         wifi_ssid: String,
         wifi_password: Zeroizing<String>,
         wifi_connect: bool,
+        web_password: Zeroizing<String>,
     }
 
     fn run_job(
@@ -1137,6 +1188,13 @@ mod desktop {
             Job::Manage(action) => manage(remote()?, action, cancel, &mut progress)
                 .map(|_| ())
                 .map_err(|error| error.to_string()),
+            Job::WebPassword => {
+                let password = Secret::new((*request.web_password).clone())
+                    .map_err(|error| error.to_string())?;
+                validate_web_password(&password).map_err(|error| error.to_string())?;
+                change_web_password(remote()?, &password, cancel, &mut progress)
+                    .map_err(|error| error.to_string())
+            }
             Job::Wifi => {
                 let settings = WifiSettings {
                     ssid: request.wifi_ssid,
@@ -1346,6 +1404,27 @@ mod desktop {
                             }
                         });
                     }
+                    ui.separator();
+                    ui.heading("Web GUI password");
+                    ui.label(
+                        "Set a 12-128 byte password. Changing it restarts the appliance and signs out every Web session.",
+                    );
+                    field(ui, "New password", |ui| {
+                        text_field(ui, &mut self.web_password, !self.reveal);
+                    });
+                    field(ui, "Confirm password", |ui| {
+                        text_field(ui, &mut self.web_password_confirmation, !self.reveal);
+                    });
+                    ui.checkbox(&mut self.reveal, "Reveal secrets");
+                    if ui
+                        .add_enabled(
+                            self.form().can_change_web_password() && !self.running(),
+                            egui::Button::new("Change Web GUI password"),
+                        )
+                        .clicked()
+                    {
+                        self.start_job(Job::WebPassword);
+                    }
                 }),
                 View::Wifi => column(ui, |ui| {
                     ui.heading("Wi-Fi");
@@ -1480,6 +1559,7 @@ mod desktop {
                 Job::Test,
                 Job::Deploy,
                 Job::Wifi,
+                Job::WebPassword,
                 Job::Manage(ManagementAction::Status),
                 Job::Manage(ManagementAction::Reboot),
             ] {
