@@ -88,6 +88,7 @@ expect_status 2 "an unknown option" "${deployer}" --project "${project}" --colou
 # Connection arguments are validated before anything is opened.
 expect_status 2 "a management action without a host" "${deployer}" --username root status
 expect_status 2 "a management action without a username" "${deployer}" --host pi.local status
+expect_status 2 "reboot without a host" "${deployer}" --username root reboot
 expect_status 2 "a management action with no password" \
     "${deployer}" --host pi.local --username root status
 expect_status 2 "an invalid host" \

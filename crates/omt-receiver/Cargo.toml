@@ -10,13 +10,13 @@ alsa.workspace = true
 async-io.workspace = true
 drm.workspace = true
 futures-lite.workspace = true
-omt-protocol = { version = "0.9.45", path = "../omt-protocol" }
-omt-receiver-core = { version = "0.9.45", path = "../omt-receiver-core" }
+omt-protocol = { version = "0.9.46", path = "../omt-protocol" }
+omt-receiver-core = { version = "0.9.46", path = "../omt-receiver-core" }
 quick-xml.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 signal-hook.workspace = true
-vmx-decoder = { version = "0.9.45", path = "../vmx-decoder" }
+vmx-decoder = { version = "0.9.46", path = "../vmx-decoder" }
 zbus.workspace = true
 
 [lints]

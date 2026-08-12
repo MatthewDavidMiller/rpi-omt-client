@@ -138,6 +138,12 @@ installer hardening/firmware contract, reboot validation, host diagnostics,
 HDMI `usercfg.txt` rules, transactions, Compose resource limits, and supply
 chain pins.
 
+The live nftables reachability case uses a private user, mount, and network
+namespace when the workstation permits unprivileged user namespaces. Its
+mapped root has network administration rights only over that throwaway stack.
+On a workstation where user namespaces are disabled, the same case requires
+passwordless sudo; it never replaces the packet test with a text-only check.
+
 The normal `make test` adds the Windows cross build, an amd64 image build, and
 the ARM64 receiver builder stage. Full mode adds container smoke and OMT
 network tests. The pre-commit hook runs full mode, the Python dependency audit,

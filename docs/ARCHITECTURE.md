@@ -147,6 +147,12 @@ chance of tearing audio down, which is what a two-board test over one Wi-Fi
 radio produced repeatedly while video kept playing. The cost of the longer wait
 is a recoverable ALSA underrun.
 
+The direct probe divides its caller's bounded deadline between video and audio
+instead of imposing a fixed 100 ms read slice. A compressed 1080p VMX frame is
+small enough for that slice on loopback but not necessarily over a busy Pi
+Wi-Fi link; consuming part of it and then timing out closes the video channel,
+which previously made a healthy A/V sender report as audio-only.
+
 The presenter returns a typed `PresentOutcome`, so the play loop distinguishes a
 stream this display cannot show — which keeps the session and reports
 `unsupported-format` — from a failure of the output itself, which ends the
@@ -275,7 +281,9 @@ raw `--secrets-stdin` document are all wiped rather than freed intact.
 Fixed management actions cross the same privilege boundary as deployment and
 Wi-Fi: a non-root SSH account uses its bounded sudo-password channel, while a
 root session runs the fixed command directly. Neither account needs membership
-in the Docker group. Host-key verification defaults to OpenSSH's
+in the Docker group. Status, logs, service restart, and a deferred OS reboot
+are typed actions; the GUI requires a second confirmation before the reboot.
+Host-key verification defaults to OpenSSH's
 `~/.ssh/known_hosts`; the CLI and GUI can select another verified file without
 relaxing strict checking.
 
@@ -344,6 +352,11 @@ RAM-backed diskless roots; `deploy/lib/board-profile.sh` and
 `crates/omt-deployer-core/src/ops.rs` hold the same table for the host-side and
 workstation-side gates. OpenRC supervises the filtered Avahi proxy and two inotify watchers;
 the Docker workload remains detached with its own restart policy.
+
+Host hardening disables unprivileged BPF and applies BPF JIT constant blinding
+for privileged callers as well. SSH keeps root key access for recovery but
+limits every login to root or the administrative `wheel` group; password root
+login and all forwarding paths remain disabled.
 
 Pi DRM, ALSA, HDMI hotplug, OpenRC boot ordering, nftables, and live OMT media
 remain hardware validation boundaries after local unit and amd64 image checks

@@ -464,6 +464,7 @@ pub fn manage(
         ManagementAction::Status => "Fetching container status...",
         ManagementAction::Logs => "Fetching recent logs...",
         ManagementAction::Restart => "Restarting service...",
+        ManagementAction::Reboot => "Scheduling operating-system reboot...",
     });
     let mut session = connect(connection)?;
     let docker_command = action

@@ -152,9 +152,15 @@ fn measure(
     let audio_connected = record(audio.connect(endpoint, FrameType::Audio, deadline), error);
 
     while Instant::now() < deadline && !(measurement.video && measurement.audio) {
+        // A compressed video frame can legitimately take longer than 100 ms
+        // on a busy Pi Wi-Fi link. Give it a fair share of the caller's
+        // bounded budget while reserving the other half for audio. The old
+        // fixed slice consumed part of a frame, timed out, and closed only the
+        // video channel, so a healthy A/V source probed as audio-only.
+        let video_deadline = fair_sample_deadline(deadline, !measurement.audio && audio_connected);
         if !measurement.video
             && video_connected
-            && sample(&mut video, FrameType::Video, deadline, error)
+            && sample(&mut video, FrameType::Video, video_deadline, error)
             && let Some(header) = video.frame().video.as_ref()
         {
             measurement.video = true;
@@ -188,11 +194,10 @@ fn record(outcome: std::io::Result<()>, error: &mut String) -> bool {
     }
 }
 
-/// Reads one 100 ms slice looking for the wanted frame type.
+/// Reads within the caller's bounded media share looking for the wanted type.
 fn sample(channel: &mut Channel, wanted: FrameType, deadline: Instant, error: &mut String) -> bool {
-    let slice = deadline.min(Instant::now() + Duration::from_millis(100));
-    while Instant::now() < slice {
-        match channel.receive(slice) {
+    while Instant::now() < deadline {
+        match channel.receive(deadline) {
             Ok(frame) if frame.header.frame_type == wanted => return true,
             Ok(_) => {}
             Err(reason) => {
@@ -202,6 +207,14 @@ fn sample(channel: &mut Channel, wanted: FrameType, deadline: Instant, error: &m
         }
     }
     false
+}
+
+fn fair_sample_deadline(deadline: Instant, reserve_other: bool) -> Instant {
+    if reserve_other {
+        Instant::now() + channel::remaining(deadline) / 2
+    } else {
+        deadline
+    }
 }
 
 fn play(options: &Options) -> Result<i32, String> {
@@ -280,4 +293,20 @@ fn run() -> i32 {
 
 fn main() {
     std::process::exit(run());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn video_receives_a_fair_share_instead_of_a_fixed_short_slice() {
+        let started = Instant::now();
+        let deadline = started + Duration::from_secs(4);
+        let video = fair_sample_deadline(deadline, true);
+        let granted = video.saturating_duration_since(started);
+        assert!(granted >= Duration::from_millis(1_900));
+        assert!(granted <= Duration::from_millis(2_100));
+        assert_eq!(fair_sample_deadline(deadline, false), deadline);
+    }
 }

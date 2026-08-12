@@ -26,21 +26,52 @@ for tool in ip nft python3; do
         exit 1
     }
 done
-# Needs real network administration; there is no meaningful unprivileged form.
+# Needs real network administration, scoped either to a private user namespace
+# or obtained from the host through passwordless sudo.
 if [[ "$(id -u)" -ne 0 ]]; then
+    # A private user+mount+network namespace grants the test CAP_NET_ADMIN only
+    # over its throwaway network stack. Prefer it when the kernel allows
+    # unprivileged user namespaces: the gate then exercises real nftables and
+    # TCP without granting repository code host-root privileges.
+    if [[ "${NFT_TEST_USERNS_REENTRY:-0}" != "1" ]] && \
+       command -v unshare >/dev/null 2>&1 && \
+       unshare -Urnm --map-root-user true 2>/dev/null; then
+        NETNS_STAGE="$(mktemp -d "${TMPDIR:-/tmp}/omt-fw-netns.XXXXXX")"
+        exec unshare -Urnm --map-root-user env \
+            NFT_TEST_USERNS_REENTRY=1 NFT_TEST_NETNS_STAGE="${NETNS_STAGE}" \
+            bash "${BASH_SOURCE[0]}" "$@"
+    fi
     if command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
         exec sudo -n env NFT_TEST_REENTRY=1 bash "${BASH_SOURCE[0]}" "$@"
     fi
-    echo "FAIL: this gate needs root (passwordless sudo) to create a netns" >&2
+    echo "FAIL: this gate needs unprivileged user namespaces or passwordless sudo" >&2
     exit 1
 fi
 
-cleanup() {
+if [[ "${NFT_TEST_USERNS_REENTRY:-0}" == "1" ]]; then
+    [[ -n "${NFT_TEST_NETNS_STAGE:-}" && -d "${NFT_TEST_NETNS_STAGE}" ]] || {
+        echo "FAIL: user-namespace network staging directory is missing" >&2
+        exit 1
+    }
+    # ip-netns publishes namespace handles under /run/netns. Bind a private
+    # directory over it inside this mount namespace so no host path is changed.
+    mount --bind "${NFT_TEST_NETNS_STAGE}" /run/netns
+    mount --make-private /run/netns
+fi
+
+cleanup_network() {
     ip netns del "${NS}" >/dev/null 2>&1 || true
     ip link del omt-fw-h >/dev/null 2>&1 || true
 }
+cleanup() {
+    cleanup_network
+    if [[ "${NFT_TEST_USERNS_REENTRY:-0}" == "1" ]]; then
+        umount /run/netns >/dev/null 2>&1 || true
+        rmdir "${NFT_TEST_NETNS_STAGE}" >/dev/null 2>&1 || true
+    fi
+}
 trap cleanup EXIT
-cleanup
+cleanup_network
 
 ip netns add "${NS}"
 ip link add omt-fw-h type veth peer name omt-fw-n

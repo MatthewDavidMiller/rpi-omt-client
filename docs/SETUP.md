@@ -191,6 +191,9 @@ has a Browse button and its build step can be cleared. Manage reads
 container status/logs or restarts the OpenRC service through sudo for a
 non-root SSH account. Restart uses the service boundary so it can also start a
 freshly installed appliance whose container has not been created yet.
+Manage also offers a confirmed operating-system reboot, so the reboot required
+after installation does not need a separate SSH session or a manually typed
+host command.
 Wi-Fi updates the running
 `wpa_supplicant` through its control socket and stores a derived WPA PSK rather
 than sending the plaintext passphrase to a command line.
@@ -294,8 +297,10 @@ The installer then:
    Broadcom firmware, ALSA/DRM tools, Docker/Compose, Avahi/D-Bus, nftables,
    inotify, `wpa_supplicant`, and zram support;
 2. applies kernel/network sysctls, SSH forwarding/session safeguards, bounded
-   Docker logs, daemon no-new-privileges, zram swap, a 256 MiB container cap,
-   a 64-PID cap, and bounded file descriptors, shared memory, and tmpfs mounts;
+   Docker logs, daemon no-new-privileges, BPF JIT constant blinding, zram swap,
+   a 256 MiB container cap, a 64-PID cap, and bounded file descriptors, shared
+   memory, and tmpfs mounts. SSH logins are limited to `root` (keys only) and
+   members of the administrative `wheel` group;
 3. installs a default-deny nftables input policy allowing established traffic,
    loopback, ICMP/IPv6 neighbor discovery, DHCP, mDNS, SSH, and the Web port;
 4. loads the ARM64 image, prepares the persistent volume and least-privilege

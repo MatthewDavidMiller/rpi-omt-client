@@ -346,6 +346,8 @@ start_packet_captures
     run "OpenRC runlevels" rc-status --all
     run "effective kernel command line (sanitized)" sh -c \
         'sed -E "s/((password|passwd|secret|token|credential|psk|key)=)[^ ]+/\1<redacted>/Ig" /proc/cmdline'
+    run "kernel and SSH hardening" sh -c \
+        'sysctl fs.protected_fifos fs.protected_hardlinks fs.protected_regular fs.protected_symlinks fs.suid_dumpable kernel.dmesg_restrict kernel.kptr_restrict kernel.perf_event_paranoid kernel.randomize_va_space kernel.sysrq kernel.unprivileged_bpf_disabled net.core.bpf_jit_harden 2>&1; printf "\n### effective SSH policy\n"; sshd -T 2>&1 | grep -E "^(allowgroups|disableforwarding|kbdinteractiveauthentication|maxauthtries|maxsessions|maxstartups|passwordauthentication|permitrootlogin) " || true'
     run "managed HDMI settings" sh -c \
         'for file in /media/mmcblk0p1/usercfg.txt /boot/usercfg.txt /etc/omt-client/installer.conf; do [ -e "$file" ] || continue; printf "### %s\n" "$file"; if [ "${file##*/}" = usercfg.txt ]; then sed -n "/^# BEGIN OMT Client HDMI configuration$/,/^# END OMT Client HDMI configuration$/p" "$file" 2>&1; else cat "$file" 2>&1; fi; done'
 

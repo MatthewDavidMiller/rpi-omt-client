@@ -528,6 +528,7 @@ mod desktop {
         prerequisites: Vec<Prerequisite>,
         picker: Option<(Picking, Receiver<Option<PathBuf>>)>,
         fit: Fit,
+        pending_confirmation: Option<ManagementAction>,
     }
 
     /// Whether the opening window has been fitted to the display it landed on.
@@ -572,6 +573,7 @@ mod desktop {
                 prerequisites: Vec::new(),
                 picker: None,
                 fit: Fit::Pending,
+                pending_confirmation: None,
             }
         }
     }
@@ -698,6 +700,9 @@ mod desktop {
                 Job::Manage(ManagementAction::Status) => "Fetching status...".into(),
                 Job::Manage(ManagementAction::Logs) => "Fetching logs...".into(),
                 Job::Manage(ManagementAction::Restart) => "Restarting service...".into(),
+                Job::Manage(ManagementAction::Reboot) => {
+                    "Scheduling operating-system reboot...".into()
+                }
                 Job::Wifi => "Applying Wi-Fi settings...".into(),
                 Job::Probe => "Checking this workstation...".into(),
                 Job::Install => "Installing prerequisites...".into(),
@@ -1292,7 +1297,8 @@ mod desktop {
                 }
                 View::Manage => column(ui, |ui| {
                     ui.heading("Manage");
-                    // Wrapped, so three buttons do not run off a narrow window.
+                    // Wrapped, so the controls remain reachable at the minimum
+                    // supported window width.
                     ui.horizontal_wrapped(|ui| {
                         for (label, action) in [
                             ("Status", ManagementAction::Status),
@@ -1306,7 +1312,40 @@ mod desktop {
                                 self.start_job(Job::Manage(action));
                             }
                         }
+                        if ui
+                            .add_enabled(!self.running(), egui::Button::new("Reboot OS"))
+                            .clicked()
+                        {
+                            self.pending_confirmation = Some(ManagementAction::Reboot);
+                        }
                     });
+                    if self.pending_confirmation == Some(ManagementAction::Reboot) {
+                        ui.separator();
+                        ui.label(
+                            egui::RichText::new(
+                                "Reboot the Raspberry Pi? The web UI and playback will be unavailable during boot.",
+                            )
+                            .strong(),
+                        );
+                        ui.horizontal_wrapped(|ui| {
+                            if ui
+                                .add_enabled(
+                                    !self.running(),
+                                    egui::Button::new("Confirm reboot"),
+                                )
+                                .clicked()
+                            {
+                                self.pending_confirmation = None;
+                                self.start_job(Job::Manage(ManagementAction::Reboot));
+                            }
+                            if ui
+                                .add_enabled(!self.running(), egui::Button::new("Cancel"))
+                                .clicked()
+                            {
+                                self.pending_confirmation = None;
+                            }
+                        });
+                    }
                 }),
                 View::Wifi => column(ui, |ui| {
                     ui.heading("Wi-Fi");
@@ -1442,6 +1481,7 @@ mod desktop {
                 Job::Deploy,
                 Job::Wifi,
                 Job::Manage(ManagementAction::Status),
+                Job::Manage(ManagementAction::Reboot),
             ] {
                 assert!(remote.needs_connection());
             }

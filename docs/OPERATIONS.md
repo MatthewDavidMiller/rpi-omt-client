@@ -36,8 +36,10 @@ Direct playback requires `omt://host:port`.
 - `/diagnostics/direct` — bounded direct-target probe;
 - `/diagnostics/download` — version, runtime, discovery, controller, playback,
   current-target receive probe, OMT XML, integrity, and a freshly correlated
-  host report. An unchecked-by-default checkbox lets the operator opt into a
-  validated raw PCAP for that download only.
+  host report. The host report includes the effective kernel and SSH hardening
+  values, so configuration drift is visible rather than inferred from the
+  installer source. An unchecked-by-default checkbox lets the operator opt
+  into a validated raw PCAP for that download only.
 
 `/debug` is removed. Bundles are named `omt-diagnostics-<UTC>.zip`; capture
 metadata is always present, while raw PCAP data is absent unless explicitly

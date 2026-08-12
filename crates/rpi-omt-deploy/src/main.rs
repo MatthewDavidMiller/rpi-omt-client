@@ -55,6 +55,8 @@ enum Command {
     Status,
     Logs,
     Restart,
+    /// Reboot the Raspberry Pi operating system after acknowledging the request.
+    Reboot,
     Wifi(WifiArgs),
 }
 #[derive(Args)]
@@ -366,11 +368,12 @@ fn run(cli: Cli) -> Result<(), (i32, String)> {
                 .map_err(|e| (1, e.to_string()))?;
             emit(cli.json, "result", "Wi-Fi settings applied.", Some(true));
         }
-        Command::Status | Command::Logs | Command::Restart => {
+        Command::Status | Command::Logs | Command::Restart | Command::Reboot => {
             let action = match cli.command {
                 Command::Status => ManagementAction::Status,
                 Command::Logs => ManagementAction::Logs,
-                _ => ManagementAction::Restart,
+                Command::Restart => ManagementAction::Restart,
+                _ => ManagementAction::Reboot,
             };
             let connection = connection.ok_or_else(|| (2, "connection required".into()))?;
             let mut progress = progress_emitter(cli.json);

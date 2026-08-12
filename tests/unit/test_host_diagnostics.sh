@@ -154,6 +154,12 @@ write_request "${complete_id}" 0
 run_diagnostics complete 120
 grep -qx "request_id=${complete_id}" "${CASE_DIR}/diagnostics/report-complete.txt"
 grep -qx 'status=complete' "${CASE_DIR}/diagnostics/report-complete.txt"
+grep -qx '## kernel and SSH hardening' \
+    "${CASE_DIR}/diagnostics/report-complete.txt"
+grep -q 'net.core.bpf_jit_harden' \
+    "${CASE_DIR}/diagnostics/report-complete.txt"
+grep -q '### effective SSH policy' \
+    "${CASE_DIR}/diagnostics/report-complete.txt"
 if grep -q 'skipped=host diagnostics budget exhausted' \
     "${CASE_DIR}/diagnostics/report-complete.txt"; then
     echo "a report claiming completeness skipped sections" >&2

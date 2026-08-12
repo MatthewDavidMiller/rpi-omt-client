@@ -43,6 +43,7 @@ pub enum ManagementAction {
     Status,
     Logs,
     Restart,
+    Reboot,
 }
 impl ManagementAction {
     pub const fn remote_argv(self) -> &'static [&'static str] {
@@ -54,6 +55,14 @@ impl ManagementAction {
             // startup until reboot, and rc-service can both start that state
             // and restart an existing container.
             Self::Restart => &["rc-service", "omt-client", "restart"],
+            // Return a successful SSH exit status before the kernel tears the
+            // connection down. Every token remains fixed; no form value can
+            // select a command or argument across this privilege boundary.
+            Self::Reboot => &[
+                "sh",
+                "-c",
+                "nohup sh -c 'sleep 1; /sbin/reboot' </dev/null >/dev/null 2>&1 &",
+            ],
         }
     }
 }
@@ -454,6 +463,17 @@ mod tests {
             &["rc-service", "omt-client", "restart"]
         );
         assert!(!ManagementAction::Restart.remote_argv().contains(&"docker"));
+    }
+    #[test]
+    fn reboot_is_a_fixed_deferred_host_action() {
+        assert_eq!(
+            ManagementAction::Reboot.remote_argv(),
+            &[
+                "sh",
+                "-c",
+                "nohup sh -c 'sleep 1; /sbin/reboot' </dev/null >/dev/null 2>&1 &"
+            ]
+        );
     }
     /// One encoder now serves the PSK, the staging token, and the SSID, so its
     /// output has to stay byte-for-byte what each of those callers published

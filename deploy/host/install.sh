@@ -364,6 +364,7 @@ kernel.perf_event_paranoid=3
 kernel.randomize_va_space=2
 kernel.sysrq=0
 kernel.unprivileged_bpf_disabled=1
+net.core.bpf_jit_harden=2
 net.ipv4.conf.all.accept_redirects=0
 net.ipv4.conf.all.accept_source_route=0
 net.ipv4.conf.all.log_martians=1
@@ -434,6 +435,7 @@ PermitRootLogin prohibit-password
 PasswordAuthentication yes
 PubkeyAuthentication yes
 KbdInteractiveAuthentication no
+AllowGroups root wheel
 X11Forwarding no
 AllowAgentForwarding no
 AllowTcpForwarding no
