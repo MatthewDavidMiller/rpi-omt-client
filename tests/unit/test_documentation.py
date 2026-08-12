@@ -130,8 +130,10 @@ def test_deployer_web_password_rotation_is_documented():
     setup = (REPO_ROOT / "docs" / "SETUP.md").read_text(encoding="utf-8")
     operations = (REPO_ROOT / "docs" / "OPERATIONS.md").read_text(encoding="utf-8")
     configuration = (REPO_ROOT / "docs" / "CONFIGURATION.md").read_text(encoding="utf-8")
+    assert "Rotate the Web GUI password after deploy" in setup
     assert "Change Web GUI password" in setup
     assert "web-password" in operations
     assert "12-128" in operations
     assert "SSH stdin" in operations
+    assert "off by default" in configuration
     assert "invalidating existing sessions" in configuration

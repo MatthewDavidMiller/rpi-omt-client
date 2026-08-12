@@ -24,6 +24,7 @@ mod gates {
         pub project_root: &'a str,
         pub wifi_ssid: &'a str,
         pub wifi_password: &'a str,
+        pub rotate_web_password: bool,
         pub web_password: &'a str,
         pub web_password_confirmation: &'a str,
     }
@@ -35,7 +36,9 @@ mod gates {
         }
 
         pub fn can_deploy(&self) -> bool {
-            self.can_connect() && !self.project_root.is_empty()
+            self.can_connect()
+                && !self.project_root.is_empty()
+                && (!self.rotate_web_password || self.web_password_is_ready())
         }
 
         pub fn can_apply_wifi(&self) -> bool {
@@ -51,8 +54,11 @@ mod gates {
         }
 
         pub fn can_change_web_password(&self) -> bool {
-            self.can_connect()
-                && self.web_password == self.web_password_confirmation
+            self.can_connect() && self.web_password_is_ready()
+        }
+
+        fn web_password_is_ready(&self) -> bool {
+            self.web_password == self.web_password_confirmation
                 && Secret::new(self.web_password.to_owned())
                     .is_ok_and(|password| validate_web_password(&password).is_ok())
         }
@@ -70,6 +76,7 @@ mod gates {
                 project_root: "/src/rpi-omt-client",
                 wifi_ssid,
                 wifi_password,
+                rotate_web_password: false,
                 web_password: "correct horse battery staple",
                 web_password_confirmation: "correct horse battery staple",
             }
@@ -142,6 +149,37 @@ mod gates {
                     ..form("", "")
                 }
                 .can_change_web_password()
+            );
+        }
+
+        #[test]
+        fn deploy_leaves_the_web_password_alone_unless_rotation_is_enabled() {
+            let off = form("", "");
+            assert!(!off.rotate_web_password);
+            assert!(off.can_deploy());
+            assert!(
+                Form {
+                    web_password: "",
+                    web_password_confirmation: "",
+                    ..form("", "")
+                }
+                .can_deploy()
+            );
+            assert!(
+                !Form {
+                    rotate_web_password: true,
+                    web_password: "",
+                    web_password_confirmation: "",
+                    ..form("", "")
+                }
+                .can_deploy()
+            );
+            assert!(
+                Form {
+                    rotate_web_password: true,
+                    ..form("", "")
+                }
+                .can_deploy()
             );
         }
     }
@@ -544,6 +582,7 @@ mod desktop {
         KnownHosts,
     }
 
+    #[allow(clippy::struct_excessive_bools)]
     pub struct App {
         view: View,
         host: String,
@@ -554,6 +593,7 @@ mod desktop {
         known_hosts: String,
         wifi_ssid: String,
         wifi_password: Zeroizing<String>,
+        rotate_web_password: bool,
         web_password: Zeroizing<String>,
         web_password_confirmation: Zeroizing<String>,
         wifi_connect: bool,
@@ -601,6 +641,7 @@ mod desktop {
                 known_hosts: String::new(),
                 wifi_ssid: String::new(),
                 wifi_password: Zeroizing::new(String::new()),
+                rotate_web_password: false,
                 web_password: Zeroizing::new(String::new()),
                 web_password_confirmation: Zeroizing::new(String::new()),
                 wifi_connect: true,
@@ -658,6 +699,7 @@ mod desktop {
                 project_root: &self.project_root,
                 wifi_ssid: &self.wifi_ssid,
                 wifi_password: &self.wifi_password,
+                rotate_web_password: self.rotate_web_password,
                 web_password: &self.web_password,
                 web_password_confirmation: &self.web_password_confirmation,
             }
@@ -722,7 +764,8 @@ mod desktop {
             // Setup jobs report into their own view, which is where their
             // result is read; everything else narrates into Activity.
             let reports_here = !job.needs_connection();
-            let changes_web_password = matches!(job, Job::WebPassword);
+            let changes_web_password = matches!(job, Job::WebPassword)
+                || (matches!(job, Job::Deploy) && self.rotate_web_password);
             let request = JobRequest {
                 job,
                 connection,
@@ -730,6 +773,7 @@ mod desktop {
                 wifi_ssid: self.wifi_ssid.clone(),
                 wifi_password: self.wifi_password.clone(),
                 wifi_connect: self.wifi_connect,
+                rotate_web_password: self.rotate_web_password,
                 web_password: self.web_password.clone(),
             };
             if changes_web_password {
@@ -1156,6 +1200,7 @@ mod desktop {
         wifi_ssid: String,
         wifi_password: Zeroizing<String>,
         wifi_connect: bool,
+        rotate_web_password: bool,
         web_password: Zeroizing<String>,
     }
 
@@ -1183,8 +1228,18 @@ mod desktop {
             Job::Test => {
                 test_connection(remote()?, cancel, &mut progress).map_err(|error| error.to_string())
             }
-            Job::Deploy => deploy(remote()?, &request.options, cancel, &mut progress)
-                .map_err(|error| error.to_string()),
+            Job::Deploy => {
+                deploy(remote()?, &request.options, cancel, &mut progress)
+                    .map_err(|error| error.to_string())?;
+                if !request.rotate_web_password {
+                    return Ok(());
+                }
+                let password = Secret::new((*request.web_password).clone())
+                    .map_err(|error| error.to_string())?;
+                validate_web_password(&password).map_err(|error| error.to_string())?;
+                change_web_password(remote()?, &password, cancel, &mut progress)
+                    .map_err(|error| error.to_string())
+            }
             Job::Manage(action) => manage(remote()?, action, cancel, &mut progress)
                 .map(|_| ())
                 .map_err(|error| error.to_string()),
@@ -1338,6 +1393,26 @@ mod desktop {
                                 .italics(),
                             );
                         }
+                        ui.checkbox(
+                            &mut self.rotate_web_password,
+                            "Rotate the Web GUI password after deploy",
+                        )
+                        .on_hover_text(
+                            "Off by default. When enabled, the password entered below replaces \
+                             the appliance credential after install and signs out every Web session.",
+                        );
+                        if self.rotate_web_password {
+                            ui.label(
+                                "Set a 12-128 byte password. Changing it restarts the appliance.",
+                            );
+                            field(ui, "New Web GUI password", |ui| {
+                                text_field(ui, &mut self.web_password, !self.reveal);
+                            });
+                            field(ui, "Confirm password", |ui| {
+                                text_field(ui, &mut self.web_password_confirmation, !self.reveal);
+                            });
+                            ui.checkbox(&mut self.reveal, "Reveal secrets");
+                        }
                         ui.add_space(ui.spacing().item_spacing.y);
                         deploy = ui
                             .add_enabled(
@@ -1407,7 +1482,7 @@ mod desktop {
                     ui.separator();
                     ui.heading("Web GUI password");
                     ui.label(
-                        "Set a 12-128 byte password. Changing it restarts the appliance and signs out every Web session.",
+                        "Optional. Set a 12-128 byte password. Changing it restarts the appliance and signs out every Web session.",
                     );
                     field(ui, "New password", |ui| {
                         text_field(ui, &mut self.web_password, !self.reveal);
@@ -1614,6 +1689,11 @@ mod desktop {
             assert!(!skipped.build_image);
             assert_eq!(skipped.project_root, PathBuf::from("/src/rpi-omt-client"));
             assert_eq!(skipped.tarball_name, TARBALL_NAME);
+        }
+
+        #[test]
+        fn web_password_rotation_is_off_by_default() {
+            assert!(!App::default().rotate_web_password);
         }
     }
 }

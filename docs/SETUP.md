@@ -187,13 +187,17 @@ are the `sudo_password` and
 `--known-hosts <path>`. Connect validates Alpine 3.24
 aarch64 and a supported device-tree model.
 Deploy builds, verifies, uploads, and installs the capsule; its Project root
-has a Browse button and its build step can be cleared. Manage reads
+has a Browse button and its build step can be cleared. Web GUI password
+rotation is off by default; enable **Rotate the Web GUI password after deploy**
+on that view to replace the generated credential as part of the same job.
+Manage reads
 container status/logs or restarts the OpenRC service through sudo for a
 non-root SSH account. Restart uses the service boundary so it can also start a
 freshly installed appliance whose container has not been created yet.
 Manage also offers a confirmed operating-system reboot, so the reboot required
 after installation does not need a separate SSH session or a manually typed
-host command.
+host command. The same view can change the Web GUI password later without
+redeploying.
 Wi-Fi updates the running
 `wpa_supplicant` through its control socket and stores a derived WPA PSK rather
 than sending the plaintext passphrase to a command line.
@@ -337,11 +341,15 @@ The desktop deployment application's **Logs** action and the CLI deployer's
 `logs` command show the same container output, so they can also be used while
 the first-start message is still retained.
 
-After signing in, rotate the generated credential from the desktop deployer's
-**Manage** view. Enter and confirm a 12-128 byte password, then select
-**Change Web GUI password**. The appliance restarts and all existing Web sessions are
-signed out. The password travels over SSH stdin and only its PBKDF2-SHA256 hash
-is persisted.
+Password rotation is optional. On the desktop deployer's **Deploy** view, enable
+**Rotate the Web GUI password after deploy**, enter and confirm a 12-128 byte
+password, then deploy. The same change is available later from **Manage**
+without redeploying: enter and confirm the password and select
+**Change Web GUI password**. Either path restarts the appliance and signs out
+every Web session.
+The password travels over SSH stdin and only its PBKDF2-SHA256 hash is
+persisted. The CLI `deploy` command does not rotate the credential; use
+`web-password` for that explicit operation.
 
 Select a discovered source or save a direct target such as
 `omt://192.168.1.60:6400`.

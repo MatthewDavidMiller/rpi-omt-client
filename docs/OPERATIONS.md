@@ -97,8 +97,10 @@ persistent `web_password` value is a one-way hash, not a recoverable copy.
 
 ### Change the Web GUI password
 
-In the desktop deployer, open **Manage**, enter and confirm a new password, and
-select **Change Web GUI password**. The password must contain 12-128 UTF-8 bytes
+Rotation is optional and off by default. In the desktop deployer, enable
+**Rotate the Web GUI password after deploy** on the **Deploy** view, or open
+**Manage**, enter and confirm a new password, and select **Change Web GUI
+password**. The password must contain 12-128 UTF-8 bytes
 and no control characters. The deployer sends it only over the authenticated
 SSH stdin channel, atomically replaces the PBKDF2-SHA256 hash, and restarts the
 appliance. Every existing Web session is invalid after the restart.

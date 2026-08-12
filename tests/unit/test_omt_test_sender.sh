@@ -22,7 +22,7 @@ for script in "${BUILD_SCRIPT}" "${RUN_SCRIPT}" "${FIREWALL_SCRIPT}"; do
     [[ -x "${script}" ]] && pass "$(basename "${script}") is executable" ||
         fail "$(basename "${script}") is executable"
 done
-require_literal "${SENDER_MANIFEST}" 'omt-protocol = { version = "0.9.48", path = "../omt-protocol" }' \
+require_literal "${SENDER_MANIFEST}" 'omt-protocol = { version = "0.9.49", path = "../omt-protocol" }' \
     "sender uses the repository protocol crate"
 dependency_count="$(awk '
     /^\[dependencies\]$/ { dependencies=1; next }

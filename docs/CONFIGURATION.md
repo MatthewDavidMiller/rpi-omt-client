@@ -64,7 +64,7 @@ startup instead of silently enabling the diagnostics receive probe.
 | File | Contract |
 |---|---|
 | `web_secret` | Mode 0600 HMAC secret. An upgrade migrates and removes the legacy `flask_secret` file. |
-| `web_password` | Mode 0600 PBKDF2-SHA256 password hash. The deployer rotates it atomically from a 12-128 byte password and restarts the service, invalidating existing sessions. Legacy Werkzeug PBKDF2 and scrypt hashes remain accepted. |
+| `web_password` | Mode 0600 PBKDF2-SHA256 password hash. The deployer can rotate it atomically from a 12-128 byte password and restarts the service, invalidating existing sessions. Rotation is off by default; the desktop Deploy view has an explicit enable option. Legacy Werkzeug PBKDF2 and scrypt hashes remain accepted. |
 | `web_sessions.json` | Schema 2 bounded HMAC-digested session registry |
 | `source_target.json` | Schema 1; either `{"kind":"discovered","name":...}` or `{"kind":"direct","uri":"omt://..."}` |
 | `omt/settings.xml` | `<Settings>` with at most one `<DiscoveryServer>` |

@@ -231,11 +231,13 @@ field can select a command or argument.
 
 The external `omt-config-v3` volume contains credentials, sessions,
 `source_target.json`, OMT `settings.xml`, TLS material, and the receiver log.
-The deployer rotates the Web credential through a fixed privileged action. The
+The deployer can rotate the Web credential through a fixed privileged action
+when the operator enables it. The
 new value travels over SSH stdin, is hashed and atomically replaced inside the
 unprivileged container, and the service is restarted. Sessions bind to the
 password-file digest, so sessions created under the old credential become
-invalid.
+invalid. Deploy leaves the existing credential in place unless that option is
+selected.
 Source state is one atomic schema-versioned record, not a pair of files. The
 installer never migrates state from any other installation.
 
