@@ -90,12 +90,14 @@ bounds, and returns to exactly 100%. None of that needs a display attached.
 
 `tests/native/test_deployer_cli.sh` then runs the built CLI: capsule
 validation, the exit-2 usage contract for missing arguments and rejected
-connections, the bounded `--secrets-stdin` channel, and the one-object-per-line
+connections, the bounded `--secrets-stdin` channel, Alpine sys-setup argument
+checks, and the one-object-per-line
 `--json` surface. Nothing in it reaches the network -- every invocation is
 local or refused before a connection is opened. The SSH adapter rejects missing
 default or explicitly selected `known_hosts` files and unknown or changed host
 keys; legacy SHA-1 host-key hashes and CBC ciphers are excluded from
-negotiation. Privileged command construction is tested for password-backed
+negotiation. An empty SSH password is valid for factory Alpine `root` and tries
+`none`, password, and keyboard-interactive auth. Privileged command construction is tested for password-backed
 sudo, passwordless sudo, direct root sessions, and the separate root-secret
 gate used to bootstrap untouched Alpine through `su`.
 That gate also covers stock Alpine's misleading password-capable `doas` probe;
@@ -164,8 +166,12 @@ Before release, validate on a clean Alpine 3.24 aarch64 `sys` installation on
 differ in HDMI count, ALSA card layout, RAM, and decode throughput, so a pass on
 one is not evidence for another:
 
-0. deploy to an image on which nothing has been installed by hand, and confirm
-   `deploy/host/bootstrap.sh` installs bash and sudo before the installer runs.
+0. on a factory diskless image, confirm the Alpine view / `alpine-setup`
+   command runs `deploy/host/setup-sys.sh`, installs persistent sys mode, and
+   that `deploy/host/bootstrap.sh` then installs bash and sudo before the
+   installer runs. A typical factory/headless image has no SFTP subsystem and
+   a 1970 clock; the deployer must still upload the script and HTTPS apk
+   mirrors must verify.
    Confirm the memory cgroup is live after the reboot (`grep -qw memory
    /sys/fs/cgroup/cgroup.controllers` on the shipped cgroup-v2 host, then check
    that the container's `memory.max` is `134217728`): the Pi firmware injects

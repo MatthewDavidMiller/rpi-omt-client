@@ -281,13 +281,17 @@ Windows x86-64. A Linux workstation publishes both: `scripts/check-deployer.sh
 cross-compiles the Windows packages. Both consume the same `Cargo.lock`;
 registry packages are checksum locked and Git dependencies are denied.
 `rpi-omt-deploy` provides human and JSON-lines CLI surfaces, while
-`rpi-omt-deployer` presents responsive egui Setup, Connection, Deploy, Manage,
+`rpi-omt-deployer` presents responsive egui Setup, Connection, Alpine, Deploy, Manage,
 Wi-Fi, Activity, and About views. Both reuse validators and typed management actions
 from `omt-deployer-core`; secrets are zeroized and never accepted through
 arguments or environment variables. That covers every buffer a secret passes
 through, not only the ones it is stored in: the sudo stdin a deployment holds
 for its whole run, the Wi-Fi passphrase handed to the worker thread, and the
 raw `--secrets-stdin` document are all wiped rather than freed intact.
+The Alpine view uploads `deploy/host/setup-sys.sh` over SFTP or a `cat` exec
+fallback (factory headless sshd often has no SFTP), sets hostname, IPv4 DHCP,
+optional or already-associated Wi-Fi, user `pi`, root/`pi` passwords, US HTTPS
+apk mirrors after an NTP clock step, apk OpenSSH, and persistent `sys` mode.
 Fixed management actions cross the same privilege boundary as deployment and
 Wi-Fi: a non-root SSH account uses its bounded sudo-password channel, while a
 root session runs the fixed command directly. Neither account needs membership
@@ -308,7 +312,8 @@ still producing progress; the previous two-minute total ceiling could abort a
 healthy first install on a Pi. `install.sh` stops a live appliance, then runs
 `apk update` and `apk upgrade --available` with a progress meter and a
 twenty-second heartbeat so a kernel or firmware fetch cannot look idle to that
-timeout.
+timeout. Host apk fetches use a pinned allowlist of reputable US HTTPS mirrors
+(kernel.org, UC Berkeley OCF, and Princeton).
 The explicit root credential takes priority over an ambiguous `doas` probe:
 stock Alpine can describe its inert rule set as authorization-capable and then
 refuse the actual non-PTY command.
@@ -370,7 +375,7 @@ the Docker workload remains detached with its own restart policy.
 Host hardening disables unprivileged BPF and applies BPF JIT constant blinding
 for privileged callers as well. IPv4 reverse-path filtering is pinned on, ARP
 replies are limited to the incoming interface, IPv6 router advertisements and
-SLAAC are refused, and apk repositories are rewritten to HTTPS.
+SLAAC are refused, and apk repositories are pinned to US HTTPS mirrors.
 SSH keeps root key access for recovery but
 limits every login to root or the administrative `wheel` group; password root
 login and all forwarding paths remain disabled. Onboard Bluetooth is disabled

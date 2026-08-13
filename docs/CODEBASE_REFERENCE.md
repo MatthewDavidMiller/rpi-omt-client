@@ -90,6 +90,7 @@ are POST and CSRF protected.
 | Area | Files |
 |---|---|
 | Installer/uninstaller | `deploy/host/install.sh`, `deploy/host/uninstall.sh` |
+| Factory Alpine sys-mode setup | `deploy/host/setup-sys.sh` |
 | Host diagnostics | `deploy/host/host-diagnostics.sh` |
 | Reboot validator | `deploy/host/host-reboot.sh`, `deploy/lib/reboot-request.sh` |
 | Shared host helpers | `deploy/lib/host-validation.sh`, `deploy/lib/publication.sh`, `deploy/lib/service-install.sh` |
@@ -97,7 +98,7 @@ are POST and CSRF protected.
 | Supported boards and decode ceilings | `deploy/lib/board-profile.sh` |
 | Deployment contract | `deploy/manifest-v3.txt`, `deploy/transaction.sh` |
 | CLI deployment | `scripts/deploy.sh` |
-| Deployer validation, fixed actions, SSH/SFTP, deploy, and Wi-Fi | `crates/omt-deployer-core/src/lib.rs`, `crates/omt-deployer-core/src/ssh.rs`, `crates/omt-deployer-core/src/ops.rs` |
+| Deployer validation, fixed actions, SSH/SFTP, deploy, Alpine sys setup, and Wi-Fi | `crates/omt-deployer-core/src/lib.rs`, `crates/omt-deployer-core/src/ssh.rs`, `crates/omt-deployer-core/src/ops.rs` |
 | Workstation tooling: executable discovery, prerequisites, winget installs, ARM64 emulation, and the image-build plan | `crates/omt-deployer-core/src/tools.rs` |
 | Secure command-line deployer | `crates/rpi-omt-deploy/src/main.rs` |
 | Deployer CLI contract | `tests/native/test_deployer_cli.sh` |
@@ -117,7 +118,15 @@ the two cannot describe the same workstation differently.
 
 The native deployers default to the user's OpenSSH `known_hosts` file and can
 select an alternate verified file when deployment automation keeps host keys
-separately. Privileged remote operations use the provided, zeroized sudo
+separately. Factory Alpine images accept `root` with an empty SSH password;
+password, `none`, and keyboard-interactive methods are tried in that case.
+The Alpine view (and CLI `alpine-setup`) uploads `deploy/host/setup-sys.sh`
+(SFTP, or a `cat` exec fallback when a headless overlay sshd has no SFTP
+subsystem) and drives hostname, IPv4 DHCP, optional Wi-Fi, user `pi`, root/`pi`
+passwords, US HTTPS apk mirrors, clock sync, apk OpenSSH, and
+`setup-disk -m sys` over that empty-password session. A blank SSID keeps a
+boot-partition Wi-Fi association so a Wi-Fi-only factory image stays reachable.
+Privileged remote operations use the provided, zeroized sudo
 credential for non-root accounts and run directly for root. The SSH command
 adapter continues reading through an EOF notification so that the server's
 subsequent exit status remains authoritative.

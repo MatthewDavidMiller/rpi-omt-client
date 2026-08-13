@@ -38,31 +38,41 @@ case "${ALPINE_RELEASE}" in
         ;;
 esac
 
-# Alpine keeps sudo in community, so the repository has to be live before the
-# package list is resolvable. The series is read from the running system rather
-# than hardcoded, so this keeps working across a supported series bump.
-if ! grep -Eq '^[^#[:space:]]+/community/?$' /etc/apk/repositories; then
-    MAIN_REPOSITORY="$(sed -n 's|^\([^#[:space:]]*\)/main/*$|\1|p' /etc/apk/repositories | head -n 1)"
-    case "${MAIN_REPOSITORY}" in
-        http://*|https://*) ;;
-        *)
-            echo "ERROR: Enable a trusted Alpine ${SUPPORTED_ALPINE_SERIES} main repository first." >&2
-            exit 1
-            ;;
-    esac
-    echo "Enabling the Alpine community repository..."
-    printf '%s/community\n' "${MAIN_REPOSITORY}" >> /etc/apk/repositories
-fi
+# Reputable US HTTPS Alpine mirrors. Keep this list identical in
+# setup-sys.sh and install.sh; tests/unit/test_setup_sys.sh compares them.
+# BEGIN US HTTPS APK MIRRORS
+US_HTTPS_APK_MIRRORS="
+https://mirrors.edge.kernel.org/alpine
+https://mirrors.ocf.berkeley.edu/alpine
+https://mirror.math.princeton.edu/pub/alpinelinux
+"
+# END US HTTPS APK MIRRORS
 
-# Stock Alpine images list HTTP mirrors. The CDN serves HTTPS, and this
-# bootstrap is the first package fetch on a clean host.
-if grep -q '^http://' /etc/apk/repositories; then
-    echo "Rewriting apk repositories to HTTPS..."
-    sed -i -e 's|^http://|https://|' /etc/apk/repositories
+if ! [ -f /etc/ssl/certs/ca-certificates.crt ]; then
+    echo "Installing CA certificates so apk can use HTTPS mirrors..."
+    apk add --no-cache ca-certificates || true
 fi
+APK_MIRROR_TMP="$(mktemp)"
+APK_MIRROR_OK=
+for APK_MIRROR_BASE in ${US_HTTPS_APK_MIRRORS}; do
+    echo "Trying US HTTPS apk mirror ${APK_MIRROR_BASE}..."
+    printf '%s/v%s/main\n' "${APK_MIRROR_BASE}" "${SUPPORTED_ALPINE_SERIES}" > "${APK_MIRROR_TMP}"
+    printf '%s/v%s/community\n' "${APK_MIRROR_BASE}" "${SUPPORTED_ALPINE_SERIES}" >> "${APK_MIRROR_TMP}"
+    cp "${APK_MIRROR_TMP}" /etc/apk/repositories
+    if apk update; then
+        echo "Pinned apk repositories to ${APK_MIRROR_BASE} (HTTPS)."
+        APK_MIRROR_OK=yes
+        break
+    fi
+    echo "Mirror ${APK_MIRROR_BASE} did not serve an index; trying the next US HTTPS mirror."
+done
+rm -f -- "${APK_MIRROR_TMP}"
+[ "${APK_MIRROR_OK}" = yes ] || {
+    echo "ERROR: no reputable US HTTPS apk mirror responded." >&2
+    exit 1
+}
 
 echo "Installing the bootstrap prerequisites (bash, sudo)..."
-apk update
 apk add --no-cache bash sudo
 
 # The installer and the deploy transaction are bash scripts; refuse to hand

@@ -2,10 +2,11 @@
 
 use crate::ssh::{RemoteResult, SshSession};
 use crate::{
-    Connection, DeployOptions, ManagementAction, ON_WINDOWS, Secret, WifiSettings, derive_wpa_psk,
-    ensure_arm64_emulation, hex_encode, image_build_plan, load_manifest, random_token, run_process,
-    secure_relative, sha256_file, shell_quote, validate_connection, validate_options,
-    validate_web_password, validate_wifi,
+    AlpineSetupSettings, Connection, DeployOptions, ManagementAction, ON_WINDOWS, Secret,
+    WifiSettings, derive_wpa_psk, ensure_arm64_emulation, hex_encode, image_build_plan,
+    load_manifest, random_token, run_process, secure_relative, sha256_file, shell_quote,
+    validate_alpine_setup, validate_connection, validate_options, validate_web_password,
+    validate_wifi,
 };
 use std::fs;
 use std::io;
@@ -18,6 +19,8 @@ use zeroize::Zeroizing;
 
 const PLATFORM_PROBE: &str = "uname -m && . /etc/os-release && printf '%s\\n' \"$ID\" && cat /etc/alpine-release && tr -d '\\000' < /proc/device-tree/model && printf '\\n'";
 const BOOTSTRAP_PASSWORD_READY: &str = "omt-bootstrap-password-ready";
+const SETUP_SYS_MEMBER: &str = "deploy/host/setup-sys.sh";
+const SETUP_SYS_COMPLETE: &str = "=== Alpine sys install complete ===";
 const WEB_PASSWORD_COMMAND: &str = "sh -eu -c 'docker exec -i omt-client /usr/local/bin/omt-web set-password && rc-service omt-client restart'";
 
 const WIFI_SCRIPT: &str = concat!(
@@ -294,24 +297,27 @@ fn first_web_password(logs: &str) -> Option<&str> {
 }
 
 fn wait_for_reboot(
-    connection: &Connection,
+    connections: &[&Connection],
+    timeout: Duration,
     cancellation: &AtomicBool,
     progress: &mut dyn FnMut(&str),
 ) -> io::Result<SshSession> {
     progress("Waiting for the Raspberry Pi to reboot...");
-    let deadline = Instant::now() + Duration::from_mins(6);
+    let deadline = Instant::now() + timeout;
     let mut saw_down = false;
     while Instant::now() < deadline {
         cancelled(cancellation)?;
-        match connect(connection) {
-            Ok(session) if saw_down => return Ok(session),
-            Ok(_) => {}
-            Err(_) => saw_down = true,
+        for connection in connections {
+            match connect(connection) {
+                Ok(session) if saw_down => return Ok(session),
+                Ok(_) => {}
+                Err(_) => saw_down = true,
+            }
         }
         thread::sleep(Duration::from_secs(2));
     }
     Err(io::Error::other(
-        "the Raspberry Pi did not come back after reboot within six minutes",
+        "the Raspberry Pi did not come back after reboot within the wait",
     ))
 }
 
@@ -553,6 +559,145 @@ pub fn test_connection(
         Some(board) => progress(&format!("SSH connection succeeded. Detected {board}.")),
         None => progress("SSH connection succeeded."),
     }
+    Ok(())
+}
+
+fn password_connection(
+    base: &Connection,
+    username: &str,
+    password: &Secret,
+    sudo_password: Option<&Secret>,
+) -> io::Result<Connection> {
+    Ok(Connection {
+        host: base.host.clone(),
+        username: username.to_owned(),
+        port: base.port,
+        auth: crate::AuthMethod::Password,
+        password: Some(Secret::new(password.expose().to_owned()).map_err(map_validation)?),
+        key_path: None,
+        key_passphrase: None,
+        known_hosts_path: base.known_hosts_path.clone(),
+        sudo_password: match sudo_password {
+            Some(value) => Some(Secret::new(value.expose().to_owned()).map_err(map_validation)?),
+            None => None,
+        },
+        bootstrap_root_password: None,
+    })
+}
+
+/// Configure a factory Alpine image: hostname, IPv4 DHCP, optional Wi-Fi, user
+/// `pi`, root/pi passwords, US HTTPS apk mirrors, and persistent sys mode.
+pub fn alpine_setup(
+    connection: &Connection,
+    settings: &AlpineSetupSettings,
+    project_root: &Path,
+    cancellation: &Arc<AtomicBool>,
+    progress: &mut dyn FnMut(&str),
+) -> io::Result<()> {
+    validate_connection(connection).map_err(map_validation)?;
+    validate_alpine_setup(settings).map_err(map_validation)?;
+    cancelled(cancellation)?;
+
+    progress("Connecting and checking the Raspberry Pi...");
+    let mut session = connect(connection)?;
+    let probe = session.run(PLATFORM_PROBE, "", cancellation)?;
+    require_success(&probe, "Remote platform probe")?;
+    require_supported_appliance(&probe.stdout)?;
+    if let Some(board) = probed_board(&probe.stdout) {
+        progress(&format!("Installing Alpine sys mode on {board}."));
+    }
+
+    let local = secure_relative(project_root, SETUP_SYS_MEMBER)?;
+    let remote = format!("/tmp/omt-setup-sys-{}.sh", random_token(8)?);
+    let remote_q = shell_quote(&remote);
+    progress("Uploading the Alpine sys-setup script...");
+    session.upload(&local, &remote, cancellation)?;
+
+    let ssid_hex = settings
+        .wifi
+        .as_ref()
+        .map(|wifi| hex_encode(wifi.ssid.as_bytes()))
+        .unwrap_or_default();
+    let derived_psk;
+    let psk = if let Some(wifi) = settings.wifi.as_ref() {
+        let password = wifi.password.expose();
+        if password.len() == 64 && password.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            Zeroizing::new(password.to_ascii_lowercase())
+        } else {
+            derived_psk = derive_wpa_psk(&wifi.ssid, &wifi.password).map_err(map_validation)?;
+            Zeroizing::new(derived_psk.expose().to_owned())
+        }
+    } else {
+        Zeroizing::new(String::new())
+    };
+
+    let mut stdin = Zeroizing::new(String::new());
+    stdin.push_str(&settings.hostname);
+    stdin.push('\n');
+    stdin.push_str(settings.root_password.expose());
+    stdin.push('\n');
+    stdin.push_str(settings.pi_password.expose());
+    stdin.push('\n');
+    stdin.push_str(&ssid_hex);
+    stdin.push('\n');
+    stdin.push_str(&psk);
+    stdin.push('\n');
+
+    progress("Running hostname, DHCP, user, and sys-mode install...");
+    let command = format!("/bin/sh {remote_q}; rc=$?; rm -f -- {remote_q}; exit $rc");
+    let result = session.run(&command, &stdin, cancellation)?;
+    let wifi_secret = settings
+        .wifi
+        .as_ref()
+        .map(|wifi| wifi.password.expose())
+        .unwrap_or_default();
+    let secrets = [
+        settings.root_password.expose(),
+        settings.pi_password.expose(),
+        wifi_secret,
+        psk.as_str(),
+    ];
+    if !result.is_success() {
+        let detail = redact(&result.combined(), &secrets);
+        return Err(io::Error::other(format!(
+            "Alpine sys install failed{}",
+            if detail.trim().is_empty() {
+                String::new()
+            } else {
+                format!(":\n{detail}")
+            }
+        )));
+    }
+    if !result.combined().contains(SETUP_SYS_COMPLETE) {
+        return Err(io::Error::other(
+            "Alpine sys install finished without the completion marker",
+        ));
+    }
+    progress("Alpine sys install finished. Rebooting into the persistent root...");
+    let reboot = privileged_argv_command(connection, ManagementAction::Reboot.remote_argv());
+    require_success(
+        &session.run(&reboot, &sudo_input(connection), cancellation)?,
+        "Post-sys-install reboot",
+    )?;
+    drop(session);
+
+    let pi = password_connection(
+        connection,
+        "pi",
+        &settings.pi_password,
+        Some(&settings.pi_password),
+    )?;
+    let root = password_connection(connection, "root", &settings.root_password, None)?;
+    wait_for_reboot(
+        &[&pi, &root],
+        Duration::from_mins(8),
+        cancellation,
+        progress,
+    )?;
+    progress(
+        "Persistent sys mode is running. Connect as pi with the password you set, then Deploy. \
+         The pi account is in wheel; the first deploy installs sudo.",
+    );
     Ok(())
 }
 
@@ -890,6 +1035,7 @@ pub fn deploy(
 
     let executable_paths = [
         "deploy/host/bootstrap.sh",
+        "deploy/host/setup-sys.sh",
         "deploy/host/install.sh",
         "deploy/host/uninstall.sh",
         "deploy/host/host-diagnostics.sh",
@@ -945,7 +1091,12 @@ pub fn deploy(
         "Post-install reboot",
     )?;
     drop(session);
-    let mut session = wait_for_reboot(connection, cancellation, progress)?;
+    let mut session = wait_for_reboot(
+        &[connection],
+        Duration::from_mins(6),
+        cancellation,
+        progress,
+    )?;
     match wait_for_appliance(connection, &mut session, cancellation, progress) {
         Ok(()) => {
             if let Some(password) =
@@ -1265,5 +1416,11 @@ omt-web listening on https://0.0.0.0:5000
                     .join(" ")
             )
         );
+    }
+
+    #[test]
+    fn alpine_sys_setup_uses_the_fixed_script_and_marker() {
+        assert_eq!(SETUP_SYS_MEMBER, "deploy/host/setup-sys.sh");
+        assert!(SETUP_SYS_COMPLETE.contains("Alpine sys install complete"));
     }
 }

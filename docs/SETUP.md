@@ -23,20 +23,32 @@ aarch64 `config.txt` ships sections for the Pi 3, 4, and 5 but none for the
 Zero 2 W, so add a `[pi02]` (or `[all]`) section mirroring the Pi 3 kernel and
 initramfs entries before first boot.
 
-Flash the official Alpine Raspberry Pi aarch64 image, complete `setup-alpine`,
-and install to disk in `sys` mode. Create a non-root administrator in the
-`wheel` group and keep OpenSSH reachable. Ethernet is strongly recommended for
-the first install. The installer applies its own package update as well.
+Flash the official Alpine Raspberry Pi aarch64 image. The native deployer
+handles `setup-alpine` and the persistent `sys` install: connect as `root`
+with an empty SSH password (the factory image), fill hostname, optional
+Wi-Fi, and the root/`pi` passwords on the Alpine view, then install. IPv4
+uses DHCP on Ethernet and on Wi-Fi when an SSID is set or the image already
+has a `wpa_supplicant.conf` (typical of a headless first boot). Leave the
+SSID blank to keep that association. After reboot, connect as `pi` and
+Deploy. Ethernet is strongly recommended when the board is not already on
+Wi-Fi. The installer applies its own package update as well.
+
+A factory image has **no `bash` and no `sudo`**. After Alpine setup the
+native deployer still bootstraps those on first Deploy. Raspberry Pi OS
+Imager headless presets do not apply to the Alpine image.
 
 ### Headless first boot
 
 The Raspberry Pi Imager's headless presets do not apply to the Alpine image:
 they write Raspberry Pi OS `userconf`/`firstrun` files that Alpine never reads,
 so an Alpine card flashed that way still boots to a login prompt on the console
-with no network. To provision without a keyboard and monitor, use
+with no network. The deployer talks to a Pi that already has SSH: either plug
+in Ethernet (factory Alpine answers as `root` with no password) or, to bring
+Wi-Fi up before the deployer can reach the board, use
 [macmpi/alpine-linux-headless-bootstrap](https://github.com/macmpi/alpine-linux-headless-bootstrap):
 drop its `headless.apkovl.tar.gz` onto the boot partition alongside a
-`wpa_supplicant.conf` for Wi-Fi, boot once, then SSH in and run `setup-alpine`.
+`wpa_supplicant.conf` for Wi-Fi, boot once, then run Alpine setup from the
+deployer instead of `setup-alpine` on the console.
 
 Create `wpa_supplicant.conf` as a Linux-text file (LF line endings) in the root
 of the boot partition. Replace the two-letter regulatory country, SSID, and
@@ -184,9 +196,14 @@ accepts separate optional sudo and initial-root passwords and an optional
 alternate `known_hosts` path, each with a Browse button; the CLI equivalents
 are the `sudo_password` and
 `bootstrap_root_password` fields in `--secrets-stdin` and
-`--known-hosts <path>`. Connect validates Alpine 3.24
+`--known-hosts <path>`. Factory Alpine images accept `root` with an empty SSH
+password; leave that field blank until Alpine setup has set one. Connect validates Alpine 3.24
 aarch64 and a supported device-tree model.
-Deploy builds, verifies, uploads, and installs the capsule; its Project root
+The Alpine view runs `setup-alpine` equivalent configuration and a persistent
+`sys` install: hostname, optional Wi-Fi (a blank SSID keeps an existing
+boot-partition association), DHCP for IPv4, user `pi` in `wheel`,
+root and `pi` passwords, and US HTTPS apk mirrors. It erases the boot disk and
+reboots. Deploy builds, verifies, uploads, and installs the capsule; its Project root
 has a Browse button and its build step can be cleared. Web GUI password
 rotation is off by default; enable **Rotate the Web GUI password after deploy**
 on that view to replace the generated credential as part of the same job.
@@ -252,6 +269,14 @@ make build-arm64
 make deploy HOST=admin@192.168.1.50
 ```
 
+On a factory Alpine image, install persistent sys mode first (empty SSH
+password, then the root and `pi` passwords on stdin):
+
+```bash
+rpi-omt-deploy --project . --host 10.1.20.210 --username root --secrets-stdin \
+    alpine-setup --hostname omt-client --ssid studio
+```
+
 `deploy/manifest-v3.txt` is the authoritative capsule. It includes the image,
 Compose definition, host scripts, OpenRC definitions, shared validation rules,
 transaction helper, and legal files. The deployment clients hash every local
@@ -263,6 +288,7 @@ Its nested-path boundary is:
 ```text
 deploy/compose.yml
 deploy/host/bootstrap.sh
+deploy/host/setup-sys.sh
 deploy/host/install.sh
 deploy/host/uninstall.sh
 deploy/host/host-diagnostics.sh
@@ -297,7 +323,7 @@ connector mode; both are retained in `/etc/omt-client/installer.conf` and
 
 The installer then:
 
-1. runs `apk update` and `apk upgrade --available` so the host is on the
+1. pins apk repositories to reputable US HTTPS mirrors, runs `apk update` and `apk upgrade --available` so the host is on the
    latest Alpine 3.24 packages, then installs `linux-rpi`, Raspberry Pi boot
    firmware, Broadcom firmware, ALSA/DRM tools, Docker/Compose, Avahi/D-Bus,
    nftables, inotify, `wpa_supplicant`, and zram support;
@@ -307,7 +333,7 @@ The installer then:
    memory, and tmpfs mounts. SSH logins are limited to `root` (keys only) and
    members of the administrative `wheel` group. IPv4 reverse-path filtering is
    pinned, IPv6 router advertisements and SLAAC are refused, apk repositories are
-   rewritten to HTTPS, onboard Bluetooth is disabled, the CPU governor is
+   pinned to US HTTPS mirrors, onboard Bluetooth is disabled, the CPU governor is
    pinned to `performance`, Wi-Fi power save is pinned off, and time
    synchronization is enabled;
 3. installs a default-deny nftables input policy allowing established traffic,

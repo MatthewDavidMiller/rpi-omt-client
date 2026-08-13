@@ -13,7 +13,8 @@
 #[cfg_attr(not(feature = "desktop"), allow(dead_code))]
 mod gates {
     use omt_deployer_core::{
-        Secret, WifiSettings, valid_host, valid_username, validate_web_password, validate_wifi,
+        Secret, WifiSettings, valid_appliance_hostname, valid_host, valid_username,
+        validate_os_password, validate_web_password, validate_wifi,
     };
 
     /// The connection and deployment fields as the operator has typed them.
@@ -22,6 +23,11 @@ mod gates {
         pub user: &'a str,
         pub password: &'a str,
         pub project_root: &'a str,
+        pub hostname: &'a str,
+        pub os_root_password: &'a str,
+        pub os_root_password_confirmation: &'a str,
+        pub os_pi_password: &'a str,
+        pub os_pi_password_confirmation: &'a str,
         pub wifi_ssid: &'a str,
         pub wifi_password: &'a str,
         pub rotate_web_password: bool,
@@ -31,14 +37,26 @@ mod gates {
 
     impl Form<'_> {
         /// Everything `omt_deployer_core::connect` will insist on.
+        ///
+        /// An empty SSH password is valid: a factory Alpine image answers as
+        /// root with no password until Alpine setup has run.
         pub fn can_connect(&self) -> bool {
-            valid_host(self.host) && valid_username(self.user) && !self.password.is_empty()
+            valid_host(self.host)
+                && valid_username(self.user)
+                && Secret::new(self.password.to_owned()).is_ok()
         }
 
         pub fn can_deploy(&self) -> bool {
             self.can_connect()
                 && !self.project_root.is_empty()
                 && (!self.rotate_web_password || self.web_password_is_ready())
+        }
+
+        pub fn can_install_alpine(&self) -> bool {
+            self.can_connect()
+                && valid_appliance_hostname(self.hostname)
+                && self.os_passwords_are_ready()
+                && self.alpine_wifi_is_ready()
         }
 
         pub fn can_apply_wifi(&self) -> bool {
@@ -62,6 +80,29 @@ mod gates {
                 && Secret::new(self.web_password.to_owned())
                     .is_ok_and(|password| validate_web_password(&password).is_ok())
         }
+
+        fn os_passwords_are_ready(&self) -> bool {
+            self.os_root_password == self.os_root_password_confirmation
+                && self.os_pi_password == self.os_pi_password_confirmation
+                && Secret::new(self.os_root_password.to_owned())
+                    .is_ok_and(|password| validate_os_password(&password).is_ok())
+                && Secret::new(self.os_pi_password.to_owned())
+                    .is_ok_and(|password| validate_os_password(&password).is_ok())
+        }
+
+        fn alpine_wifi_is_ready(&self) -> bool {
+            if self.wifi_ssid.is_empty() && self.wifi_password.is_empty() {
+                return true;
+            }
+            Secret::new(self.wifi_password.to_owned()).is_ok_and(|password| {
+                validate_wifi(&WifiSettings {
+                    ssid: self.wifi_ssid.to_owned(),
+                    password,
+                    connect: false,
+                })
+                .is_ok()
+            })
+        }
     }
 
     #[cfg(test)]
@@ -74,6 +115,11 @@ mod gates {
                 user: "root",
                 password: "secret",
                 project_root: "/src/rpi-omt-client",
+                hostname: "omt-client",
+                os_root_password: "rootpass1",
+                os_root_password_confirmation: "rootpass1",
+                os_pi_password: "pipassword",
+                os_pi_password_confirmation: "pipassword",
                 wifi_ssid,
                 wifi_password,
                 rotate_web_password: false,
@@ -87,6 +133,7 @@ mod gates {
             let complete = form("", "");
             assert!(complete.can_connect());
             assert!(complete.can_deploy());
+            assert!(complete.can_install_alpine());
             assert!(complete.can_change_web_password());
             for incomplete in [
                 Form {
@@ -97,16 +144,20 @@ mod gates {
                     user: "ro ot",
                     ..form("", "")
                 },
-                Form {
-                    password: "",
-                    ..form("", "")
-                },
             ] {
                 assert!(!incomplete.can_connect());
                 assert!(!incomplete.can_deploy());
+                assert!(!incomplete.can_install_alpine());
                 assert!(!incomplete.can_apply_wifi());
                 assert!(!incomplete.can_change_web_password());
             }
+            assert!(
+                Form {
+                    password: "",
+                    ..form("", "")
+                }
+                .can_connect()
+            );
             assert!(
                 !Form {
                     project_root: "",
@@ -114,6 +165,35 @@ mod gates {
                 }
                 .can_deploy()
             );
+        }
+
+        #[test]
+        fn alpine_setup_requires_hostname_and_host_passwords() {
+            assert!(form("", "").can_install_alpine());
+            assert!(
+                !Form {
+                    hostname: "-bad",
+                    ..form("", "")
+                }
+                .can_install_alpine()
+            );
+            assert!(
+                !Form {
+                    os_root_password: "short",
+                    os_root_password_confirmation: "short",
+                    ..form("", "")
+                }
+                .can_install_alpine()
+            );
+            assert!(
+                !Form {
+                    os_pi_password_confirmation: "mismatch1",
+                    ..form("", "")
+                }
+                .can_install_alpine()
+            );
+            assert!(form("studio", "passphrase").can_install_alpine());
+            assert!(!form("studio", "short").can_install_alpine());
         }
 
         /// The button and the core have to agree, or the operator gets an
@@ -505,10 +585,10 @@ mod desktop {
     use crate::layout;
     use eframe::egui;
     use omt_deployer_core::{
-        AuthMethod, Connection, DeployOptions, ManagementAction, ON_WINDOWS, Prerequisite, Secret,
-        WifiSettings, apply_wifi, change_web_password, deploy, discover_project_root,
-        ensure_arm64_emulation, install_packages, manage, missing_packages, prerequisites,
-        test_connection, validate_web_password, validate_wifi,
+        AlpineSetupSettings, AuthMethod, Connection, DeployOptions, ManagementAction, ON_WINDOWS,
+        Prerequisite, Secret, WifiSettings, alpine_setup, apply_wifi, change_web_password, deploy,
+        discover_project_root, ensure_arm64_emulation, install_packages, manage, missing_packages,
+        prerequisites, test_connection, validate_web_password, validate_wifi,
     };
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
@@ -533,6 +613,7 @@ mod desktop {
     enum View {
         Setup,
         Connection,
+        Alpine,
         Deploy,
         Manage,
         Wifi,
@@ -549,6 +630,7 @@ mod desktop {
 
     enum Job {
         Test,
+        Alpine,
         Deploy,
         Manage(ManagementAction),
         WebPassword,
@@ -591,6 +673,11 @@ mod desktop {
         sudo_password: Zeroizing<String>,
         bootstrap_root_password: Zeroizing<String>,
         known_hosts: String,
+        hostname: String,
+        os_root_password: Zeroizing<String>,
+        os_root_password_confirmation: Zeroizing<String>,
+        os_pi_password: Zeroizing<String>,
+        os_pi_password_confirmation: Zeroizing<String>,
         wifi_ssid: String,
         wifi_password: Zeroizing<String>,
         rotate_web_password: bool,
@@ -608,6 +695,8 @@ mod desktop {
         picker: Option<(Picking, Receiver<Option<PathBuf>>)>,
         fit: Fit,
         pending_confirmation: Option<ManagementAction>,
+        pending_alpine_confirm: bool,
+        apply_alpine_login: bool,
     }
 
     /// Whether the opening window has been fitted to the display it landed on.
@@ -639,6 +728,11 @@ mod desktop {
                 sudo_password: Zeroizing::new(String::new()),
                 bootstrap_root_password: Zeroizing::new(String::new()),
                 known_hosts: String::new(),
+                hostname: "omt-client".into(),
+                os_root_password: Zeroizing::new(String::new()),
+                os_root_password_confirmation: Zeroizing::new(String::new()),
+                os_pi_password: Zeroizing::new(String::new()),
+                os_pi_password_confirmation: Zeroizing::new(String::new()),
                 wifi_ssid: String::new(),
                 wifi_password: Zeroizing::new(String::new()),
                 rotate_web_password: false,
@@ -656,6 +750,8 @@ mod desktop {
                 picker: None,
                 fit: Fit::Pending,
                 pending_confirmation: None,
+                pending_alpine_confirm: false,
+                apply_alpine_login: false,
             }
         }
     }
@@ -697,6 +793,11 @@ mod desktop {
                 user: &self.user,
                 password: &self.password,
                 project_root: &self.project_root,
+                hostname: &self.hostname,
+                os_root_password: &self.os_root_password,
+                os_root_password_confirmation: &self.os_root_password_confirmation,
+                os_pi_password: &self.os_pi_password,
+                os_pi_password_confirmation: &self.os_pi_password_confirmation,
                 wifi_ssid: &self.wifi_ssid,
                 wifi_password: &self.wifi_password,
                 rotate_web_password: self.rotate_web_password,
@@ -766,6 +867,7 @@ mod desktop {
             let reports_here = !job.needs_connection();
             let changes_web_password = matches!(job, Job::WebPassword)
                 || (matches!(job, Job::Deploy) && self.rotate_web_password);
+            self.apply_alpine_login = matches!(job, Job::Alpine);
             let request = JobRequest {
                 job,
                 connection,
@@ -773,6 +875,9 @@ mod desktop {
                 wifi_ssid: self.wifi_ssid.clone(),
                 wifi_password: self.wifi_password.clone(),
                 wifi_connect: self.wifi_connect,
+                hostname: self.hostname.clone(),
+                os_root_password: self.os_root_password.clone(),
+                os_pi_password: self.os_pi_password.clone(),
                 rotate_web_password: self.rotate_web_password,
                 web_password: self.web_password.clone(),
             };
@@ -789,6 +894,7 @@ mod desktop {
             }
             self.activity.push(match request.job {
                 Job::Test => "Testing connection...".into(),
+                Job::Alpine => "Starting Alpine sys-mode install...".into(),
                 Job::Deploy => "Starting deployment...".into(),
                 Job::Manage(ManagementAction::Status) => "Fetching status...".into(),
                 Job::Manage(ManagementAction::Logs) => "Fetching logs...".into(),
@@ -900,9 +1006,22 @@ mod desktop {
             }
             if let Some(result) = finished {
                 match result {
-                    Ok(()) => self.activity.push("Operation completed.".into()),
+                    Ok(()) => {
+                        self.activity.push("Operation completed.".into());
+                        if self.apply_alpine_login {
+                            self.user = "pi".into();
+                            self.password = self.os_pi_password.clone();
+                            self.sudo_password = self.os_pi_password.clone();
+                            self.bootstrap_root_password = self.os_root_password.clone();
+                            self.activity.push(
+                                "Connection updated to user pi. Deploy next; sudo is installed on first deploy."
+                                    .into(),
+                            );
+                        }
+                    }
                     Err(error) => self.activity.push(format!("ERROR: {error}")),
                 }
+                self.apply_alpine_login = false;
                 self.events = None;
                 self.cancel.store(false, Ordering::Relaxed);
             } else if self.running() {
@@ -1200,6 +1319,9 @@ mod desktop {
         wifi_ssid: String,
         wifi_password: Zeroizing<String>,
         wifi_connect: bool,
+        hostname: String,
+        os_root_password: Zeroizing<String>,
+        os_pi_password: Zeroizing<String>,
         rotate_web_password: bool,
         web_password: Zeroizing<String>,
     }
@@ -1227,6 +1349,34 @@ mod desktop {
         match request.job {
             Job::Test => {
                 test_connection(remote()?, cancel, &mut progress).map_err(|error| error.to_string())
+            }
+            Job::Alpine => {
+                let wifi = if request.wifi_ssid.is_empty() {
+                    None
+                } else {
+                    Some(WifiSettings {
+                        ssid: request.wifi_ssid.clone(),
+                        password: Secret::new((*request.wifi_password).clone())
+                            .map_err(|error| error.to_string())?,
+                        connect: false,
+                    })
+                };
+                let settings = AlpineSetupSettings {
+                    hostname: request.hostname,
+                    wifi,
+                    root_password: Secret::new((*request.os_root_password).clone())
+                        .map_err(|error| error.to_string())?,
+                    pi_password: Secret::new((*request.os_pi_password).clone())
+                        .map_err(|error| error.to_string())?,
+                };
+                alpine_setup(
+                    remote()?,
+                    &settings,
+                    &request.options.project_root,
+                    cancel,
+                    &mut progress,
+                )
+                .map_err(|error| error.to_string())
             }
             Job::Deploy => {
                 deploy(remote()?, &request.options, cancel, &mut progress)
@@ -1302,6 +1452,7 @@ mod desktop {
                     for (name, view) in [
                         ("Setup", View::Setup),
                         ("Connection", View::Connection),
+                        ("Alpine", View::Alpine),
                         ("Deploy", View::Deploy),
                         ("Manage", View::Manage),
                         ("Wi-Fi", View::Wifi),
@@ -1335,6 +1486,12 @@ mod desktop {
                         field(ui, "SSH password", |ui| {
                             text_field(ui, &mut self.password, !self.reveal);
                         });
+                        ui.label(
+                            egui::RichText::new(
+                                "Leave empty for a factory Alpine image (root, no password).",
+                            )
+                            .italics(),
+                        );
                         field(ui, "sudo password (optional)", |ui| {
                             text_field(ui, &mut self.sudo_password, !self.reveal);
                         });
@@ -1359,6 +1516,80 @@ mod desktop {
                     }
                     if test {
                         self.start_job(Job::Test);
+                    }
+                }
+                View::Alpine => {
+                    let mut start = false;
+                    column(ui, |ui| {
+                        ui.heading("Alpine");
+                        ui.label(
+                            "Install Alpine in persistent sys mode on a factory Raspberry Pi image. \
+                             This erases the SD/eMMC/USB disk. IPv4 uses DHCP on Ethernet, and on \
+                             Wi-Fi when an SSID is set or the image already has Wi-Fi. The pi user \
+                             is created in the wheel group.",
+                        );
+                        ui.add_space(ui.spacing().item_spacing.y);
+                        field(ui, "Hostname", |ui| {
+                            text_field(ui, &mut self.hostname, false);
+                        });
+                        field(ui, "Wi-Fi SSID (optional; blank keeps image Wi-Fi)", |ui| {
+                            text_field(ui, &mut self.wifi_ssid, false);
+                        });
+                        field(ui, "Wi-Fi password", |ui| {
+                            text_field(ui, &mut self.wifi_password, !self.reveal);
+                        });
+                        field(ui, "Root password", |ui| {
+                            text_field(ui, &mut self.os_root_password, !self.reveal);
+                        });
+                        field(ui, "Confirm root password", |ui| {
+                            text_field(ui, &mut self.os_root_password_confirmation, !self.reveal);
+                        });
+                        field(ui, "pi password", |ui| {
+                            text_field(ui, &mut self.os_pi_password, !self.reveal);
+                        });
+                        field(ui, "Confirm pi password", |ui| {
+                            text_field(ui, &mut self.os_pi_password_confirmation, !self.reveal);
+                        });
+                        ui.checkbox(&mut self.reveal, "Reveal secrets");
+                        ui.add_space(ui.spacing().item_spacing.y);
+                        if self.pending_alpine_confirm {
+                            ui.label(
+                                egui::RichText::new(
+                                    "Erase the boot disk and install Alpine in persistent sys mode? \
+                                     The Pi will reboot when it finishes.",
+                                )
+                                .strong(),
+                            );
+                            ui.horizontal_wrapped(|ui| {
+                                if ui
+                                    .add_enabled(
+                                        self.form().can_install_alpine() && !self.running(),
+                                        egui::Button::new("Confirm Alpine install"),
+                                    )
+                                    .clicked()
+                                {
+                                    self.pending_alpine_confirm = false;
+                                    start = true;
+                                }
+                                if ui
+                                    .add_enabled(!self.running(), egui::Button::new("Cancel"))
+                                    .clicked()
+                                {
+                                    self.pending_alpine_confirm = false;
+                                }
+                            });
+                        } else if ui
+                            .add_enabled(
+                                self.form().can_install_alpine() && !self.running(),
+                                egui::Button::new("Install Alpine (sys mode)"),
+                            )
+                            .clicked()
+                        {
+                            self.pending_alpine_confirm = true;
+                        }
+                    });
+                    if start {
+                        self.start_job(Job::Alpine);
                     }
                 }
                 View::Deploy => {
@@ -1632,6 +1863,7 @@ mod desktop {
             }
             for remote in [
                 Job::Test,
+                Job::Alpine,
                 Job::Deploy,
                 Job::Wifi,
                 Job::WebPassword,
@@ -1689,6 +1921,12 @@ mod desktop {
             assert!(!skipped.build_image);
             assert_eq!(skipped.project_root, PathBuf::from("/src/rpi-omt-client"));
             assert_eq!(skipped.tarball_name, TARBALL_NAME);
+        }
+
+        #[test]
+        fn alpine_defaults_to_omt_client_hostname() {
+            assert_eq!(App::default().hostname, "omt-client");
+            assert!(!App::default().pending_alpine_confirm);
         }
 
         #[test]

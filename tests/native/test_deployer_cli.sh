@@ -127,6 +127,21 @@ expect_status_stdin 2 "web-password rejects a short password" \
     '{"password":"pw","web_password":"too-short"}' \
     "${deployer}" --host pi.local --username root --secrets-stdin web-password
 
+# Alpine sys setup is local-validated before any SSH session is opened.
+expect_status 2 "alpine-setup without a project" \
+    "${deployer}" --host pi.local --username root alpine-setup --hostname omt-client
+expect_status_stdin 2 "alpine-setup without host passwords" '{"password":""}' \
+    "${deployer}" --host pi.local --username root --project "${project}" \
+    --secrets-stdin alpine-setup --hostname omt-client
+expect_status_stdin 2 "alpine-setup rejects a short root password" \
+    '{"password":"","root_password":"short","pi_password":"longenough"}' \
+    "${deployer}" --host pi.local --username root --project "${project}" \
+    --secrets-stdin alpine-setup --hostname omt-client
+expect_status_stdin 2 "alpine-setup rejects an invalid hostname" \
+    '{"password":"","root_password":"rootpass1","pi_password":"pipassword"}' \
+    "${deployer}" --host pi.local --username root --project "${project}" \
+    --secrets-stdin alpine-setup --hostname '-bad'
+
 # The JSON surface is one object per line, which is what a wrapper parses.
 json="$(${deployer} --project "${project}" --json check)"
 case "${json}" in

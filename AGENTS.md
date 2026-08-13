@@ -107,6 +107,7 @@ narrowing what runs.
 - `deploy/container/entrypoint.sh`: container bootstrap, secret/cert generation, Rust Web startup
 - `deploy/container/start-omt.sh`: validated native OMT receiver launcher
 - `deploy/host/install.sh`: Alpine/Pi preflight, hardening, firmware, Docker, HDMI, and OpenRC integration
+- `deploy/host/setup-sys.sh`: factory-image `setup-alpine` equivalent and persistent sys install
 - `deploy/openrc/`: fixed OpenRC service definitions
 - `deploy/Dockerfile`: cross-build and runtime image assembly
 - `tests/unit/` and `tests/integration/`: main safety net

@@ -2,10 +2,11 @@
 
 use clap::{Args, Parser, Subcommand};
 use omt_deployer_core::{
-    AuthMethod, Connection, DeployOptions, ManagementAction, ON_WINDOWS, Prerequisite, Secret,
-    WifiSettings, apply_wifi, change_web_password, deploy, ensure_arm64_emulation,
-    install_packages, load_manifest, manage, missing_packages, prerequisites, validate_connection,
-    validate_options, validate_web_password, validate_wifi,
+    AlpineSetupSettings, AuthMethod, Connection, DeployOptions, ManagementAction, ON_WINDOWS,
+    Prerequisite, Secret, WifiSettings, alpine_setup, apply_wifi, change_web_password, deploy,
+    ensure_arm64_emulation, install_packages, load_manifest, manage, missing_packages,
+    prerequisites, validate_alpine_setup, validate_connection, validate_options,
+    validate_web_password, validate_wifi,
 };
 use serde::{Deserialize, Serialize};
 use std::io::{self, Read};
@@ -52,6 +53,8 @@ enum Command {
     /// registers the emulator in the container engine and verifies it; on
     /// Linux it names the target that installs it persistently.
     SetupEmulation,
+    /// Install Alpine in persistent sys mode on a factory Raspberry Pi image.
+    AlpineSetup(AlpineSetupArgs),
     Deploy(DeployArgs),
     Status,
     Logs,
@@ -74,6 +77,13 @@ struct PrerequisiteArgs {
     check_emulation: bool,
     #[arg(long, default_value = "omt-client-arm64.tar.gz")]
     tarball_name: String,
+}
+#[derive(Args)]
+struct AlpineSetupArgs {
+    #[arg(long)]
+    hostname: String,
+    #[arg(long)]
+    ssid: Option<String>,
 }
 #[derive(Args)]
 struct DeployArgs {
@@ -100,6 +110,8 @@ struct SecretInput {
     bootstrap_root_password: Option<String>,
     wifi_password: Option<String>,
     web_password: Option<String>,
+    root_password: Option<String>,
+    pi_password: Option<String>,
 }
 #[derive(Serialize)]
 struct OutputLine<'a> {
@@ -236,6 +248,8 @@ fn run(cli: Cli) -> Result<(), (i32, String)> {
                     bootstrap_root_password: secrets.bootstrap_root_password.take(),
                     wifi_password: None,
                     web_password: None,
+                    root_password: None,
+                    pi_password: None,
                 },
             )
             .map_err(|e| (2, e))?,
@@ -322,6 +336,81 @@ fn run(cli: Cli) -> Result<(), (i32, String)> {
                     Some(true),
                 );
             }
+        }
+        Command::AlpineSetup(args) => {
+            let root_value = if let Some(value) = secrets.root_password.take() {
+                value
+            } else if cli.interactive_secrets {
+                rpassword::prompt_password("Root password: ").map_err(|e| (1, e.to_string()))?
+            } else {
+                return Err((
+                    2,
+                    "root_password is required through --secrets-stdin or an interactive prompt"
+                        .into(),
+                ));
+            };
+            let pi_value = if let Some(value) = secrets.pi_password.take() {
+                value
+            } else if cli.interactive_secrets {
+                rpassword::prompt_password("pi password: ").map_err(|e| (1, e.to_string()))?
+            } else {
+                return Err((
+                    2,
+                    "pi_password is required through --secrets-stdin or an interactive prompt"
+                        .into(),
+                ));
+            };
+            let wifi = if let Some(ssid) = args.ssid.clone() {
+                let password = if let Some(value) = secrets.wifi_password.take() {
+                    Secret::new(value).map_err(|e| (2, e.to_string()))?
+                } else if cli.interactive_secrets {
+                    Secret::new(
+                        rpassword::prompt_password("Wi-Fi password: ")
+                            .map_err(|e| (1, e.to_string()))?,
+                    )
+                    .map_err(|e| (2, e.to_string()))?
+                } else {
+                    return Err((
+                        2,
+                        "wifi_password is required through --secrets-stdin or an interactive prompt"
+                            .into(),
+                    ));
+                };
+                Some(WifiSettings {
+                    ssid,
+                    password,
+                    connect: false,
+                })
+            } else {
+                None
+            };
+            let settings = AlpineSetupSettings {
+                hostname: args.hostname.clone(),
+                wifi,
+                root_password: Secret::new(root_value).map_err(|e| (2, e.to_string()))?,
+                pi_password: Secret::new(pi_value).map_err(|e| (2, e.to_string()))?,
+            };
+            validate_alpine_setup(&settings).map_err(|e| (2, e.to_string()))?;
+            let project = cli
+                .project
+                .clone()
+                .ok_or_else(|| (2, "--project is required".into()))?;
+            let connection = connection.ok_or_else(|| (2, "connection required".into()))?;
+            let mut progress = progress_emitter(cli.json);
+            alpine_setup(
+                &connection,
+                &settings,
+                &project,
+                &cancellation,
+                &mut progress,
+            )
+            .map_err(|e| (1, e.to_string()))?;
+            emit(
+                cli.json,
+                "result",
+                "Alpine sys-mode install completed successfully.",
+                Some(true),
+            );
         }
         Command::Deploy(args) => {
             let options = DeployOptions {

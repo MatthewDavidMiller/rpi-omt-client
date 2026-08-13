@@ -37,8 +37,14 @@ full local toolchain, including persistent ARM64 emulation on Linux x86-64.
 
 ## Install
 
+Flash the official Alpine Raspberry Pi aarch64 image, add the Pi's SSH host
+key to `known_hosts`, and run the native deployer. Factory Alpine answers as
+`root` with no password. The Alpine view (or `rpi-omt-deploy alpine-setup`)
+sets hostname, optional Wi-Fi, IPv4 DHCP, user `pi`, root/`pi` passwords, US
+HTTPS apk mirrors, and persistent `sys` mode, then reboots. Deploy next.
+
 A stock Alpine image has neither `bash` nor `sudo`, so it is bootstrapped once
-before the installer can run. The native CLI and GUI can do this through `su`
+before the appliance installer can run. The native CLI and GUI can do this through `su`
 when given the separate initial root password. The shell target handles a root
 SSH account or a host that already has sudo/doas:
 

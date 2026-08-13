@@ -2,9 +2,10 @@
 //!
 //! Unknown or changed host keys are fatal. Preferred algorithms exclude legacy
 //! SHA-1 host-key hashes and CBC ciphers (russh's default cipher list is
-//! already CTR/GCM/ChaCha20-only).
+//! already CTR/GCM/ChaCha20-only). Uploads use SFTP when the server offers it
+//! and fall back to `cat` on an exec channel for factory headless images.
 
-use crate::{AuthMethod, Connection, OUTPUT_LIMIT};
+use crate::{AuthMethod, Connection, OUTPUT_LIMIT, shell_quote};
 use russh::keys::{self, HashAlg, PrivateKeyWithHashAlg, PublicKey, load_secret_key};
 use russh::{ChannelMsg, Preferred, client, kex};
 use russh_sftp::client::SftpSession;
@@ -225,6 +226,10 @@ impl SshSession {
     }
 }
 
+fn shell_upload_command(remote: &str) -> String {
+    format!("umask 077 && cat > {}", shell_quote(remote))
+}
+
 async fn connect_async(
     connection: &Connection,
     known_hosts: PathBuf,
@@ -264,11 +269,8 @@ async fn connect_async(
                 .password
                 .as_ref()
                 .ok_or_else(|| io::Error::other("SSH password is missing"))?;
-            handle
-                .authenticate_password(connection.username.as_str(), password.expose())
-                .await
-                .map_err(map_err)?
-                .success()
+            authenticate_password_methods(&mut handle, &connection.username, password.expose())
+                .await?
         }
         AuthMethod::Key => {
             let key_path = connection
@@ -303,6 +305,59 @@ async fn connect_async(
         ));
     }
     Ok(handle)
+}
+
+/// Factory Alpine images accept root with an empty password. Try `none`, then
+/// password, then keyboard-interactive, because OpenSSH and Dropbear advertise
+/// those methods in different orders and a single attempt misses the live image.
+async fn authenticate_password_methods(
+    handle: &mut client::Handle<StrictHostKey>,
+    username: &str,
+    password: &str,
+) -> io::Result<bool> {
+    if password.is_empty()
+        && handle
+            .authenticate_none(username)
+            .await
+            .map_err(map_err)?
+            .success()
+    {
+        return Ok(true);
+    }
+    if handle
+        .authenticate_password(username, password)
+        .await
+        .map_err(map_err)?
+        .success()
+    {
+        return Ok(true);
+    }
+    keyboard_interactive_auth(handle, username, password).await
+}
+
+async fn keyboard_interactive_auth(
+    handle: &mut client::Handle<StrictHostKey>,
+    username: &str,
+    password: &str,
+) -> io::Result<bool> {
+    let mut response = handle
+        .authenticate_keyboard_interactive_start(username, None)
+        .await
+        .map_err(map_err)?;
+    for _ in 0..8 {
+        match response {
+            client::KeyboardInteractiveAuthResponse::Success => return Ok(true),
+            client::KeyboardInteractiveAuthResponse::Failure { .. } => return Ok(false),
+            client::KeyboardInteractiveAuthResponse::InfoRequest { prompts, .. } => {
+                let replies = prompts.iter().map(|_| password.to_owned()).collect();
+                response = handle
+                    .authenticate_keyboard_interactive_respond(replies)
+                    .await
+                    .map_err(map_err)?;
+            }
+        }
+    }
+    Ok(false)
 }
 
 async fn run_command(
@@ -452,6 +507,23 @@ async fn upload_file(
     remote: &str,
     cancellation: &AtomicBool,
 ) -> io::Result<()> {
+    match upload_via_sftp(handle, local, remote, cancellation).await {
+        Ok(()) => Ok(()),
+        Err(sftp_error) => match upload_via_shell(handle, local, remote, cancellation).await {
+            Ok(()) => Ok(()),
+            Err(shell_error) => Err(io::Error::other(format!(
+                "SFTP upload failed ({sftp_error}); shell fallback failed ({shell_error})"
+            ))),
+        },
+    }
+}
+
+async fn upload_via_sftp(
+    handle: &client::Handle<StrictHostKey>,
+    local: &Path,
+    remote: &str,
+    cancellation: &AtomicBool,
+) -> io::Result<()> {
     if cancellation.load(Ordering::Relaxed) {
         return Err(io::Error::new(
             io::ErrorKind::Interrupted,
@@ -459,10 +531,13 @@ async fn upload_file(
         ));
     }
     let channel = handle.channel_open_session().await.map_err(map_err)?;
-    channel
-        .request_subsystem(true, "sftp")
-        .await
-        .map_err(map_err)?;
+    timeout(
+        Duration::from_secs(15),
+        channel.request_subsystem(true, "sftp"),
+    )
+    .await
+    .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "SFTP subsystem request timed out"))?
+    .map_err(map_err)?;
     let sftp = SftpSession::new(channel.into_stream())
         .await
         .map_err(map_err)?;
@@ -478,7 +553,7 @@ async fn upload_file(
     .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "SFTP open timed out"))?
     .map_err(map_err)?;
 
-    let mut buffer = vec![0_u8; 64 * 1024];
+    let mut buffer = vec![0_u8; 16 * 1024];
     loop {
         if cancellation.load(Ordering::Relaxed) {
             let _ = remote_file.shutdown().await;
@@ -499,6 +574,80 @@ async fn upload_file(
     }
     remote_file.flush().await.map_err(map_err)?;
     remote_file.shutdown().await.map_err(map_err)?;
+    Ok(())
+}
+
+/// Factory Alpine headless images often listen with an overlay sshd that has
+/// no SFTP subsystem. Stream the file through `cat` on a normal exec channel.
+async fn upload_via_shell(
+    handle: &client::Handle<StrictHostKey>,
+    local: &Path,
+    remote: &str,
+    cancellation: &AtomicBool,
+) -> io::Result<()> {
+    if cancellation.load(Ordering::Relaxed) {
+        return Err(io::Error::new(
+            io::ErrorKind::Interrupted,
+            "operation cancelled",
+        ));
+    }
+    let mut file = File::open(local)?;
+    let mut channel = handle.channel_open_session().await.map_err(map_err)?;
+    channel
+        .exec(true, shell_upload_command(remote))
+        .await
+        .map_err(map_err)?;
+
+    let mut buffer = vec![0_u8; 16 * 1024];
+    let deadline = time::Instant::now() + UPLOAD_TIMEOUT;
+    loop {
+        if cancellation.load(Ordering::Relaxed) {
+            let _ = channel.close().await;
+            return Err(io::Error::new(
+                io::ErrorKind::Interrupted,
+                "operation cancelled",
+            ));
+        }
+        if time::Instant::now() > deadline {
+            let _ = channel.close().await;
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "shell upload timed out",
+            ));
+        }
+        let count = file.read(&mut buffer)?;
+        if count == 0 {
+            break;
+        }
+        timeout(UPLOAD_TIMEOUT, channel.data(&buffer[..count]))
+            .await
+            .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "shell upload timed out"))?
+            .map_err(map_err)?;
+    }
+    channel.eof().await.map_err(map_err)?;
+
+    let mut exit_code = 1_i32;
+    loop {
+        match timeout(UPLOAD_TIMEOUT, channel.wait()).await {
+            Err(_) => {
+                let _ = channel.close().await;
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "shell upload timed out waiting for exit status",
+                ));
+            }
+            Ok(Some(ChannelMsg::ExitStatus { exit_status })) => {
+                exit_code = i32::try_from(exit_status).unwrap_or(1);
+            }
+            Ok(Some(ChannelMsg::Close) | None) => break,
+            Ok(Some(_)) => {}
+        }
+    }
+    if exit_code != 0 {
+        return Err(io::Error::other(format!(
+            "remote cat exited {exit_code} while writing {remote}"
+        )));
+    }
     Ok(())
 }
 
@@ -534,6 +683,18 @@ mod tests {
         assert_eq!(
             known_hosts_path(&connection).unwrap_or_else(|error| panic!("{error}")),
             PathBuf::from("/trusted/known_hosts")
+        );
+    }
+
+    #[test]
+    fn shell_upload_quotes_the_remote_path() {
+        assert_eq!(
+            shell_upload_command("/tmp/omt-setup-sys-abcd.sh"),
+            "umask 077 && cat > '/tmp/omt-setup-sys-abcd.sh'"
+        );
+        assert_eq!(
+            shell_upload_command("/tmp/o'mt.sh"),
+            "umask 077 && cat > '/tmp/o'\\''mt.sh'"
         );
     }
 

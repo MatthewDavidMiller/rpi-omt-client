@@ -240,7 +240,7 @@ ssh "${HOST}" bash "${REMOTE_STAGE}/deploy/transaction.sh" \
 
 cleanup_required=false
 ssh -t "${HOST}" \
-    "chmod +x '${REMOTE_DIR}/deploy/host/bootstrap.sh' '${REMOTE_DIR}/deploy/host/install.sh' '${REMOTE_DIR}/deploy/host/uninstall.sh' '${REMOTE_DIR}/deploy/host/host-diagnostics.sh' '${REMOTE_DIR}/deploy/host/host-event-watcher.sh' '${REMOTE_DIR}/deploy/host/host-reboot.sh' '${REMOTE_DIR}/deploy/transaction.sh' && ${ESCALATE} sh -c \"printf 'n\\\\n' | '${REMOTE_DIR}/deploy/host/install.sh'\""
+    "chmod +x '${REMOTE_DIR}/deploy/host/bootstrap.sh' '${REMOTE_DIR}/deploy/host/setup-sys.sh' '${REMOTE_DIR}/deploy/host/install.sh' '${REMOTE_DIR}/deploy/host/uninstall.sh' '${REMOTE_DIR}/deploy/host/host-diagnostics.sh' '${REMOTE_DIR}/deploy/host/host-event-watcher.sh' '${REMOTE_DIR}/deploy/host/host-reboot.sh' '${REMOTE_DIR}/deploy/transaction.sh' && ${ESCALATE} sh -c \"printf 'n\\\\n' | '${REMOTE_DIR}/deploy/host/install.sh'\""
 echo "Rebooting ${HOST} to apply kernel, firmware, and KMS settings..."
 ssh -t "${HOST}" \
     "${ESCALATE} sh -c 'nohup sh -c \"sleep 1; /sbin/reboot\" </dev/null >/dev/null 2>&1 &'" \

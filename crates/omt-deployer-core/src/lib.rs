@@ -4,7 +4,9 @@ mod ops;
 mod ssh;
 mod tools;
 
-pub use ops::{apply_wifi, change_web_password, connect, deploy, manage, test_connection};
+pub use ops::{
+    alpine_setup, apply_wifi, change_web_password, connect, deploy, manage, test_connection,
+};
 pub use ssh::{RemoteResult, SshSession};
 pub use tools::{
     BuildPlan, DOCKER_DESKTOP, GIT_FOR_WINDOWS, ON_WINDOWS, PYTHON, Package, Prerequisite,
@@ -33,6 +35,8 @@ pub const MAX_MANIFEST_MEMBERS: usize = 128;
 pub const MAX_MANIFEST_MEMBER_BYTES: usize = 240;
 pub const MINIMUM_WEB_PASSWORD_BYTES: usize = 12;
 pub const MAXIMUM_WEB_PASSWORD_BYTES: usize = 128;
+pub const MINIMUM_OS_PASSWORD_BYTES: usize = 8;
+pub const MAXIMUM_OS_PASSWORD_BYTES: usize = 128;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum AuthMethod {
@@ -118,6 +122,14 @@ pub struct WifiSettings {
     pub connect: bool,
 }
 
+/// Factory Alpine sys-mode install driven by the native deployer.
+pub struct AlpineSetupSettings {
+    pub hostname: String,
+    pub wifi: Option<WifiSettings>,
+    pub root_password: Secret,
+    pub pi_password: Secret,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ValidationError(pub &'static str);
 impl std::fmt::Display for ValidationError {
@@ -146,6 +158,14 @@ pub fn valid_host(value: &str) -> bool {
 }
 pub fn valid_username(value: &str) -> bool {
     value.len() <= 64 && ascii_token(value, "._-")
+}
+/// A single DNS label for `setup-hostname`. Hyphens are allowed, but not at
+/// either end, matching Alpine's hostname rules rather than a full FQDN.
+pub fn valid_appliance_hostname(value: &str) -> bool {
+    (1..=63).contains(&value.len())
+        && !value.starts_with('-')
+        && !value.ends_with('-')
+        && ascii_token(value, "-")
 }
 pub fn valid_remote_directory(value: &str) -> bool {
     value.len() >= 2
@@ -188,12 +208,7 @@ pub fn validate_connection(value: &Connection) -> Result<(), ValidationError> {
         return Err(ValidationError("OpenSSH known_hosts file does not exist."));
     }
     match value.auth {
-        AuthMethod::Password
-            if value
-                .password
-                .as_ref()
-                .is_none_or(|v| v.expose().is_empty()) =>
-        {
+        AuthMethod::Password if value.password.is_none() => {
             return Err(ValidationError(
                 "SSH password is required for password authentication.",
             ));
@@ -237,6 +252,33 @@ pub fn validate_wifi(value: &WifiSettings) -> Result<(), ValidationError> {
         return Err(ValidationError(
             "Wi-Fi password must be 8-63 printable ASCII characters or a 64-digit hex PSK.",
         ));
+    }
+    Ok(())
+}
+pub fn validate_os_password(value: &Secret) -> Result<(), ValidationError> {
+    let password = value.expose();
+    if !(MINIMUM_OS_PASSWORD_BYTES..=MAXIMUM_OS_PASSWORD_BYTES).contains(&password.len()) {
+        return Err(ValidationError(
+            "Host password must contain 8-128 UTF-8 bytes.",
+        ));
+    }
+    if password.chars().any(char::is_control) {
+        return Err(ValidationError(
+            "Host password must not contain control characters.",
+        ));
+    }
+    Ok(())
+}
+pub fn validate_alpine_setup(value: &AlpineSetupSettings) -> Result<(), ValidationError> {
+    if !valid_appliance_hostname(&value.hostname) {
+        return Err(ValidationError(
+            "Hostname must be a single DNS label of 1-63 letters, digits, or hyphens.",
+        ));
+    }
+    validate_os_password(&value.root_password)?;
+    validate_os_password(&value.pi_password)?;
+    if let Some(wifi) = value.wifi.as_ref() {
+        validate_wifi(wifi)?;
     }
     Ok(())
 }
@@ -469,7 +511,37 @@ mod tests {
         assert!(valid_host("pi.local"));
         assert!(!valid_host("-pi.local"));
         assert!(valid_username("pi_admin-1"));
+        assert!(valid_appliance_hostname("omt-client"));
+        assert!(valid_appliance_hostname("rpi5"));
+        assert!(!valid_appliance_hostname("-pi"));
+        assert!(!valid_appliance_hostname("omt_client"));
+        assert!(!valid_appliance_hostname("omt.client"));
         assert!(valid_remote_directory("/opt/omt-client"));
+        let empty_ssh = Connection {
+            host: "10.1.20.210".into(),
+            username: "root".into(),
+            port: 22,
+            auth: AuthMethod::Password,
+            password: Secret::new(String::new()).ok(),
+            key_path: None,
+            key_passphrase: None,
+            known_hosts_path: None,
+            sudo_password: None,
+            bootstrap_root_password: None,
+        };
+        assert!(validate_connection(&empty_ssh).is_ok());
+        assert!(
+            validate_os_password(
+                &Secret::new("alpinepw".into()).unwrap_or_else(|error| panic!("{error}"))
+            )
+            .is_ok()
+        );
+        assert!(
+            validate_os_password(
+                &Secret::new("short".into()).unwrap_or_else(|error| panic!("{error}"))
+            )
+            .is_err()
+        );
         assert_eq!(shell_quote("a'b"), "'a'\\''b'");
         assert!(
             validate_web_password(
