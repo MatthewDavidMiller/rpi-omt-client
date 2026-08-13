@@ -83,9 +83,9 @@ assert_not_contains '^[[:space:]]*-[[:space:]]+/proc(/|:)' \
     "proc subpaths are not bind-mounted because current runc rejects them"
 assert_contains '^[[:space:]]*target:[[:space:]]+/tmp[[:space:]]*$' \
     "tmpfs is mounted at /tmp"
-assert_contains '^[[:space:]]*mem_limit:[[:space:]]+"\$\{OMT_CONTAINER_MEMORY_LIMIT:-256m\}"[[:space:]]*$' \
-    "container memory is bounded for low-RAM Pi 5 models"
-assert_contains '^[[:space:]]*memswap_limit:[[:space:]]+"\$\{OMT_CONTAINER_MEMORY_LIMIT:-256m\}"[[:space:]]*$' \
+assert_contains '^[[:space:]]*mem_limit:[[:space:]]+"\$\{OMT_CONTAINER_MEMORY_LIMIT:-128m\}"[[:space:]]*$' \
+    "container memory is bounded for low-RAM Pi models"
+assert_contains '^[[:space:]]*memswap_limit:[[:space:]]+"\$\{OMT_CONTAINER_MEMORY_LIMIT:-128m\}"[[:space:]]*$' \
     "container cannot expand beyond its RAM limit into swap"
 assert_contains '^[[:space:]]*pids_limit:[[:space:]]+64[[:space:]]*$' \
     "container process count is bounded"

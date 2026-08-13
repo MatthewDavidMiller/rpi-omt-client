@@ -316,13 +316,40 @@ if grep -q '^http://' /etc/apk/repositories; then
     echo "Rewriting apk repositories to HTTPS..."
     sed -i -e 's|^http://|https://|' /etc/apk/repositories
 fi
-apk update
-apk upgrade --available
+# A re-deploy upgrades docker while the appliance is using it. Stop the
+# Compose service first so apk is not racing a live container and so a
+# docker package restart cannot tear the installer out from under itself.
+if [[ -x /etc/init.d/omt-client ]]; then
+    echo "Stopping the appliance before updating Alpine packages..."
+    rc-service omt-client stop >/dev/null 2>&1 || true
+fi
+# apk can fetch kernel and firmware images without a newline for longer than
+# the deployer's one-minute idle timeout. --progress keeps bytes moving;
+# the heartbeat is the fallback when a mirror stalls the meter.
+host_apk_upgrade() {
+    local heartbeat_pid="" status=0
+    echo "Updating Alpine packages to the latest indexed versions..."
+    (
+        while sleep 20; do
+            echo "Alpine package update still running..."
+        done
+    ) &
+    heartbeat_pid=$!
+    apk --wait 30 --progress -v update || status=$?
+    if (( status == 0 )); then
+        apk --wait 30 --progress -v upgrade --available || status=$?
+    fi
+    kill "${heartbeat_pid}" 2>/dev/null || true
+    wait "${heartbeat_pid}" 2>/dev/null || true
+    return "${status}"
+}
+host_apk_upgrade
 apk add --no-cache \
     alsa-utils avahi avahi-tools bash coreutils dbus docker docker-cli-compose \
     ethtool findutils inotify-tools iproute2 iw jq libdrm-tests linux-firmware-brcm \
     linux-rpi nftables nftables-rulesets procps raspberrypi-bootloader \
     tcpdump util-linux util-linux-misc wpa_supplicant xdg-dbus-proxy zram-init
+echo "Alpine packages are at the latest indexed versions."
 
 # The Windows deployer manages Wi-Fi through wpa_cli. Preserve every existing
 # network block while making the control socket and durable save operation an
@@ -683,7 +710,7 @@ COMPOSE_ENV_TMP="$(mktemp "${COMPOSE_ENV_FILE}.tmp.XXXXXX")"
     printf 'OMT_HDMI_CONNECTOR=%s\n' "${OMT_HDMI_CONNECTOR}"
     printf 'OMT_BOARD_LABEL=%s\n' "${BOARD_LABEL}"
     printf 'OMT_VIDEO_CEILING=%s\n' "${OMT_VIDEO_CEILING}"
-    printf 'OMT_CONTAINER_MEMORY_LIMIT=256m\n'
+    printf 'OMT_CONTAINER_MEMORY_LIMIT=128m\n'
 } > "${COMPOSE_ENV_TMP}"
 chmod 0600 "${COMPOSE_ENV_TMP}"
 mv -fT "${COMPOSE_ENV_TMP}" "${COMPOSE_ENV_FILE}"
@@ -910,7 +937,8 @@ echo "Web UI:   https://${IP_ADDR}:${WEB_PORT}$([[ "${STARTUP_DEFERRED}" == true
 echo "HDMI:     ${HDMI_VIDEO_MODE} (${BOARD_HDMI_CONNECTORS} output(s))"
 echo "Video:    up to ${OMT_VIDEO_CEILING}"
 echo "Security: nftables, SSH safeguards, kernel hardening, bounded Docker logs"
-echo "Memory:   ${ZRAM_MIB} MiB zram swap, 256 MiB container cap, bounded tmpfs"
+echo "Memory:   ${ZRAM_MIB} MiB zram swap, 128 MiB container cap, bounded tmpfs"
+echo "Packages: Alpine apk update and upgrade --available applied"
 echo
 echo "Password: after startup, run:"
 echo "  sudo docker compose --env-file ${COMPOSE_ENV_FILE} -f ${COMPOSE_FILE} logs omt-client | grep -A 1 'Web UI password'"

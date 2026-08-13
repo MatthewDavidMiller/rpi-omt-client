@@ -40,7 +40,7 @@ start_pre() {
     }
     # Without the memory controller, compose's mem_limit is accepted and then
     # ignored, and the appliance runs uncapped on a board sized around a
-    # 256 MiB container. The Raspberry Pi firmware puts cgroup_disable=memory
+    # 128 MiB container. The Raspberry Pi firmware puts cgroup_disable=memory
     # on the command line ahead of the installer's cgroup_enable=memory and
     # the later token only wins by the kernel's __setup ordering, so this is
     # checked rather than assumed. Under cgroup v2 the controller is absent

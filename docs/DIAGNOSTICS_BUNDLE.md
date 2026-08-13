@@ -41,9 +41,9 @@ later sections were skipped. Both are accepted; anything else is rejected.
 
 Raw PCAP is unchecked by default. An unchecked request removes stale capture
 output and never starts the unfiltered capture. A checked request retains the
-64 MiB cap; before streaming the PCAP into the spooled archive, the Web service
+8 MiB cap; before adding the PCAP to the in-memory archive, the Web service
 validates metadata version, request ID, status, declared size, magic, stable
 inode, and SHA-256. Capture metadata is included for both choices.
 Text members use ZIP deflate compression. The validated PCAP member is stored
 without recompression because packet data compresses poorly and deflating up to
-64 MiB would spend the Pi's CPU inside the fixed Web request budget.
+8 MiB would spend the Pi's CPU inside the fixed Web request budget.

@@ -17,6 +17,10 @@ use std::{
 use time::OffsetDateTime;
 use zip::{CompressionMethod, ZipWriter, write::SimpleFileOptions};
 
+/// Host capture and the in-memory ZIP share this ceiling so a support download
+/// cannot push the appliance over its container memory cap.
+const PCAP_MAX_BYTES: usize = 8 * 1024 * 1024;
+
 #[derive(Clone, Debug, Serialize)]
 pub struct DiagnosticResult {
     pub title: String,
@@ -400,15 +404,16 @@ impl Diagnostics {
                 data: None,
             });
         }
-        if fields.get("max_bytes").map(String::as_str) != Some("67108864") {
+        let expected_max = PCAP_MAX_BYTES.to_string();
+        if fields.get("max_bytes").map(String::as_str) != Some(expected_max.as_str()) {
             return Err("capture metadata size exceeds the limit".to_owned());
         }
         let expected_size = fields
             .get("size_bytes")
             .and_then(|value| value.parse::<usize>().ok())
-            .filter(|size| *size <= 64 * 1024 * 1024)
+            .filter(|size| *size <= PCAP_MAX_BYTES)
             .ok_or("capture metadata size is invalid")?;
-        let data = read_bounded(&self.settings.diagnostics_host_pcap_file, 64 * 1024 * 1024)?
+        let data = read_bounded(&self.settings.diagnostics_host_pcap_file, PCAP_MAX_BYTES)?
             .ok_or("packet capture is missing")?;
         if data.len() != expected_size || data.len() < 4 {
             return Err("packet capture has an unexpected size".to_owned());

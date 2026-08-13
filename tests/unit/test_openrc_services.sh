@@ -69,7 +69,7 @@ grep -Eq 'supervise-daemon "\$\{RC_SVCNAME\}" --stop' "${AVAHI_PROXY}" || \
 
 # Compose accepts mem_limit and then ignores it when the kernel memory
 # controller is off, which would run the appliance uncapped on a board sized
-# around a 256 MiB container. The Pi firmware puts cgroup_disable=memory ahead
+# around a 128 MiB container. The Pi firmware puts cgroup_disable=memory ahead
 # of the installer's cgroup_enable=memory, so this is checked, not assumed.
 APPLIANCE="${OPENRC_DIR}/omt-client"
 grep -Eq 'until docker info' "${APPLIANCE}" || \

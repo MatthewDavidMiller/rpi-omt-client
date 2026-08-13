@@ -162,3 +162,21 @@ def test_playback_status_stale_floor_stays_above_the_receiver_heartbeat():
     heartbeat_ms = int(heartbeat.group(1))
     assert min_seconds * 1000 > heartbeat_ms
     assert default_seconds >= min_seconds
+
+
+def test_pcap_memory_ceiling_agrees_between_host_and_web():
+    """The ZIP is built in process memory, so the host cap and the web reader
+    must be the same number or a capture the host kept is refused by the bundle."""
+    host = re.search(
+        r"^PCAP_MAX_BYTES=(\d+)$",
+        HOST_DIAGNOSTICS.read_text(encoding="utf-8"),
+        re.MULTILINE,
+    )
+    web = re.search(
+        r"const PCAP_MAX_BYTES: usize = (\d+) \* 1024 \* 1024;",
+        (REPO_ROOT / "crates" / "omt-web" / "src" / "diagnostics.rs").read_text(encoding="utf-8"),
+    )
+    assert host is not None, "host-diagnostics.sh no longer pins PCAP_MAX_BYTES"
+    assert web is not None, "diagnostics.rs no longer pins PCAP_MAX_BYTES"
+    assert int(host.group(1)) == int(web.group(1)) * 1024 * 1024
+    assert int(host.group(1)) == 8 * 1024 * 1024

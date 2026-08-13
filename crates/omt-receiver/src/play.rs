@@ -18,7 +18,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 /// Bounded stack for the audio worker, matching the media-worker budget.
-const AUDIO_STACK: usize = 512 * 1024;
+const AUDIO_STACK: usize = 128 * 1024;
 /// How long a session waits for its first frame before saying so.
 const MEDIA_GRACE: Duration = Duration::from_secs(5);
 /// How often a running session re-checks the display for a hotplug.

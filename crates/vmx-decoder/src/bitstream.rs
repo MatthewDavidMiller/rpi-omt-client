@@ -13,6 +13,12 @@ pub const PADDING: usize = 64;
 
 pub struct BitReader {
     buffer: Vec<u8>,
+    /// Exclusive end of the loaded payload plus its 0xFF padding. Reads past
+    /// this are corrupt; bytes left over from a larger previous load are not
+    /// visible to the window.
+    length: usize,
+    /// Maximum payload-plus-padding size this reader will grow to.
+    max_total: usize,
     position: usize,
     bits_left: i32,
     window: u64,
@@ -20,16 +26,21 @@ pub struct BitReader {
 }
 
 impl BitReader {
-    /// Allocates a reader over a `capacity`-byte slice stream.
+    /// Creates a reader whose payload may grow up to `capacity` bytes.
     ///
-    /// Returns `None` if the padded allocation cannot be reserved.
+    /// The padded backing store is reserved only when a frame is loaded, so a
+    /// 1080p decoder does not touch megabytes of 0xFF per slice before the
+    /// first packet arrives. Returns `None` if the maximum cannot be
+    /// represented.
     pub fn with_capacity(capacity: usize) -> Option<Self> {
-        let total = capacity.checked_add(PADDING)?;
+        let max_total = capacity.checked_add(PADDING)?;
         let mut buffer = Vec::new();
-        buffer.try_reserve_exact(total).ok()?;
-        buffer.resize(total, 0xFF);
+        buffer.try_reserve_exact(PADDING).ok()?;
+        buffer.resize(PADDING, 0xFF);
         Some(Self {
             buffer,
+            length: PADDING,
+            max_total,
             position: 0,
             bits_left: 64,
             window: 0,
@@ -39,7 +50,7 @@ impl BitReader {
 
     #[must_use]
     pub fn capacity(&self) -> usize {
-        self.buffer.len().saturating_sub(PADDING)
+        self.max_total.saturating_sub(PADDING)
     }
 
     /// True once the stream drove the reader outside the behaviour the
@@ -55,10 +66,17 @@ impl BitReader {
         if data.len() > self.capacity() {
             return false;
         }
-        self.buffer.fill(0xFF);
-        if let Some(target) = self.buffer.get_mut(..data.len()) {
-            target.copy_from_slice(data);
+        let needed = data.len() + PADDING;
+        if needed > self.buffer.len() {
+            let additional = needed - self.buffer.len();
+            if self.buffer.try_reserve_exact(additional).is_err() {
+                return false;
+            }
+            self.buffer.resize(needed, 0xFF);
         }
+        self.buffer[..data.len()].copy_from_slice(data);
+        self.buffer[data.len()..needed].fill(0xFF);
+        self.length = needed;
         self.reset();
         true
     }
@@ -72,7 +90,12 @@ impl BitReader {
     }
 
     fn window_at(&mut self, position: usize) -> u64 {
-        let Some(bytes) = self.buffer.get(position..position.saturating_add(8)) else {
+        let end = position.saturating_add(8);
+        if end > self.length {
+            self.corrupt = true;
+            return u64::MAX;
+        }
+        let Some(bytes) = self.buffer.get(position..end) else {
             self.corrupt = true;
             return u64::MAX;
         };
@@ -263,5 +286,36 @@ mod tests {
             r.reload();
         }
         assert!(r.corrupt());
+    }
+
+    #[test]
+    fn defers_the_maximum_allocation_until_load() {
+        let reader = BitReader::with_capacity(1_000_000).unwrap_or_else(|| panic!("allocation"));
+        assert!(reader.buffer.len() <= PADDING);
+        assert_eq!(reader.capacity(), 1_000_000);
+    }
+
+    #[test]
+    fn load_grows_only_to_the_payload_plus_padding() {
+        let mut reader =
+            BitReader::with_capacity(1_000_000).unwrap_or_else(|| panic!("allocation"));
+        assert!(reader.load(&[0x80, 0x00, 0x00, 0x00]));
+        assert_eq!(reader.buffer.len(), 4 + PADDING);
+        assert_eq!(reader.length, 4 + PADDING);
+    }
+
+    #[test]
+    fn a_shorter_load_cannot_read_leftover_bytes() {
+        let mut reader = BitReader::with_capacity(1024).unwrap_or_else(|| panic!("allocation"));
+        let mut long = vec![0xFF; 200];
+        long[0] = 0x80;
+        assert!(reader.load(&long));
+        assert!(reader.load(&[0x80]));
+        assert_eq!(reader.length, 1 + PADDING);
+        for _ in 0..64 {
+            let _consumed = reader.bits(64);
+            reader.reload();
+        }
+        assert!(reader.corrupt());
     }
 }

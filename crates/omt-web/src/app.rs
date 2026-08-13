@@ -1009,7 +1009,7 @@ mod tests {
             .unwrap_or_default()
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn login_sessions_csrf_rate_limits_and_headers() {
         let (state, root) = test_state();
         let service = router(Arc::clone(&state));
@@ -1090,7 +1090,7 @@ mod tests {
         fs::remove_dir_all(root).unwrap_or_else(|error| panic!("{error}"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn every_authenticated_page_renders() {
         let (state, root) = test_state();
         let session_id = state

@@ -297,12 +297,13 @@ connector mode; both are retained in `/etc/omt-client/installer.conf` and
 
 The installer then:
 
-1. updates Alpine and installs `linux-rpi`, Raspberry Pi boot firmware,
-   Broadcom firmware, ALSA/DRM tools, Docker/Compose, Avahi/D-Bus, nftables,
-   inotify, `wpa_supplicant`, and zram support;
+1. runs `apk update` and `apk upgrade --available` so the host is on the
+   latest Alpine 3.24 packages, then installs `linux-rpi`, Raspberry Pi boot
+   firmware, Broadcom firmware, ALSA/DRM tools, Docker/Compose, Avahi/D-Bus,
+   nftables, inotify, `wpa_supplicant`, and zram support;
 2. applies kernel/network sysctls, SSH forwarding/session safeguards, bounded
    Docker logs, daemon no-new-privileges, BPF JIT constant blinding, zram swap,
-   a 256 MiB container cap, a 64-PID cap, and bounded file descriptors, shared
+   a 128 MiB container cap, a 64-PID cap, and bounded file descriptors, shared
    memory, and tmpfs mounts. SSH logins are limited to `root` (keys only) and
    members of the administrative `wheel` group. IPv4 reverse-path filtering is
    pinned, IPv6 router advertisements and SLAAC are refused, apk repositories are

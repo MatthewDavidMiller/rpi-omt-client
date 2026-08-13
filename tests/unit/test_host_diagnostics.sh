@@ -75,7 +75,7 @@ run_case() {
     grep -qx 'status=partial' "${report}"
     grep -q 'skipped=host diagnostics budget exhausted' "${report}"
     grep -qx "request_id=${request_id}" "${metadata}"
-    grep -qx 'max_bytes=67108864' "${metadata}"
+    grep -qx 'max_bytes=8388608' "${metadata}"
 }
 
 unchecked_id=11111111111111111111111111111111

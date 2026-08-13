@@ -25,7 +25,7 @@ use tables::{SLICE_HEIGHT, YUV_RGB_601, YUV_RGB_709, decode_matrix, quality_inde
 /// Every media worker runs on an explicitly sized stack. The kernel keeps only
 /// 64 KiB of block scratch live, so this bounds a worker well above its needs
 /// while keeping a full pool far under the appliance's memory budget.
-pub const WORKER_STACK_SIZE: usize = 512 * 1024;
+pub const WORKER_STACK_SIZE: usize = 128 * 1024;
 pub const MAX_WIDTH: usize = 1920;
 pub const MAX_HEIGHT: usize = 1080;
 pub const MAX_COMPRESSED_BYTES: usize = 10 * 1024 * 1024;
@@ -88,15 +88,42 @@ impl std::fmt::Display for DecodeError {
 }
 impl std::error::Error for DecodeError {}
 
-/// One slice of the frame: its two bitstreams and the plane scratch its
-/// workers own outright, which is what keeps the slices free of aliasing.
+/// One slice of the frame: its two bitstreams. Plane scratch is per-worker
+/// rather than per-slice, because each worker decodes its slices in sequence
+/// and the YUV planes are consumed into the output before the next slice.
 struct Slice {
     streams: SliceStreams,
+    /// Rows of this slice that belong to the visible image.
+    rows: usize,
+}
+
+/// Reused YUV planes for one slice at a time.
+pub(crate) struct PlaneScratch {
     luma: Vec<u8>,
     blue: Vec<u8>,
     red: Vec<u8>,
-    /// Rows of this slice that belong to the visible image.
-    rows: usize,
+}
+
+impl PlaneScratch {
+    pub(crate) fn new(luma_stride: usize, chroma_stride: usize) -> Result<Self, DecodeError> {
+        Ok(Self {
+            luma: try_zeroed(
+                luma_stride
+                    .checked_mul(SLICE_HEIGHT)
+                    .ok_or(DecodeError::WorkerFailure)?,
+            )?,
+            blue: try_zeroed(
+                chroma_stride
+                    .checked_mul(SLICE_HEIGHT)
+                    .ok_or(DecodeError::WorkerFailure)?,
+            )?,
+            red: try_zeroed(
+                chroma_stride
+                    .checked_mul(SLICE_HEIGHT)
+                    .ok_or(DecodeError::WorkerFailure)?,
+            )?,
+        })
+    }
 }
 
 /// A bounded VMX1 decoder for one fixed frame geometry.
@@ -108,6 +135,8 @@ pub struct Decoder {
     slices: Vec<Slice>,
     workers: usize,
     pool: WorkerPool,
+    /// Used when decode stays on this thread (`workers == 1`).
+    scratch: PlaneScratch,
     matrix: [u16; 64],
     dc_shift: i32,
     loaded: bool,
@@ -154,15 +183,13 @@ impl Decoder {
                     dc: BitReader::with_capacity(dc_capacity).ok_or(DecodeError::WorkerFailure)?,
                     ac: BitReader::with_capacity(ac_capacity).ok_or(DecodeError::WorkerFailure)?,
                 },
-                luma: try_zeroed(luma_stride * SLICE_HEIGHT)?,
-                blue: try_zeroed(chroma_stride * SLICE_HEIGHT)?,
-                red: try_zeroed(chroma_stride * SLICE_HEIGHT)?,
                 rows: visible.min(SLICE_HEIGHT),
             });
         }
 
         let workers = workers.min(slice_count.max(1));
-        let pool = WorkerPool::new(workers)?;
+        let pool = WorkerPool::new(workers, luma_stride, chroma_stride)?;
+        let scratch = PlaneScratch::new(luma_stride, chroma_stride)?;
 
         Ok(Self {
             dimensions,
@@ -172,6 +199,7 @@ impl Decoder {
             slices,
             workers,
             pool,
+            scratch,
             matrix: decode_matrix(0),
             dc_shift: 0,
             loaded: false,
@@ -308,7 +336,14 @@ impl Decoder {
         // exists for Drop symmetry, but the channel round-trip would only add
         // latency when there is nothing to parallelise.
         let ok = if self.workers <= 1 {
-            decode_group(&mut self.slices, output, geometry, &matrix, coefficients)
+            decode_group(
+                &mut self.slices,
+                output,
+                geometry,
+                &matrix,
+                coefficients,
+                &mut self.scratch,
+            )
         } else {
             self.pool
                 .decode(&mut self.slices, output, geometry, &matrix, coefficients)?
@@ -337,12 +372,14 @@ pub(crate) struct DecodeGeometry {
     pixels: Pixels,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn decode_group(
     slices: &mut [Slice],
     region: &mut [u8],
     geometry: DecodeGeometry,
     matrix: &[u16; 64],
     coefficients: &[i16; 5],
+    scratch: &mut PlaneScratch,
 ) -> bool {
     for (index, slice) in slices.iter_mut().enumerate() {
         let luma = PlaneShape {
@@ -358,19 +395,19 @@ pub(crate) fn decode_group(
             &luma,
             matrix,
             geometry.dc_shift,
-            &mut slice.luma,
+            &mut scratch.luma,
         ) || !decode_plane(
             &mut slice.streams,
             &chroma,
             matrix,
             geometry.dc_shift,
-            &mut slice.blue,
+            &mut scratch.blue,
         ) || !decode_plane(
             &mut slice.streams,
             &chroma,
             matrix,
             geometry.dc_shift,
-            &mut slice.red,
+            &mut scratch.red,
         ) {
             return false;
         }
@@ -380,10 +417,10 @@ pub(crate) fn decode_group(
             return false;
         };
         let planes = convert::Planes {
-            luma: &slice.luma,
+            luma: &scratch.luma,
             luma_stride: geometry.luma_stride,
-            blue: &slice.blue,
-            red: &slice.red,
+            blue: &scratch.blue,
+            red: &scratch.red,
             chroma_stride: geometry.chroma_stride,
         };
         let rectangle = convert::Target {

@@ -22,7 +22,7 @@ for script in "${BUILD_SCRIPT}" "${RUN_SCRIPT}" "${FIREWALL_SCRIPT}"; do
     [[ -x "${script}" ]] && pass "$(basename "${script}") is executable" ||
         fail "$(basename "${script}") is executable"
 done
-require_literal "${SENDER_MANIFEST}" 'omt-protocol = { version = "0.9.50", path = "../omt-protocol" }' \
+require_literal "${SENDER_MANIFEST}" 'omt-protocol = { version = "0.9.51", path = "../omt-protocol" }' \
     "sender uses the repository protocol crate"
 dependency_count="$(awk '
     /^\[dependencies\]$/ { dependencies=1; next }
@@ -42,7 +42,9 @@ require_literal "${BUILD_SCRIPT}" 'aarch64-unknown-linux-musl' \
 require_literal "${BUILD_SCRIPT}" 'CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=rust-lld' \
     "ARM64 sender uses the receiver-compatible linker"
 require_literal "${FIREWALL_SCRIPT}" 'port port=6400-6600 protocol=tcp' \
-    "firewall covers the bounded direct OMT port range"
+    "firewalld covers the bounded direct OMT port range"
+require_literal "${FIREWALL_SCRIPT}" 'tcp dport 6400-6600' \
+    "nftables covers the bounded direct OMT port range on Alpine"
 
 case_dir="$(mktemp -d)"
 cleanup() {

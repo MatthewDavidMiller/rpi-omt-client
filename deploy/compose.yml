@@ -6,10 +6,11 @@ services:
     # Reap receiver descendants after failures and forward termination cleanly
     # instead of making the Rust Web process act as an init system as well.
     init: true
-    # The receiver decodes directly into three scanout buffers, so the complete
-    # appliance stays inside a 256 MiB budget even on the 512 MiB design target.
-    mem_limit: "${OMT_CONTAINER_MEMORY_LIMIT:-256m}"
-    memswap_limit: "${OMT_CONTAINER_MEMORY_LIMIT:-256m}"
+    # The receiver decodes into three scanout buffers with per-worker YUV
+    # scratch, so the complete appliance stays inside a 128 MiB budget even on
+    # the 512 MiB design target.
+    mem_limit: "${OMT_CONTAINER_MEMORY_LIMIT:-128m}"
+    memswap_limit: "${OMT_CONTAINER_MEMORY_LIMIT:-128m}"
     pids_limit: 64
     shm_size: 1048576
     ulimits:
@@ -68,7 +69,10 @@ services:
       - type: tmpfs
         target: /tmp
         tmpfs:
-          size: 67108864
+          # Diagnostics ZIPs are built in process memory, not here; 16 MiB is
+          # enough for mktemp and TLS scratch without reserving a 64 MiB slab
+          # against the container cap.
+          size: 16777216
           mode: 1023
     # Alpine has no render group: /dev/dri/renderD* is owned by video, so one
     # DRM entry covers both the card and the render node. A second, equal entry

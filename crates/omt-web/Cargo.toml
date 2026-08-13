@@ -13,7 +13,7 @@ hmac.workspace = true
 libc.workspace = true
 minijinja.workspace = true
 nix.workspace = true
-omt-protocol = { version = "0.9.50", path = "../omt-protocol" }
+omt-protocol = { version = "0.9.51", path = "../omt-protocol" }
 pbkdf2.workspace = true
 quick-xml.workspace = true
 rustls.workspace = true
@@ -24,7 +24,7 @@ serde_urlencoded.workspace = true
 sha2.workspace = true
 subtle.workspace = true
 time.workspace = true
-tokio = { workspace = true, features = ["rt-multi-thread", "process", "signal", "fs"] }
+tokio = { workspace = true, features = ["process", "signal", "fs"] }
 unicode-normalization.workspace = true
 zip.workspace = true
 

@@ -74,13 +74,16 @@ disqualifies that card and the search continues to the next, because several
 cards can expose the same connector name and the attached display may be behind
 any of them.
 
-The runtime is capped at 256 MiB and 64 processes on every board. At 1080p it
+The runtime is capped at 128 MiB and 64 processes on every board. At 1080p it
 uses three DRM scanout buffers, bounded network frames, and a persistent pool of
-VMX workers with 512 KiB stacks (created once per decoder, not per frame).
-Worker jobs travel inline through bounded channels, and the receiver reserves
+VMX workers with 128 KiB stacks (created once per decoder, not per frame).
+Each worker owns one slice of YUV scratch rather than every slice of the frame,
+and bitstream readers grow to the loaded payload instead of memset-ing the
+uncompressed worst case on every frame. Worker jobs travel inline through bounded channels, and the receiver reserves
 only the additional bytes needed when a network payload grows, so neither jobs
 nor a second full-size payload buffer are allocated in the steady-state frame
-path. The 512 MiB Pi Zero 2 W is the memory-design floor and is inside the
+path. The HTTPS operator uses a current-thread Tokio runtime. The
+512 MiB Pi Zero 2 W is the memory-design floor and is inside the
 supported matrix at that cap.
 
 Memory is not what separates the boards; decode throughput is. VMX is decoded in
@@ -302,7 +305,10 @@ returns to the administrator's sudo credential. The root secret is zeroized
 with the other authentication buffers. Remote commands retain a one-minute
 idle timeout but allow the package installer up to thirty minutes while it is
 still producing progress; the previous two-minute total ceiling could abort a
-healthy first install on a Pi.
+healthy first install on a Pi. `install.sh` stops a live appliance, then runs
+`apk update` and `apk upgrade --available` with a progress meter and a
+twenty-second heartbeat so a kernel or firmware fetch cannot look idle to that
+timeout.
 The explicit root credential takes priority over an ambiguous `doas` probe:
 stock Alpine can describe its inert rule set as authorization-capable and then
 refuse the actual non-PTY command.

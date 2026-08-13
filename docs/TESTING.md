@@ -168,7 +168,7 @@ one is not evidence for another:
    `deploy/host/bootstrap.sh` installs bash and sudo before the installer runs.
    Confirm the memory cgroup is live after the reboot (`grep -qw memory
    /sys/fs/cgroup/cgroup.controllers` on the shipped cgroup-v2 host, then check
-   that the container's `memory.max` is `268435456`): the Pi firmware injects
+   that the container's `memory.max` is `134217728`): the Pi firmware injects
    `cgroup_disable=memory`, and without the installer's
    `cgroup_enable=memory` the advertised container memory cap is silently not
    enforced. `/proc/cgroups` is only the fallback check for a cgroup-v1 host;
@@ -184,7 +184,7 @@ one is not evidence for another:
    unit suite drives it against a fake sysfs tree, but selecting the second
    physical connector after the first card's attributes fail to read is not
    reproducible off the board;
-4. verify zram, the 256 MiB memory limit, 64 PID limit, bounded Docker logs,
+4. verify zram, the 128 MiB memory limit, 64 PID limit, bounded Docker logs,
    and stable operation under memory pressure;
 5. verify discovery/direct playback, support bundle correlation/PCAP opt-in,
    Wi-Fi mutation, and a Web-acknowledged reboot;

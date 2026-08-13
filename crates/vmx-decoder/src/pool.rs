@@ -12,7 +12,7 @@
 #![allow(unsafe_code)]
 
 use crate::tables::SLICE_HEIGHT;
-use crate::{DecodeError, DecodeGeometry, Slice, decode_group};
+use crate::{DecodeError, DecodeGeometry, PlaneScratch, Slice, decode_group};
 use std::sync::mpsc::{self, Receiver, SyncSender};
 use std::thread::{self, JoinHandle};
 
@@ -49,7 +49,14 @@ struct WorkerHandle {
 
 impl WorkerPool {
     /// Spawns `count` parked workers. `count` must be at least one.
-    pub fn new(count: usize) -> Result<Self, DecodeError> {
+    /// Each worker owns one slice of YUV scratch, reused across the slices in
+    /// its partition, so the pool's plane memory is `count` slices rather than
+    /// one per slice of the frame.
+    pub fn new(
+        count: usize,
+        luma_stride: usize,
+        chroma_stride: usize,
+    ) -> Result<Self, DecodeError> {
         if count == 0 || count > crate::MAX_WORKERS {
             return Err(DecodeError::InvalidDimensions);
         }
@@ -60,10 +67,11 @@ impl WorkerPool {
         for index in 0..count {
             let (job_tx, job_rx) = mpsc::sync_channel::<Option<Job>>(1);
             let (done_tx, done_rx) = mpsc::sync_channel::<bool>(1);
+            let scratch = PlaneScratch::new(luma_stride, chroma_stride)?;
             let thread = thread::Builder::new()
                 .name(format!("vmx-decode-{index}"))
                 .stack_size(crate::WORKER_STACK_SIZE)
-                .spawn(move || worker_loop(job_rx, done_tx))
+                .spawn(move || worker_loop(job_rx, done_tx, scratch))
                 .map_err(|_| DecodeError::WorkerFailure)?;
             workers.push(WorkerHandle {
                 jobs: job_tx,
@@ -188,7 +196,7 @@ impl Drop for WorkerPool {
     }
 }
 
-fn worker_loop(jobs: Receiver<Option<Job>>, done: SyncSender<bool>) {
+fn worker_loop(jobs: Receiver<Option<Job>>, done: SyncSender<bool>, mut scratch: PlaneScratch) {
     while let Ok(message) = jobs.recv() {
         match message {
             None => break,
@@ -202,7 +210,14 @@ fn worker_loop(jobs: Receiver<Option<Job>>, done: SyncSender<bool>) {
                         job.slice_count,
                     );
                     let output = std::slice::from_raw_parts_mut(job.output, job.output_len);
-                    decode_group(slices, output, job.geometry, &job.matrix, job.coefficients)
+                    decode_group(
+                        slices,
+                        output,
+                        job.geometry,
+                        &job.matrix,
+                        job.coefficients,
+                        &mut scratch,
+                    )
                 };
                 if done.send(ok).is_err() {
                     break;

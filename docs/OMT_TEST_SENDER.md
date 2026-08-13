@@ -57,10 +57,11 @@ make omt-sender-firewall-allow SOURCE=10.1.20.210
 ```
 
 The firewalld helper applies both runtime and persistent source-scoped TCP
-rules. A single receiver address is preferred; CIDRs broader than `/16`, IPv6,
-malformed input, and unsafe zone names are refused. Set
-`OMT_TEST_SENDER_FIREWALL_ZONE` if the sender interface is not in `public`.
-Root or non-interactive sudo is required.
+rules. On Alpine appliance hosts it uses nftables instead (`/etc/nftables.d`
+plus a reload of the host ruleset). A single receiver address is preferred;
+CIDRs broader than `/16`, IPv6, malformed input, and unsafe zone names are
+refused. Set `OMT_TEST_SENDER_FIREWALL_ZONE` if the sender interface is not
+in `public`. Root or non-interactive sudo is required.
 
 Remove the rules after the test:
 

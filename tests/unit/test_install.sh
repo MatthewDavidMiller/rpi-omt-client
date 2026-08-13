@@ -132,7 +132,12 @@ require 'active regular boot cmdline file is required to enable the memory cgrou
 require 'host_validate_video_ceiling' "the decode ceiling must use tested rules"
 require 'OMT_VIDEO_CEILING=%s' "the effective decode ceiling must reach the container"
 require 'MAX_VIDEO=\$\{MAX_VIDEO\}' "the operator's ceiling choice must be retained"
-require 'OMT_CONTAINER_MEMORY_LIMIT=256m' "low-RAM container cap must be explicit"
+require 'OMT_CONTAINER_MEMORY_LIMIT=128m' "low-RAM container cap must be explicit"
+require 'upgrade --available' "every deploy must upgrade Alpine packages to the latest index"
+require 'Alpine package update still running' \
+    "apk must emit progress so the deployer idle timeout cannot abort a download"
+require 'Stopping the appliance before updating Alpine packages' \
+    "a live appliance must not race a docker package upgrade"
 require 'STABLE_VOLUME="omt-config-v3"' "the persistent volume name must be fixed"
 require 'chmod 0600.*HOST_REBOOT_REQUEST_FILE' "reboot request must be mode 0600"
 require 'the deployment client will reboot the Pi' \

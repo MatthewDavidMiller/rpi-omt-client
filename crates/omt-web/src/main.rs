@@ -24,7 +24,7 @@ fn fail(message: &str) -> ExitCode {
     ExitCode::FAILURE
 }
 
-#[tokio::main]
+#[tokio::main(flavor = "current_thread")]
 async fn main() -> ExitCode {
     let settings = match Settings::load() {
         Ok(value) => value,
