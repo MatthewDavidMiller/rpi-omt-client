@@ -118,4 +118,20 @@ grep -qx '    ssid=74657374' <<< "${wpa_config}"
 grep -qx '    psk=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef' \
     <<< "${wpa_config}"
 
+ipv4="$(
+    host_primary_ipv4_from <<'EOF'
+3: wlan0    inet 10.1.20.210/24 brd 10.1.20.255 scope global wlan0
+4: docker0    inet 172.17.0.1/16 brd 172.17.255.255 scope global docker0
+EOF
+)"
+[[ "${ipv4}" == "10.1.20.210" ]]
+ipv4="$(
+    host_primary_ipv4_from <<'EOF'
+2: eth0    inet 127.0.0.2/8 brd 127.255.255.255 scope global eth0
+4: docker0    inet 172.17.0.1/16 brd 172.17.255.255 scope global docker0
+5: enp1s0    inet 192.0.2.10/24 brd 192.0.2.255 scope global enp1s0
+EOF
+)"
+[[ "${ipv4}" == "192.0.2.10" ]]
+
 echo "Host install/uninstall helper behavior tests passed"

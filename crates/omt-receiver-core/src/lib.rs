@@ -456,13 +456,23 @@ fn atomic_replace(
     }
     let mut file = options.open(&stage)?;
     file.write_all(bytes)?;
-    file.sync_all()?;
+    // Per-boot status lives on tmpfs under `/run`. fsync there is a syscall
+    // tax twice a second for state that cannot survive a restart anyway.
+    if durable_status_parent(parent) {
+        file.sync_all()?;
+    }
     drop(file);
     fs::rename(&stage, path)?;
-    if let Ok(directory) = std::fs::File::open(parent) {
+    if durable_status_parent(parent)
+        && let Ok(directory) = std::fs::File::open(parent)
+    {
         let _ = directory.sync_all();
     }
     Ok(())
+}
+
+fn durable_status_parent(parent: &Path) -> bool {
+    !parent.starts_with("/run")
 }
 
 pub fn sanitize_detail(value: &str) -> String {
@@ -482,6 +492,14 @@ mod tests {
 
     fn ceiling(text: &str) -> VideoCeiling {
         VideoCeiling::parse(text).unwrap_or_else(|error| panic!("{error}"))
+    }
+
+    #[test]
+    fn status_on_tmpfs_skips_fsync() {
+        assert!(!durable_status_parent(Path::new("/run/omt/state")));
+        assert!(!durable_status_parent(Path::new("/run")));
+        assert!(durable_status_parent(Path::new("/etc/omt/run")));
+        assert!(durable_status_parent(Path::new("/tmp/omt")));
     }
 
     /// The four board tiers from `deploy/lib/board-profile.sh`. This test and

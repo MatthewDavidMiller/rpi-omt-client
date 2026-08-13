@@ -74,8 +74,8 @@ grep -Eq 'supervise-daemon "\$\{RC_SVCNAME\}" --stop' "${AVAHI_PROXY}" || \
 APPLIANCE="${OPENRC_DIR}/omt-client"
 grep -Eq 'until docker info' "${APPLIANCE}" || \
     fail "the appliance must wait for Docker API readiness, not only its OpenRC state"
-grep -Eq 'docker_wait.*-ge 30' "${APPLIANCE}" || \
-    fail "the Docker readiness wait must have a fixed upper bound"
+grep -Eq 'OMT_DOCKER_API_WAIT_SECONDS:-90' "${APPLIANCE}" || \
+    fail "the Docker readiness wait must default to 90 seconds"
 grep -Eq 'cgroup\.controllers' "${APPLIANCE}" || \
     fail "the appliance must confirm the memory controller before starting uncapped"
 grep -Eq '/proc/cgroups' "${APPLIANCE}" || \

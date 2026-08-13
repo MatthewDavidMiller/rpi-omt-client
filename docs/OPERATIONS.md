@@ -148,9 +148,11 @@ receiver.
   or the appliance was initialized previously. Redeployment does not generate a
   replacement because it preserves credentials. Do not delete or edit the
   persistent hash while the service is running.
-- Wi-Fi save fails: reboot once after installation, then verify `wlan0`,
-  `rc-service wpa_supplicant status`, and the `/run/wpa_supplicant/wlan0`
-  control socket. The installer enables durable configuration updates.
+- Wi-Fi save fails: reboot once after installation, then verify the wireless
+  interface (`iw dev`), `rc-service wpa_supplicant status`, and the
+  `/run/wpa_supplicant/<iface>` control socket. The installer enables durable
+  configuration updates and pins Wi-Fi power save off (brcmfmac otherwise
+  drops mDNS and OMT datagrams).
 - Stale status: inspect controller status and `receiver.log` in the config
   volume. Per-boot state (lock, PID record, published status) lives on a tmpfs
   at `/run/omt/state` and is gone after a restart; the log is kept on the volume

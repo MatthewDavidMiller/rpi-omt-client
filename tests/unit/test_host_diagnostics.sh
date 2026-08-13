@@ -158,6 +158,18 @@ grep -qx '## kernel and SSH hardening' \
     "${CASE_DIR}/diagnostics/report-complete.txt"
 grep -q 'net.core.bpf_jit_harden' \
     "${CASE_DIR}/diagnostics/report-complete.txt"
+grep -q 'net.ipv4.conf.all.rp_filter' \
+    "${CASE_DIR}/diagnostics/report-complete.txt"
+grep -q 'net.ipv6.conf.all.accept_ra' \
+    "${CASE_DIR}/diagnostics/report-complete.txt"
+grep -q 'net.ipv6.conf.all.autoconf' \
+    "${CASE_DIR}/diagnostics/report-complete.txt"
+grep -q 'net.ipv4.conf.all.arp_ignore' \
+    "${CASE_DIR}/diagnostics/report-complete.txt"
+grep -qx '## CPU frequency governor' \
+    "${CASE_DIR}/diagnostics/report-complete.txt"
+grep -qx '## Wi-Fi power save' \
+    "${CASE_DIR}/diagnostics/report-complete.txt"
 grep -q '### effective SSH policy' \
     "${CASE_DIR}/diagnostics/report-complete.txt"
 if grep -q 'skipped=host diagnostics budget exhausted' \

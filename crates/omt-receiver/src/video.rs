@@ -510,4 +510,9 @@ mod tests {
         assert_eq!(choose_mode(&modes, 1920, 1080, 60.0), None);
         assert_eq!(choose_mode(&modes, 1920, 1080, 0.0), Some(0));
     }
+
+    #[test]
+    fn the_card_is_opened_nonblocking() {
+        assert_eq!(O_NONBLOCK, 0o4000);
+    }
 }

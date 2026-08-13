@@ -310,6 +310,12 @@ if ! grep -Eq '^[^#[:space:]]+/community/?$' /etc/apk/repositories; then
     }
     printf '%s/community\n' "${MAIN_REPOSITORY}" >> /etc/apk/repositories
 fi
+# Stock Alpine images list HTTP mirrors. Rewrite live lines to HTTPS before
+# the first package fetch this installer makes.
+if grep -q '^http://' /etc/apk/repositories; then
+    echo "Rewriting apk repositories to HTTPS..."
+    sed -i -e 's|^http://|https://|' /etc/apk/repositories
+fi
 apk update
 apk upgrade --available
 apk add --no-cache \
@@ -350,7 +356,7 @@ docker compose version >/dev/null 2>&1 || {
 }
 
 echo "Applying low-memory and operating-system hardening..."
-install -d -m 0755 /etc/sysctl.d /etc/docker /etc/ssh/sshd_config.d /etc/nftables.d
+install -d -m 0755 /etc/sysctl.d /etc/docker /etc/ssh/sshd_config.d /etc/nftables.d /etc/modprobe.d
 host_publish_file /etc/sysctl.d/90-omt-client-hardening.conf 0644 root root <<'EOF'
 # OMT appliance hardening and compressed-memory behavior.
 fs.protected_fifos=2
@@ -379,6 +385,19 @@ net.ipv4.icmp_echo_ignore_broadcasts=1
 net.ipv4.icmp_ignore_bogus_error_responses=1
 net.ipv4.tcp_rfc1337=1
 net.ipv4.tcp_syncookies=1
+net.ipv4.conf.all.rp_filter=1
+net.ipv4.conf.default.rp_filter=1
+net.ipv4.conf.all.arp_ignore=1
+net.ipv4.conf.all.arp_announce=2
+net.ipv4.conf.default.arp_ignore=1
+net.ipv4.conf.default.arp_announce=2
+net.ipv4.conf.all.drop_gratuitous_arp=1
+net.ipv4.tcp_fastopen=3
+net.ipv6.conf.all.accept_ra=0
+net.ipv6.conf.default.accept_ra=0
+net.ipv6.conf.all.autoconf=0
+net.ipv6.conf.default.autoconf=0
+net.ipv6.conf.all.router_solicitations=0
 net.ipv6.conf.all.accept_redirects=0
 net.ipv6.conf.all.accept_source_route=0
 net.ipv6.conf.default.accept_redirects=0
@@ -461,6 +480,66 @@ if rc-service sshd status >/dev/null 2>&1; then
     rc-service sshd reload
 fi
 
+# Time stamps the reboot request, TLS certificates, and SSH. Stock Alpine
+# already has busybox ntpd when setup-alpine ran; install chrony only when
+# nothing is providing a clock.
+if [[ -x /etc/init.d/ntpd ]]; then
+    rc-update add ntpd default >/dev/null
+    rc-service ntpd start >/dev/null 2>&1 || true
+elif [[ -x /etc/init.d/chronyd ]]; then
+    rc-update add chronyd default >/dev/null
+    rc-service chronyd start >/dev/null 2>&1 || true
+else
+    apk add --no-cache chrony
+    rc-update add chronyd default >/dev/null
+    rc-service chronyd start
+fi
+
+# Onboard Bluetooth is unused by the appliance. Stop a packaged daemon if one
+# is present, and block the radio so it cannot come back on a later package.
+if [[ -x /etc/init.d/bluetooth ]]; then
+    rc-service bluetooth stop >/dev/null 2>&1 || true
+    rc-update del bluetooth default >/dev/null 2>&1 || true
+fi
+if command -v rfkill >/dev/null 2>&1; then
+    rfkill block bluetooth >/dev/null 2>&1 || true
+fi
+host_publish_file /etc/modprobe.d/omt-client-blacklist.conf 0644 root root <<'EOF'
+# Onboard Bluetooth is unused. Firmware already disables the controller;
+# keep the modules from loading if a later package pulls them in.
+blacklist bluetooth
+blacklist btbcm
+blacklist btintel
+blacklist btrtl
+blacklist btusb
+blacklist hci_uart
+install bluetooth /bin/true
+EOF
+
+# Decode is software VMX on three cores. schedutil lets the Pi 4 drop below
+# the 1080p30 budget; pin performance for the life of the appliance.
+# brcmfmac power save also drops mDNS and OMT datagrams, so it is pinned off
+# here and again from the wpa_cli CONNECTED hook after every associate.
+install -d -m 0755 /etc/local.d
+host_publish_file /etc/local.d/omt-client-cpufreq.start 0755 root root <<'EOF'
+#!/bin/sh
+for gov in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
+    [ -w "${gov}" ] || continue
+    echo performance > "${gov}" || true
+done
+for path in /sys/class/net/*/wireless; do
+    [ -d "${path}" ] || continue
+    iface=${path#/sys/class/net/}
+    iface=${iface%/wireless}
+    command -v iw >/dev/null 2>&1 || break
+    iw dev "${iface}" set power_save off || true
+done
+EOF
+if [[ -x /etc/init.d/local ]]; then
+    rc-update add local default >/dev/null
+    /etc/local.d/omt-client-cpufreq.start >/dev/null 2>&1 || true
+fi
+
 for desktop_service in lightdm display-manager; do
     rc-service "${desktop_service}" stop >/dev/null 2>&1 || true
     rc-update del "${desktop_service}" default >/dev/null 2>&1 || true
@@ -471,11 +550,23 @@ rc-update add avahi-daemon default >/dev/null
 rc-update add docker default >/dev/null
 rc-update add networking boot >/dev/null
 rc-update add wpa_supplicant boot >/dev/null
+host_publish_file /etc/wpa_supplicant/omt-client-action.sh 0755 root root <<'EOF'
+#!/bin/sh
+IFACE="${1:-}"
+EVENT="${2:-}"
+if [ "${EVENT}" = CONNECTED ] && [ -n "${IFACE}" ] && command -v iw >/dev/null 2>&1; then
+    iw dev "${IFACE}" set power_save off || true
+fi
+if [ -x /etc/wpa_supplicant/wpa_cli.sh ]; then
+    exec /etc/wpa_supplicant/wpa_cli.sh "$@"
+fi
+EOF
 if [[ -x /etc/init.d/wpa_cli ]]; then
     host_publish_openrc_conf /etc/conf.d/wpa_cli <<'EOF'
-WPACLI_OPTS="-a /etc/wpa_supplicant/wpa_cli.sh"
+WPACLI_OPTS="-a /etc/wpa_supplicant/omt-client-action.sh"
 EOF
     rc-update add wpa_cli boot >/dev/null
+    rc-service wpa_cli restart >/dev/null 2>&1 || rc-service wpa_cli start >/dev/null 2>&1 || true
 fi
 rc-service cgroups start >/dev/null 2>&1 || true
 rc-service dbus start
@@ -486,8 +577,9 @@ rc-service docker restart
 # Pi 4 the daemon still has to restore containers and initialize buildkit
 # before it opens /var/run/docker.sock, and every docker command below loses
 # that race on a cold install.
+DOCKER_API_WAIT_SECONDS=90
 DOCKER_READY=false
-for _ in $(seq 1 90); do
+for _ in $(seq 1 "${DOCKER_API_WAIT_SECONDS}"); do
     if docker info >/dev/null 2>&1; then
         DOCKER_READY=true
         break
@@ -525,7 +617,8 @@ docker run --rm --user 0:0 --entrypoint /bin/sh -v "${STABLE_VOLUME}:/config" \
             [ ! -e "/config/$file" ] || chmod 600 "/config/$file"
         done
         [ ! -e /config/ssl/cert.pem ] || chmod 644 /config/ssl/cert.pem
-        for directory in /config/ssl /config/run /config/omt; do
+        rm -rf /config/run
+        for directory in /config/ssl /config/omt; do
             [ ! -d "$directory" ] || chmod 700 "$directory"
         done
     ' sh "${OMT_UID}" "${OMT_GID}"
@@ -588,7 +681,6 @@ COMPOSE_ENV_TMP="$(mktemp "${COMPOSE_ENV_FILE}.tmp.XXXXXX")"
     printf 'OMT_VIDEO_GID=%s\n' "${OMT_VIDEO_GID}"
     printf 'OMT_AUDIO_GID=%s\n' "${OMT_AUDIO_GID}"
     printf 'OMT_HDMI_CONNECTOR=%s\n' "${OMT_HDMI_CONNECTOR}"
-    printf 'OMT_BOARD_ID=%s\n' "${BOARD_ID}"
     printf 'OMT_BOARD_LABEL=%s\n' "${BOARD_LABEL}"
     printf 'OMT_VIDEO_CEILING=%s\n' "${OMT_VIDEO_CEILING}"
     printf 'OMT_CONTAINER_MEMORY_LIMIT=256m\n'
@@ -638,6 +730,7 @@ OMT_COMPOSE_FILE=${COMPOSE_FILE}
 OMT_COMPOSE_ENV_FILE=${COMPOSE_ENV_FILE}
 OMT_RECOVERY_HELPER=${DEPLOY_RECOVERY_HELPER}
 OMT_RECOVERY_MANIFEST=${DEPLOY_RECOVERY_MANIFEST}
+OMT_DOCKER_API_WAIT_SECONDS=${DOCKER_API_WAIT_SECONDS}
 EOF
 host_publish_openrc_conf /etc/conf.d/omt-client-avahi-proxy <<EOF
 OMT_AVAHI_PROXY_SOCKET=${AVAHI_PROXY_SOCKET}
@@ -807,7 +900,8 @@ rm -f -- \
     "${INSTALL_DIR}/deploy-artifacts.txt" \
     "${HOST_COMPONENT_DIR}/host-debug.sh" "${HOST_COMPONENT_DIR}/deploy-artifacts.txt"
 
-IP_ADDR="$(hostname -i 2>/dev/null | awk '{print $1}')"
+IP_ADDR="$(host_primary_ipv4)"
+[[ -n "${IP_ADDR}" ]] || IP_ADDR="$(hostname 2>/dev/null || echo raspberrypi)"
 echo
 echo "=== Installation Complete ==="
 echo "Platform: Alpine Linux ${SUPPORTED_ALPINE_SERIES} aarch64 on ${PI_MODEL}"
@@ -834,7 +928,7 @@ if [[ -t 0 ]]; then
     # has already fully succeeded.
     read -r -p "Reboot now? (y/N): " REBOOT_CHOICE || REBOOT_CHOICE=n
 else
-    echo "Non-interactive install; reboot manually to finish: sudo reboot"
+    echo "Non-interactive install; the deployment client will reboot the Pi."
 fi
 if [[ "${REBOOT_CHOICE}" =~ ^[Yy] ]]; then
     /sbin/reboot

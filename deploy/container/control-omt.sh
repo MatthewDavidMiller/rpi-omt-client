@@ -23,9 +23,9 @@ LOG_FILE="${OMT_CONFIG_DIR}/receiver.log"
 START_OMT_CMD="${START_OMT_CMD:-/usr/local/bin/start-omt.sh}"
 OMT_RECEIVER_COMMAND="${OMT_RECEIVER_COMMAND:-/usr/local/bin/omt-receiver}"
 PID_FILE_MAX_BYTES=128
-# How long a launch has to become the receiver itself. start-omt.sh runs a
-# Python target reader before it execs, so this window has to cover an
-# interpreter start on cold SD-card-backed flash, not just a fork.
+# How long a launch has to become the receiver itself. start-omt.sh runs
+# `omt-web play-target` before it execs, so this window has to cover a
+# process start on cold SD-card-backed flash, not just a fork.
 START_READY_ATTEMPTS=150
 START_READY_INTERVAL=0.02
 # Crash loops append forever; keep the persistent log size-capped so a bad

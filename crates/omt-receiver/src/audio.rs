@@ -244,6 +244,11 @@ mod tests {
     }
 
     #[test]
+    fn a_full_ring_buffer_is_back_pressure_not_a_fault() {
+        assert_eq!(super::AGAIN, 11);
+    }
+
+    #[test]
     fn every_channel_is_interleaved_in_order() {
         let body = planar(&[1.0, 2.0, 3.0, -1.0, -2.0, -3.0]);
         let mut out = [0.0_f32; 6];

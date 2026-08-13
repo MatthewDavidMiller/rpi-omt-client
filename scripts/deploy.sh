@@ -240,5 +240,34 @@ ssh "${HOST}" bash "${REMOTE_STAGE}/deploy/transaction.sh" \
 
 cleanup_required=false
 ssh -t "${HOST}" \
-    "chmod +x '${REMOTE_DIR}/deploy/host/bootstrap.sh' '${REMOTE_DIR}/deploy/host/install.sh' '${REMOTE_DIR}/deploy/host/uninstall.sh' '${REMOTE_DIR}/deploy/host/host-diagnostics.sh' '${REMOTE_DIR}/deploy/host/host-event-watcher.sh' '${REMOTE_DIR}/deploy/host/host-reboot.sh' '${REMOTE_DIR}/deploy/transaction.sh' && ${ESCALATE} '${REMOTE_DIR}/deploy/host/install.sh'"
+    "chmod +x '${REMOTE_DIR}/deploy/host/bootstrap.sh' '${REMOTE_DIR}/deploy/host/install.sh' '${REMOTE_DIR}/deploy/host/uninstall.sh' '${REMOTE_DIR}/deploy/host/host-diagnostics.sh' '${REMOTE_DIR}/deploy/host/host-event-watcher.sh' '${REMOTE_DIR}/deploy/host/host-reboot.sh' '${REMOTE_DIR}/deploy/transaction.sh' && ${ESCALATE} sh -c \"printf 'n\\\\n' | '${REMOTE_DIR}/deploy/host/install.sh'\""
+echo "Rebooting ${HOST} to apply kernel, firmware, and KMS settings..."
+ssh -t "${HOST}" \
+    "${ESCALATE} sh -c 'nohup sh -c \"sleep 1; /sbin/reboot\" </dev/null >/dev/null 2>&1 &'" \
+    >/dev/null || true
+echo "Waiting for ${HOST} to come back..."
+saw_down=false
+rebooted=false
+for _ in $(seq 1 90); do
+    sleep 2
+    if ssh -o ConnectTimeout=5 -o BatchMode=yes "${HOST}" true >/dev/null 2>&1; then
+        if [[ "${saw_down}" == true ]]; then
+            rebooted=true
+            break
+        fi
+    else
+        saw_down=true
+    fi
+done
+[[ "${rebooted}" == true ]] || {
+    echo "WARNING: ${HOST} did not come back after reboot within six minutes." >&2
+    echo "Deployed. Check the installer summary above and reboot the Pi if needed." >&2
+    exit 0
+}
+echo "Waiting for the OMT appliance to start..."
+for _ in $(seq 1 90); do
+    status="$(ssh "${HOST}" "${ESCALATE} docker inspect -f '{{.State.Status}}' omt-client" 2>/dev/null || true)"
+    [[ "${status}" == running ]] && break
+    sleep 2
+done
 echo "Deployed. Use the authoritative Web UI URL printed by install.sh above."

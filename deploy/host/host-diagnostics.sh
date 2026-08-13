@@ -347,7 +347,11 @@ start_packet_captures
     run "effective kernel command line (sanitized)" sh -c \
         'sed -E "s/((password|passwd|secret|token|credential|psk|key)=)[^ ]+/\1<redacted>/Ig" /proc/cmdline'
     run "kernel and SSH hardening" sh -c \
-        'sysctl fs.protected_fifos fs.protected_hardlinks fs.protected_regular fs.protected_symlinks fs.suid_dumpable kernel.dmesg_restrict kernel.kptr_restrict kernel.perf_event_paranoid kernel.randomize_va_space kernel.sysrq kernel.unprivileged_bpf_disabled net.core.bpf_jit_harden 2>&1; printf "\n### effective SSH policy\n"; sshd -T 2>&1 | grep -E "^(allowgroups|disableforwarding|kbdinteractiveauthentication|maxauthtries|maxsessions|maxstartups|passwordauthentication|permitrootlogin) " || true'
+        'sysctl fs.protected_fifos fs.protected_hardlinks fs.protected_regular fs.protected_symlinks fs.suid_dumpable kernel.dmesg_restrict kernel.kptr_restrict kernel.perf_event_paranoid kernel.randomize_va_space kernel.sysrq kernel.unprivileged_bpf_disabled net.core.bpf_jit_harden net.ipv4.conf.all.rp_filter net.ipv4.conf.default.rp_filter net.ipv4.conf.all.arp_ignore net.ipv4.conf.all.arp_announce net.ipv4.conf.all.drop_gratuitous_arp net.ipv4.tcp_fastopen net.ipv6.conf.all.accept_ra net.ipv6.conf.default.accept_ra net.ipv6.conf.all.autoconf net.ipv6.conf.default.autoconf net.ipv6.conf.all.router_solicitations 2>&1; printf "\n### effective SSH policy\n"; sshd -T 2>&1 | grep -E "^(allowgroups|disableforwarding|kbdinteractiveauthentication|maxauthtries|maxsessions|maxstartups|passwordauthentication|permitrootlogin) " || true'
+    run "CPU frequency governor" sh -c \
+        'for g in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do [ -r "$g" ] || continue; printf "%s=" "$g"; cat "$g"; done'
+    run "Wi-Fi power save" sh -c \
+        'if ! command -v iw >/dev/null 2>&1; then echo iw_unavailable; exit 0; fi; iw dev 2>/dev/null || true; for path in /sys/class/net/*/wireless; do [ -d "$path" ] || continue; iface=${path#/sys/class/net/}; iface=${iface%/wireless}; printf "%s " "$iface"; iw dev "$iface" get power_save 2>/dev/null || echo unavailable; done'
     run "managed HDMI settings" sh -c \
         'for file in /media/mmcblk0p1/usercfg.txt /boot/usercfg.txt /etc/omt-client/installer.conf; do [ -e "$file" ] || continue; printf "### %s\n" "$file"; if [ "${file##*/}" = usercfg.txt ]; then sed -n "/^# BEGIN OMT Client HDMI configuration$/,/^# END OMT Client HDMI configuration$/p" "$file" 2>&1; else cat "$file" 2>&1; fi; done'
 

@@ -56,7 +56,7 @@ done
 
 # ─── config.txt managed block ────────────────────────────────────────────────
 
-managed_block=$'# BEGIN OMT Client HDMI configuration\ndtoverlay=vc4-kms-v3d\nmax_framebuffers=2\ndisable_fw_kms_setup=1\n# END OMT Client HDMI configuration'
+managed_block=$'# BEGIN OMT Client HDMI configuration\ndtoverlay=vc4-kms-v3d\nmax_framebuffers=2\ndisable_fw_kms_setup=1\ndtparam=krnbt=off\n# END OMT Client HDMI configuration'
 
 first_install="$(printf 'dtparam=audio=on\n' | host_hdmi_config_txt)"
 expect_equal "first install appends the managed block" \
@@ -92,7 +92,7 @@ expect_equal "an empty config still gets the managed block" \
 # V3D driver allocates from CMA, so the split is wasted RAM -- worth the most on
 # the 512 MiB Zero 2 W. The Pi 5 has no such split and must not be given the
 # setting at all.
-gpu_mem_block=$'# BEGIN OMT Client HDMI configuration\ndtoverlay=vc4-kms-v3d\nmax_framebuffers=2\ndisable_fw_kms_setup=1\ngpu_mem=64\n# END OMT Client HDMI configuration'
+gpu_mem_block=$'# BEGIN OMT Client HDMI configuration\ndtoverlay=vc4-kms-v3d\nmax_framebuffers=2\ndisable_fw_kms_setup=1\ngpu_mem=64\ndtoverlay=disable-bt\n# END OMT Client HDMI configuration'
 
 for board in pi4 pi3 pizero2w; do
     expect_equal "${board} reserves the minimum GPU split" \
@@ -107,6 +107,12 @@ for board in pi5 pi4 pi3 pizero2w; do
     rendered="$(printf '' | host_hdmi_config_txt "${board}")"
     grep -Fqx 'dtoverlay=vc4-kms-v3d' <<< "${rendered}" ||
         fail "${board} must use the portable KMS overlay"
+done
+grep -Fqx 'dtparam=krnbt=off' <<< "$(printf '' | host_hdmi_config_txt pi5)" ||
+    fail "pi5 must disable onboard Bluetooth with dtparam=krnbt=off"
+for board in pi4 pi3 pizero2w; do
+    grep -Fqx 'dtoverlay=disable-bt' <<< "$(printf '' | host_hdmi_config_txt "${board}")" ||
+        fail "${board} must disable onboard Bluetooth with dtoverlay=disable-bt"
 done
 
 # Switching boards replaces the managed block rather than accumulating both

@@ -194,10 +194,10 @@ Manage reads
 container status/logs or restarts the OpenRC service through sudo for a
 non-root SSH account. Restart uses the service boundary so it can also start a
 freshly installed appliance whose container has not been created yet.
-Manage also offers a confirmed operating-system reboot, so the reboot required
-after installation does not need a separate SSH session or a manually typed
-host command. The same view can change the Web GUI password later without
-redeploying.
+Manage also offers a confirmed operating-system reboot. A successful Deploy
+already reboots to apply kernel, firmware, and KMS settings, so that reboot
+does not need a separate SSH session. The same view can change the Web GUI
+password later without redeploying.
 Wi-Fi updates the running
 `wpa_supplicant` through its control socket and stores a derived WPA PSK rather
 than sending the plaintext passphrase to a command line.
@@ -304,7 +304,11 @@ The installer then:
    Docker logs, daemon no-new-privileges, BPF JIT constant blinding, zram swap,
    a 256 MiB container cap, a 64-PID cap, and bounded file descriptors, shared
    memory, and tmpfs mounts. SSH logins are limited to `root` (keys only) and
-   members of the administrative `wheel` group;
+   members of the administrative `wheel` group. IPv4 reverse-path filtering is
+   pinned, IPv6 router advertisements and SLAAC are refused, apk repositories are
+   rewritten to HTTPS, onboard Bluetooth is disabled, the CPU governor is
+   pinned to `performance`, Wi-Fi power save is pinned off, and time
+   synchronization is enabled;
 3. installs a default-deny nftables input policy allowing established traffic,
    loopback, ICMP/IPv6 neighbor discovery, DHCP, mDNS, SSH, and the Web port;
 4. loads the ARM64 image, prepares the persistent volume and least-privilege
@@ -317,14 +321,18 @@ The installer then:
 
 The installer never adds an operator to Docker's root-equivalent `docker`
 group. Existing Docker daemon JSON is merged with the appliance security/log
-policy. A reboot is required after installation to use the updated kernel,
-firmware, and KMS settings.
+policy. The native deployers and `make deploy` reboot the Pi after a successful
+install so the updated kernel, firmware, and KMS settings are used; they wait
+for SSH and the appliance to return. A local interactive `install.sh` still
+prompts before rebooting.
 
 ## First use
 
-Sign in at the HTTPS URL printed by the installer. The container generates a
-random Web GUI password on its first successful start and prints it once. On
-the Pi, retrieve it with:
+Sign in at the HTTPS URL printed by the installer. After a native or `make
+deploy` install, the deployer waits for the appliance and prints the first-start
+Web GUI password when the container logs still hold it. The container generates
+a random password on its first successful start and prints it once. On the Pi,
+retrieve it with:
 
 ```bash
 sudo sh -c '. /etc/conf.d/omt-client; docker compose --env-file "$OMT_COMPOSE_ENV_FILE" -f "$OMT_COMPOSE_FILE" logs omt-client' \

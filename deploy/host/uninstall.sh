@@ -1,5 +1,5 @@
 #!/bin/bash
-# Raspberry Pi 5 Alpine OMT Client uninstaller.
+# Raspberry Pi Alpine OMT Client uninstaller.
 
 set -euo pipefail
 export LC_ALL=C
@@ -34,7 +34,7 @@ OPENRC_SERVICES=(
     omt-client-reboot
 )
 
-echo "=== Raspberry Pi 5 Alpine OMT Client Uninstaller ==="
+echo "=== Raspberry Pi Alpine OMT Client Uninstaller ==="
 
 for service in "${OPENRC_SERVICES[@]}"; do
     rc-service "${service}" stop >/dev/null 2>&1 || true
@@ -55,7 +55,10 @@ for service in "${OPENRC_SERVICES[@]}"; do
 done
 rm -f -- /etc/nftables.d/omt-client.nft \
     /etc/ssh/sshd_config.d/90-omt-client-hardening.conf \
-    /etc/sysctl.d/90-omt-client-hardening.conf
+    /etc/sysctl.d/90-omt-client-hardening.conf \
+    /etc/modprobe.d/omt-client-blacklist.conf \
+    /etc/local.d/omt-client-cpufreq.start \
+    /etc/wpa_supplicant/omt-client-action.sh
 if command -v nft >/dev/null 2>&1 && [[ -f /etc/nftables.nft ]]; then
     # Flush before reloading: the appliance appends its accepts into the host's
     # own input chain, so re-reading the file alone would leave those rules live

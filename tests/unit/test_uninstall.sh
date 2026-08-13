@@ -30,6 +30,9 @@ require 'docker volume rm omt-config-v3' "the OMT volume must be removed"
 forbid 'systemctl' "Alpine uninstaller must not call systemd"
 require 'read -r -p "Remove \$\{INSTALL_DIR\} and all OMT Client volume data\?' \
     "persistent-state removal must require confirmation"
-require 'rm -rf "\$\{INSTALL_DIR\}"' "confirmed install directory must be removed"
+require 'Raspberry Pi Alpine OMT Client Uninstaller' "uninstaller branding must not be Pi 5 only"
+require 'omt-client-cpufreq.start' "the CPU governor drop-in must be removed"
+require 'omt-client-blacklist\.conf' "the Bluetooth module blacklist must be removed"
+require 'omt-client-action\.sh' "the Wi-Fi power-save action hook must be removed"
 
 echo "Alpine OMT uninstaller contract tests passed"

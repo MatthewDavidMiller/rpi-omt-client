@@ -22,6 +22,15 @@ fi
 mkdir -p "${OMT_RUNTIME_DIR}"
 chmod 700 "${OMT_RUNTIME_DIR}"
 
+# An upgrade's leftover SD-backed run/ directory is not the tmpfs runtime.
+# Drop it when this process is using a path outside the config volume.
+if [[ "${OMT_RUNTIME_DIR}" != "${OMT_CONFIG_DIR}/run" && \
+      "${OMT_RUNTIME_DIR}" != "${OMT_CONFIG_DIR}/run/"* ]]; then
+    if [[ -e "${OMT_CONFIG_DIR}/run" || -L "${OMT_CONFIG_DIR}/run" ]]; then
+        rm -rf -- "${OMT_CONFIG_DIR}/run"
+    fi
+fi
+
 sync_replace() {
     local staged="$1" target="$2"
     sync -f "${staged}"

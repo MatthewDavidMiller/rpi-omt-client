@@ -34,12 +34,17 @@ host_validate_hdmi_video_mode() {
 # the V3D driver allocates from CMA instead, so the split is wasted RAM, and it
 # is worth the most on the 512 MiB Zero 2 W. The Pi 5 has no such split and
 # ignores the setting, so it is left out there rather than written and ignored.
+# Onboard Bluetooth is disabled in the same block: the appliance has no use
+# for it, and leaving the controller up is idle RAM and an extra radio. Pi 5
+# uses `dtparam=krnbt=off`; the others use `dtoverlay=disable-bt`.
 host_hdmi_config_txt() {
     local board_id="${1:-pi5}"
     local gpu_mem=""
+    local bt_disable="dtoverlay=disable-bt"
     [[ "${board_id}" == "pi5" ]] || gpu_mem="gpu_mem=64"
+    [[ "${board_id}" == "pi5" ]] && bt_disable="dtparam=krnbt=off"
 
-    awk -v gpu_mem="${gpu_mem}" '
+    awk -v gpu_mem="${gpu_mem}" -v bt_disable="${bt_disable}" '
         function flush_pending_blanks() {
             while (pending_blanks > 0) {
                 print ""
@@ -85,6 +90,7 @@ host_hdmi_config_txt() {
             if (gpu_mem != "") {
                 print gpu_mem
             }
+            print bt_disable
             print "# END OMT Client HDMI configuration"
         }
     '

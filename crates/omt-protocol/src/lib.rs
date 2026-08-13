@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 
-use std::net::{Ipv4Addr, Ipv6Addr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use unicode_normalization::UnicodeNormalization;
 
 pub const HEADER_SIZE: usize = 16;
@@ -311,26 +311,29 @@ pub fn parse_direct_target(value: &str) -> Result<DirectTarget, ProtocolError> {
         return Err(ProtocolError::Invalid("OMT target port"));
     }
     let normalized_host = if ipv6_literal {
-        let (address, zone) = match host.split_once("%25") {
-            Some((a, z)) => (a, Some(z)),
-            None => (host, None),
-        };
-        if address.parse::<Ipv6Addr>().is_err()
-            || zone.is_some_and(|z| {
-                z.is_empty()
-                    || !z
-                        .bytes()
-                        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.'))
-            })
-            || (zone.is_none() && host.contains('%'))
-        {
+        // A zone index cannot be carried through to connect: `Endpoint::resolve`
+        // has nowhere to put it, and an unscoped link-local address is the
+        // record a dual-stack resolver emits beside a usable one. Refuse both
+        // here so the dashboard cannot save a target that only fails later.
+        if host.contains('%') {
             return Err(ProtocolError::Invalid("IPv6 target"));
         }
-        zone.map_or_else(|| host.to_owned(), |z| format!("{address}%{z}"))
+        let address: Ipv6Addr = host
+            .parse()
+            .map_err(|_| ProtocolError::Invalid("IPv6 target"))?;
+        if is_undiallable_ip(IpAddr::V6(address)) {
+            return Err(ProtocolError::Invalid("IPv6 target"));
+        }
+        host.to_owned()
     } else {
         if host.is_empty()
             || host.len() >= 256
             || (host.parse::<Ipv4Addr>().is_err() && !valid_dns(host))
+        {
+            return Err(ProtocolError::Invalid("OMT target host"));
+        }
+        if let Ok(v4) = host.parse::<Ipv4Addr>()
+            && is_undiallable_ip(IpAddr::V4(v4))
         {
             return Err(ProtocolError::Invalid("OMT target host"));
         }
@@ -410,6 +413,25 @@ pub fn is_valid_source_name(value: &str) -> bool {
             .is_some_and(|c| !c.is_whitespace())
 }
 
+/// True for a literal address no connect can use as it stands.
+///
+/// IPv4 link-local is deliberately absent: a `169.254.0.0/16` peer is reached
+/// over the one link it is on with no extra addressing. IPv6 link-local is
+/// included, because it repeats per interface and needs a zone index the
+/// target grammar does not carry through to connect.
+#[must_use]
+pub fn is_undiallable_ip(address: IpAddr) -> bool {
+    match address {
+        IpAddr::V4(value) => value.is_unspecified() || value.is_multicast() || value.is_broadcast(),
+        IpAddr::V6(value) => {
+            value.is_unspecified()
+                || value.is_multicast()
+                // `Ipv6Addr::is_unicast_link_local` is still unstable.
+                || (value.segments()[0] & 0xFFC0) == 0xFE80
+        }
+    }
+}
+
 pub fn is_valid_target(value: &str) -> bool {
     if value.starts_with("omt://") {
         parse_direct_target(value).is_ok()
@@ -428,7 +450,10 @@ mod tests {
             parse_direct_target("omt://camera:6400").map(|v| v.port),
             Ok(6400)
         );
-        assert!(parse_direct_target("omt://[fe80::1%25eth0]:6400").is_ok());
+        assert!(parse_direct_target("omt://[fe80::1%25eth0]:6400").is_err());
+        assert!(parse_direct_target("omt://[fe80::1]:6400").is_err());
+        assert!(parse_direct_target("omt://0.0.0.0:6400").is_err());
+        assert!(parse_direct_target("omt://255.255.255.255:1").is_err());
         for invalid in [
             "",
             "camera",

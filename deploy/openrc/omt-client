@@ -17,14 +17,15 @@ start_pre() {
     # Alpine's supervised Docker service can be marked started while dockerd
     # is still initializing containerd and has not created its API socket.
     # `need docker` orders the jobs but does not guarantee API readiness. On a
-    # clean Pi 5 boot that race made this service fail once and remain stopped
-    # until an operator restarted it. Keep the boot bounded while waiting for
-    # the dependency we actually consume.
+    # Pi 4 cold start the daemon still has to restore containers before it
+    # opens /var/run/docker.sock, and a 30-second wait lost that race. Keep
+    # the boot bounded while waiting for the dependency we actually consume.
     local docker_wait=0
+    local docker_wait_limit="${OMT_DOCKER_API_WAIT_SECONDS:-90}"
     until docker info >/dev/null 2>&1; do
         docker_wait=$((docker_wait + 1))
-        if [ "${docker_wait}" -ge 30 ]; then
-            eerror "Docker did not become ready within 30 seconds"
+        if [ "${docker_wait}" -ge "${docker_wait_limit}" ]; then
+            eerror "Docker did not become ready within ${docker_wait_limit} seconds"
             return 1
         fi
         sleep 1

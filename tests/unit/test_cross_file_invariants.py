@@ -133,3 +133,32 @@ def test_the_supported_board_table_agrees_between_the_host_and_the_deployer():
     deploy_script = (REPO_ROOT / "scripts" / "deploy.sh").read_text(encoding="utf-8")
     assert "board-profile.sh" in deploy_script
     assert "host_board_profile" in deploy_script
+
+
+def test_docker_api_wait_agrees_between_the_installer_and_openrc():
+    installer = INSTALLER.read_text(encoding="utf-8")
+    openrc = (REPO_ROOT / "deploy" / "openrc" / "omt-client").read_text(encoding="utf-8")
+    configured = re.search(r"^DOCKER_API_WAIT_SECONDS=(\d+)$", installer, re.MULTILINE)
+    assert configured is not None, "install.sh no longer pins the Docker API wait"
+    expected = configured.group(1)
+    assert expected == "90"
+    assert "OMT_DOCKER_API_WAIT_SECONDS=${DOCKER_API_WAIT_SECONDS}" in installer
+    assert f"OMT_DOCKER_API_WAIT_SECONDS:-{expected}" in openrc
+
+
+def test_playback_status_stale_floor_stays_above_the_receiver_heartbeat():
+    heartbeat = re.search(
+        r"pub const HEARTBEAT: Duration = Duration::from_millis\((\d+)\)",
+        RECEIVER_CORE.read_text(encoding="utf-8"),
+    )
+    assert heartbeat is not None, "receiver-core no longer publishes HEARTBEAT"
+    stale = re.search(
+        r'"OMT_PLAYBACK_STATUS_STALE_SECONDS",\s*\n\s*(\d+),\s*\n\s*(\d+)',
+        WEB_SETTINGS.read_text(encoding="utf-8"),
+    )
+    assert stale is not None, "web settings no longer pin the stale default and floor"
+    default_seconds = int(stale.group(1))
+    min_seconds = int(stale.group(2))
+    heartbeat_ms = int(heartbeat.group(1))
+    assert min_seconds * 1000 > heartbeat_ms
+    assert default_seconds >= min_seconds

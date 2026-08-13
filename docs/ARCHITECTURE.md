@@ -56,8 +56,10 @@ both are an empty list, which is why this survived alongside a working
 transport.
 
 `endpoint_from_parts` then refuses an address no connect can use, rather than
-carrying it forward as a source that only fails once selected. A resolver
-answers once per address family, so a service on a dual-stack link produces an
+carrying it forward as a source that only fails once selected. Direct targets
+use the same rule: IPv6 link-local, unspecified, multicast, and IPv4 broadcast
+literals are rejected by `parse_direct_target`, so the dashboard cannot save a
+URI that only fails at connect. A resolver answers once per address family, so a service on a dual-stack link produces an
 unscoped `fe80::` record beside its usable one, and the endpoint map keeps
 whichever arrived last. Reaching a link-local IPv6 address needs a zone index
 that neither the OMT target grammar nor the operator's direct-target box can
@@ -194,11 +196,11 @@ action files. A minimal injected init reaps failed receiver descendants; PID,
 memory, swap, shared-memory, file-descriptor, core-dump, and temporary-filesystem
 limits bound the remaining process and storage surfaces.
 
-The appliance OpenRC service waits for Docker's API with a bounded timeout
+The appliance OpenRC service waits up to 90 seconds for Docker's API
 before invoking Compose. Alpine's supervised Docker service can report itself
-started while dockerd is still initializing containerd; ordering only on the
-OpenRC service otherwise leaves a clean boot stopped after a one-time socket
-race.
+started while dockerd is still initializing containerd; a 30-second wait lost
+that race on a Pi 4 cold start and left the appliance stopped until an
+operator restarted it.
 
 The filtered Avahi proxy runs under the container's own UID, not as `nobody`.
 `xdg-dbus-proxy` serves its socket through GDBus, whose default authorization
@@ -360,9 +362,23 @@ workstation-side gates. OpenRC supervises the filtered Avahi proxy and two inoti
 the Docker workload remains detached with its own restart policy.
 
 Host hardening disables unprivileged BPF and applies BPF JIT constant blinding
-for privileged callers as well. SSH keeps root key access for recovery but
+for privileged callers as well. IPv4 reverse-path filtering is pinned on, ARP
+replies are limited to the incoming interface, IPv6 router advertisements and
+SLAAC are refused, and apk repositories are rewritten to HTTPS.
+SSH keeps root key access for recovery but
 limits every login to root or the administrative `wheel` group; password root
-login and all forwarding paths remain disabled.
+login and all forwarding paths remain disabled. Onboard Bluetooth is disabled
+in firmware, blocked at runtime, and blacklisted as kernel modules. The CPU
+frequency governor is pinned to `performance` so decode on the Pi 4 does not
+drop below its ceiling under schedutil. Wi-Fi power save is pinned off so
+brcmfmac does not drop mDNS or OMT datagrams. Time synchronization is enabled
+through the host's existing ntpd, or chrony when nothing else is providing a
+clock.
+
+The native deployers reboot the Pi after a successful install, wait for SSH to
+return, and wait for the appliance container. They surface the first-start Web
+GUI password from the container logs when it is still retained. `make deploy`
+does the same.
 
 Pi DRM, ALSA, HDMI hotplug, OpenRC boot ordering, nftables, and live OMT media
 remain hardware validation boundaries after local unit and amd64 image checks

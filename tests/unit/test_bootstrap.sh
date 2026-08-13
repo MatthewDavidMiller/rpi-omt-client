@@ -50,6 +50,7 @@ done
 require 'apk add .*bash' "bootstrap must install bash"
 require 'apk add .*sudo' "bootstrap must install sudo"
 require '/community' "bootstrap must enable the community repository for sudo"
+require 'Rewriting apk repositories to HTTPS' "bootstrap must rewrite apk repositories to HTTPS"
 require 'visudo -c' "a generated sudoers drop-in must be validated before publishing"
 require '%wheel' "wheel must be granted escalation; Alpine grants it nothing"
 require 'id -u.*=.*0|EUID' "bootstrap must refuse to run unprivileged"

@@ -54,6 +54,13 @@ if ! grep -Eq '^[^#[:space:]]+/community/?$' /etc/apk/repositories; then
     printf '%s/community\n' "${MAIN_REPOSITORY}" >> /etc/apk/repositories
 fi
 
+# Stock Alpine images list HTTP mirrors. The CDN serves HTTPS, and this
+# bootstrap is the first package fetch on a clean host.
+if grep -q '^http://' /etc/apk/repositories; then
+    echo "Rewriting apk repositories to HTTPS..."
+    sed -i -e 's|^http://|https://|' /etc/apk/repositories
+fi
+
 echo "Installing the bootstrap prerequisites (bash, sudo)..."
 apk update
 apk add --no-cache bash sudo

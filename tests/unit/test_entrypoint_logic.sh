@@ -83,6 +83,14 @@ run_entrypoint >/dev/null 2>&1
 [[ -d "${CASE_DIR}/config/run" ]]
 [[ "$(stat -c '%a' "${CASE_DIR}/config/run")" == 700 ]]
 
+# When runtime is on tmpfs, an upgrade leftover under the config volume is
+# dropped rather than chmod-preserved as a second write path.
+mkdir -p "${CASE_DIR}/config/run"
+printf leftover > "${CASE_DIR}/config/run/stale"
+run_entrypoint_with_runtime "${CASE_DIR}/runtime/state" >/dev/null 2>&1
+[[ ! -e "${CASE_DIR}/config/run" ]]
+[[ -d "${CASE_DIR}/runtime/state" ]]
+
 # A hostile runtime path is refused rather than written through.
 rm -rf "${CASE_DIR}/runtime"
 mkdir -p "${CASE_DIR}/runtime"

@@ -12,7 +12,8 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::SystemTime;
+use std::thread;
+use std::time::{Duration, Instant, SystemTime};
 use zeroize::Zeroizing;
 
 const PLATFORM_PROBE: &str = "uname -m && . /etc/os-release && printf '%s\\n' \"$ID\" && cat /etc/alpine-release && tr -d '\\000' < /proc/device-tree/model && printf '\\n'";
@@ -30,25 +31,39 @@ const WIFI_SCRIPT: &str = concat!(
     "ssid_hex=$1\n",
     "activate=$2\n",
     "command -v wpa_cli >/dev/null 2>&1 || { echo 'wpa_cli is unavailable' >&2; exit 12; }\n",
-    "wpa_cli -i wlan0 ping | grep -Fxq PONG || { echo 'wpa_supplicant is unavailable on wlan0' >&2; exit 12; }\n",
-    "wpa_cli -i wlan0 scan >/dev/null || true\n",
+    "iface=\n",
+    "if command -v iw >/dev/null 2>&1; then\n",
+    "  iface=$(iw dev 2>/dev/null | awk '$1 == \"Interface\" { print $2; exit }')\n",
+    "fi\n",
+    "if [ -z \"$iface\" ]; then\n",
+    "  for path in /sys/class/net/*/wireless; do\n",
+    "    [ -e \"$path\" ] || continue\n",
+    "    iface=${path#/sys/class/net/}\n",
+    "    iface=${iface%/wireless}\n",
+    "    break\n",
+    "  done\n",
+    "fi\n",
+    "[ -n \"$iface\" ] || iface=wlan0\n",
+    "wpa_cli -i \"$iface\" ping | grep -Fxq PONG || { echo \"wpa_supplicant is unavailable on $iface\" >&2; exit 12; }\n",
+    "wpa_cli -i \"$iface\" scan >/dev/null || true\n",
     "network_id=\n",
-    "for candidate in $(wpa_cli -i wlan0 list_networks | awk 'NR > 1 {print $1}'); do\n",
-    "  current=$(wpa_cli -i wlan0 get_network \"$candidate\" ssid 2>/dev/null || true)\n",
+    "for candidate in $(wpa_cli -i \"$iface\" list_networks | awk 'NR > 1 {print $1}'); do\n",
+    "  current=$(wpa_cli -i \"$iface\" get_network \"$candidate\" ssid 2>/dev/null || true)\n",
     "  if [ \"$current\" = \"$ssid_hex\" ]; then network_id=$candidate; break; fi\n",
     "done\n",
-    "if [ -z \"$network_id\" ]; then network_id=$(wpa_cli -i wlan0 add_network); fi\n",
+    "if [ -z \"$network_id\" ]; then network_id=$(wpa_cli -i \"$iface\" add_network); fi\n",
     "case \"$network_id\" in ''|*[!0-9]*) echo 'Unable to allocate Wi-Fi profile' >&2; exit 13;; esac\n",
-    "wpa_cli -i wlan0 set_network \"$network_id\" ssid \"$ssid_hex\" | grep -Fxq OK\n",
-    "wpa_cli -i wlan0 set_network \"$network_id\" key_mgmt WPA-PSK | grep -Fxq OK\n",
-    "wpa_cli -i wlan0 set_network \"$network_id\" psk \"$wifi_password\" | grep -Fxq OK\n",
+    "wpa_cli -i \"$iface\" set_network \"$network_id\" ssid \"$ssid_hex\" | grep -Fxq OK\n",
+    "wpa_cli -i \"$iface\" set_network \"$network_id\" key_mgmt WPA-PSK | grep -Fxq OK\n",
+    "wpa_cli -i \"$iface\" set_network \"$network_id\" psk \"$wifi_password\" | grep -Fxq OK\n",
     "unset wifi_password\n",
-    "wpa_cli -i wlan0 enable_network \"$network_id\" | grep -Fxq OK\n",
-    "wpa_cli -i wlan0 save_config | grep -Fxq OK\n",
+    "wpa_cli -i \"$iface\" enable_network \"$network_id\" | grep -Fxq OK\n",
+    "wpa_cli -i \"$iface\" save_config | grep -Fxq OK\n",
     "if [ \"$activate\" = yes ]; then\n",
-    "  wpa_cli -i wlan0 select_network \"$network_id\" >/dev/null\n",
-    "  wpa_cli -i wlan0 reassociate >/dev/null\n",
-    "fi\n"
+    "  wpa_cli -i \"$iface\" select_network \"$network_id\" >/dev/null\n",
+    "  wpa_cli -i \"$iface\" reassociate >/dev/null\n",
+    "fi\n",
+    "command -v iw >/dev/null 2>&1 && iw dev \"$iface\" set power_save off || true\n"
 );
 
 #[derive(Clone, Debug)]
@@ -249,6 +264,94 @@ fn ensure_host_bootstrapped(
     };
     require_success(&result, "Alpine bootstrap")?;
     Ok(())
+}
+
+fn privileged_argv_command(connection: &Connection, argv: &[&str]) -> String {
+    privileged_command(
+        connection,
+        &argv
+            .iter()
+            .copied()
+            .map(shell_quote)
+            .collect::<Vec<_>>()
+            .join(" "),
+    )
+}
+
+fn first_web_password(logs: &str) -> Option<&str> {
+    let mut lines = logs.lines();
+    while let Some(line) = lines.next() {
+        if !line.contains("Web UI password (save this now)") {
+            continue;
+        }
+        let value = lines.next()?.trim();
+        if value.is_empty() || value.bytes().all(|byte| byte == b'=') {
+            return None;
+        }
+        return Some(value);
+    }
+    None
+}
+
+fn wait_for_reboot(
+    connection: &Connection,
+    cancellation: &AtomicBool,
+    progress: &mut dyn FnMut(&str),
+) -> io::Result<SshSession> {
+    progress("Waiting for the Raspberry Pi to reboot...");
+    let deadline = Instant::now() + Duration::from_mins(6);
+    let mut saw_down = false;
+    while Instant::now() < deadline {
+        cancelled(cancellation)?;
+        match connect(connection) {
+            Ok(session) if saw_down => return Ok(session),
+            Ok(_) => {}
+            Err(_) => saw_down = true,
+        }
+        thread::sleep(Duration::from_secs(2));
+    }
+    Err(io::Error::other(
+        "the Raspberry Pi did not come back after reboot within six minutes",
+    ))
+}
+
+fn wait_for_appliance(
+    connection: &Connection,
+    session: &mut SshSession,
+    cancellation: &AtomicBool,
+    progress: &mut dyn FnMut(&str),
+) -> io::Result<()> {
+    progress("Waiting for the OMT appliance to start...");
+    let command = privileged_command(
+        connection,
+        "docker inspect -f '{{.State.Status}}' omt-client",
+    );
+    let stdin = sudo_input(connection);
+    let deadline = Instant::now() + Duration::from_mins(3);
+    while Instant::now() < deadline {
+        cancelled(cancellation)?;
+        let result = session.run(&command, &stdin, cancellation)?;
+        if result.is_success() && result.stdout.trim() == "running" {
+            return Ok(());
+        }
+        thread::sleep(Duration::from_secs(2));
+    }
+    Err(io::Error::other(
+        "the OMT appliance container did not reach running state within three minutes",
+    ))
+}
+
+fn fetch_initial_web_password(
+    connection: &Connection,
+    session: &mut SshSession,
+    cancellation: &AtomicBool,
+) -> io::Result<Option<String>> {
+    let command = privileged_argv_command(connection, ManagementAction::Logs.remote_argv());
+    let result = session.run(&command, &sudo_input(connection), cancellation)?;
+    if !result.is_success() {
+        return Ok(None);
+    }
+    Ok(first_web_password(&result.combined()).map(str::to_owned))
 }
 
 fn file_fingerprint(path: &Path) -> io::Result<String> {
@@ -835,6 +938,30 @@ pub fn deploy(
         ];
         progress(&redact(summary, &secrets));
     }
+    progress("Rebooting to apply kernel, firmware, and KMS settings...");
+    let reboot = privileged_argv_command(connection, ManagementAction::Reboot.remote_argv());
+    require_success(
+        &session.run(&reboot, &sudo_data, cancellation)?,
+        "Post-install reboot",
+    )?;
+    drop(session);
+    let mut session = wait_for_reboot(connection, cancellation, progress)?;
+    match wait_for_appliance(connection, &mut session, cancellation, progress) {
+        Ok(()) => {
+            if let Some(password) =
+                fetch_initial_web_password(connection, &mut session, cancellation)?
+            {
+                progress(&format!("Web UI password (save this now): {password}"));
+            }
+            progress("Appliance is running.");
+        }
+        Err(error) => {
+            progress(&format!(
+                "Install succeeded, but the appliance did not start within the wait: {error}. \
+                 Check `sudo rc-service omt-client status` on the Pi."
+            ));
+        }
+    }
     progress("Deployment complete.");
     Ok(())
 }
@@ -1088,5 +1215,55 @@ mod tests {
             ..ambiguous_doas
         };
         assert!(!needs_su_bootstrap(&root_tooling, &connection));
+    }
+
+    #[test]
+    fn wifi_discovers_the_wireless_interface_instead_of_hardcoding_wlan0() {
+        assert!(WIFI_SCRIPT.contains("iface=${path#/sys/class/net/}"));
+        assert!(WIFI_SCRIPT.contains("wpa_cli -i \"$iface\" ping"));
+        assert!(WIFI_SCRIPT.contains("iw dev \"$iface\" set power_save off"));
+        assert!(!WIFI_SCRIPT.contains("wpa_cli -i wlan0"));
+    }
+
+    #[test]
+    fn first_web_password_reads_the_entrypoint_banner() {
+        let logs = "\
+============================================
+ Web UI password (save this now):
+ hunter2-web
+============================================
+omt-web listening on https://0.0.0.0:5000
+";
+        assert_eq!(first_web_password(logs), Some("hunter2-web"));
+        assert_eq!(first_web_password("no password here"), None);
+    }
+
+    #[test]
+    fn post_install_reboot_is_the_same_fixed_action_as_manage() {
+        let connection = Connection {
+            host: "pi.local".into(),
+            username: "pi".into(),
+            port: 22,
+            auth: crate::AuthMethod::Password,
+            password: None,
+            key_path: None,
+            key_passphrase: None,
+            known_hosts_path: None,
+            sudo_password: Secret::new("hunter2".into()).ok(),
+            bootstrap_root_password: None,
+        };
+        assert_eq!(
+            privileged_argv_command(&connection, ManagementAction::Reboot.remote_argv()),
+            privileged_command(
+                &connection,
+                &ManagementAction::Reboot
+                    .remote_argv()
+                    .iter()
+                    .copied()
+                    .map(shell_quote)
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            )
+        );
     }
 }

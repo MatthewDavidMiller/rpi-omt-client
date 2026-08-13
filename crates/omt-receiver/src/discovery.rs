@@ -9,7 +9,7 @@
 use crate::channel::{Channel, Endpoint};
 use crate::mdns;
 use crate::xml::{self, MAX_DOCUMENT_BYTES};
-use omt_protocol::{FrameType, is_valid_source_name, parse_direct_target};
+use omt_protocol::{FrameType, is_undiallable_ip, is_valid_source_name, parse_direct_target};
 use std::collections::BTreeMap;
 use std::fs;
 use std::net::IpAddr;
@@ -171,7 +171,10 @@ pub fn endpoint_from_parts(address: &str, port: u16) -> Option<Endpoint> {
         return None;
     }
     let parsed_address = address.parse::<IpAddr>();
-    if parsed_address.as_ref().is_ok_and(undiallable) {
+    if parsed_address
+        .as_ref()
+        .is_ok_and(|address| is_undiallable_ip(*address))
+    {
         return None;
     }
     let candidate = if parsed_address.is_ok_and(|value| value.is_ipv6()) {
@@ -184,24 +187,6 @@ pub fn endpoint_from_parts(address: &str, port: u16) -> Option<Endpoint> {
         host: parsed.host,
         port: parsed.port,
     })
-}
-
-/// True for a literal address no connect can use as it stands.
-///
-/// IPv4 link-local is deliberately absent: a `169.254.0.0/16` peer is reached
-/// over the one link it is on with no extra addressing, which is the whole
-/// point of that range. IPv6 link-local is not, because it repeats per
-/// interface and needs the zone the grammar has nowhere to put.
-fn undiallable(address: &IpAddr) -> bool {
-    match address {
-        IpAddr::V4(value) => value.is_unspecified() || value.is_multicast(),
-        IpAddr::V6(value) => {
-            value.is_unspecified()
-                || value.is_multicast()
-                // `Ipv6Addr::is_unicast_link_local` is still unstable.
-                || (value.segments()[0] & 0xFFC0) == 0xFE80
-        }
-    }
 }
 
 #[cfg(test)]
