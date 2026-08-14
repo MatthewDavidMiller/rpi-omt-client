@@ -301,9 +301,9 @@ Host-key verification defaults to OpenSSH's
 `~/.ssh/known_hosts`; the CLI and GUI can select another verified file without
 relaxing strict checking.
 
-An untouched Alpine host has neither sudo nor an active doas rule. When a
-separate initial root password is supplied, the native deployers bootstrap
-through `su` on a bounded SSH PTY. Terminal echo is disabled before the secret
+An untouched Alpine host has neither sudo nor an active doas rule. When the
+Alpine root password is supplied (the GUI Alpine view, or `bootstrap_root_password`
+on the CLI), the native deployers bootstrap through `su` on a bounded SSH PTY. Terminal echo is disabled before the secret
 is sent; only the fixed staged bootstrap is run, and subsequent deployment
 returns to the administrator's sudo credential. The root secret is zeroized
 with the other authentication buffers. Remote commands retain a one-minute
@@ -339,7 +339,8 @@ validation boundary.
 
 How the deployer's window answers a display is a set of rules, not a set of
 widgets, so they live outside its view alongside the button-gating rules:
-window fit against the monitor, the readable column width, when labels pair
+window fit against the monitor, when that fit is still the opening rather
+than a drag across displays, the readable column width, when labels pair
 with their fields, and the zoom bounds. Each is only observable on hardware --
 a 200%-scaled laptop, a 4K desktop, a window dragged to its minimum -- so
 keeping the arithmetic out of egui is what lets `cargo test` cover it without

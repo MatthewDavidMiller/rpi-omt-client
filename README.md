@@ -44,9 +44,9 @@ sets hostname, optional Wi-Fi, IPv4 DHCP, user `pi`, root/`pi` passwords, US
 HTTPS apk mirrors, and persistent `sys` mode, then reboots. Deploy next.
 
 A stock Alpine image has neither `bash` nor `sudo`, so it is bootstrapped once
-before the appliance installer can run. The native CLI and GUI can do this through `su`
-when given the separate initial root password. The shell target handles a root
-SSH account or a host that already has sudo/doas:
+before the appliance installer can run. The GUI uses the Alpine view's root
+password for that `su` step; the CLI accepts `bootstrap_root_password`. The
+shell target handles a root SSH account or a host that already has sudo/doas:
 
 ```bash
 make deploy HOST=root@192.168.1.50

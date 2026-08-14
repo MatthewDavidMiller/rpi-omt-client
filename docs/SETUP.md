@@ -84,15 +84,14 @@ detect the gap and run `deploy/host/bootstrap.sh`, which enables the
 escalation through both `/etc/sudoers.d/omt-client` and
 `/etc/doas.d/10-omt-client-wheel.conf`.
 
-Automatic bootstrap needs the initial root password because Alpine has no
+Automatic bootstrap needs the Alpine root password because Alpine has no
 `sudo`, and although it ships the `doas` binary, every rule in the packaged
-`/etc/doas.conf` is commented out. The native CLI and GUI accept an optional
-clean-Alpine root password separately from the SSH user's password and future
-sudo password. They allocate a PTY for `su`, disable terminal echo before
-sending the secret, run the fixed bootstrap script, and discard that root
-secret after the operation. In the CLI `--secrets-stdin` JSON, the field is
-`bootstrap_root_password`; interactive mode prompts for it. In the GUI, use
-“initial root password (clean Alpine only).”
+`/etc/doas.conf` is commented out. The GUI uses the Root password from the
+Alpine view for that one `su` step on first Deploy when the SSH account is
+not root. The CLI accepts the same secret as `bootstrap_root_password` in
+`--secrets-stdin`; interactive mode prompts for it. They allocate a PTY for
+`su`, disable terminal echo before sending the secret, run the fixed
+bootstrap script, and discard that root secret after the operation.
 
 Connecting directly as `root` also works when the host's SSH policy permits
 it. The shell-only `make deploy` path cannot accept a second root credential;
@@ -192,12 +191,12 @@ elsewhere: clear **Build the appliance image** on the Deploy view (or pass
 Run `.build/deployer-publish/bin/rpi-omt-deployer` (or the `.exe` produced on
 Windows) with Docker, a Pi key already trusted in `~/.ssh/known_hosts`,
 administrator SSH/sudo credentials, and this source tree. The Connection view
-accepts separate optional sudo and initial-root passwords and an optional
-alternate `known_hosts` path, each with a Browse button; the CLI equivalents
-are the `sudo_password` and
-`bootstrap_root_password` fields in `--secrets-stdin` and
-`--known-hosts <path>`. Factory Alpine images accept `root` with an empty SSH
-password; leave that field blank until Alpine setup has set one. Connect validates Alpine 3.24
+accepts an optional sudo password and an optional alternate `known_hosts` path,
+each with a Browse button; the CLI equivalents are the `sudo_password` field in
+`--secrets-stdin` and `--known-hosts <path>`. Factory Alpine images accept `root`
+with an empty SSH password; leave that field blank until Alpine setup has set
+one. The Alpine view's root password is the bootstrap secret for first Deploy
+when the SSH account is not root (`bootstrap_root_password` in the CLI). Connect validates Alpine 3.24
 aarch64 and a supported device-tree model.
 The Alpine view runs `setup-alpine` equivalent configuration and a persistent
 `sys` install: hostname, optional Wi-Fi (a blank SSID keeps an existing
@@ -234,11 +233,15 @@ the tree holding `deploy/manifest-v3.txt`.
 
 Fonts, spacing, and the initial window follow the display's content scale, so
 the window opens at the same apparent size on a scaled 4K desktop as on a
-1366x768 panel and rescales when dragged to a display with a different scale.
-The opening window is then fitted to the monitor it actually landed on, taking
-at most 90% of its width and 85% of its height, so a heavily scaled panel --
-1366x768 at 200% scaling leaves only 683x384 points in total -- never gets a
-window larger than itself.
+1366x768 panel. The native window is not resized while it is being dragged:
+resizing mid-move is what makes a window manager snap it back to the original
+display. Fonts and spacing still follow the new display's scale; zoom remains
+available if the result is smaller or larger than wanted. The opening window
+is then fitted to the monitor it actually landed on, taking at most 90% of
+its width and 85% of its height, so a heavily scaled panel -- 1366x768 at
+200% scaling leaves only 683x384 points in total -- never gets a window
+larger than itself. That opening fit is spent on the first moments after
+launch, not when the window later crosses a display.
 
 The window can be dragged down to 420x320 points. Every view scrolls rather
 than clipping, the navigation and the Manage buttons wrap, and labels move from

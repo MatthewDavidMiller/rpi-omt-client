@@ -351,6 +351,15 @@ mod layout {
         column >= PAIRED_MIN
     }
 
+    /// How long after first paint the opening fit may still run. A monitor
+    /// size that appears later is the window crossing a display, not the
+    /// landing, and resizing then cancels the drag.
+    pub const OPENING_FIT_BUDGET: std::time::Duration = std::time::Duration::from_millis(750);
+
+    /// Slack in points before a change of outer origin counts as a move.
+    /// Sub-pixel compositor jitter must not spend the opening fit.
+    const MOVE_SLACK: f32 = 2.0;
+
     /// `current` moved `steps` notches, rounded to a whole percent-of-ten and
     /// held inside the bounds. The one zoom rule: buttons and keyboard
     /// shortcuts both go through it.
@@ -360,11 +369,23 @@ mod layout {
         ((stepped * 10.0).round() / 10.0).clamp(ZOOM_MIN, ZOOM_MAX)
     }
 
+    /// Whether the window's outer origin has left the place it first appeared.
+    pub fn origin_moved(origin: [f32; 2], current: [f32; 2]) -> bool {
+        (origin[0] - current[0]).abs() > MOVE_SLACK || (origin[1] - current[1]).abs() > MOVE_SLACK
+    }
+
+    /// Whether the opening-fit budget has been spent. After this, a newly
+    /// reported monitor is a display the window was dragged onto.
+    pub fn opening_fit_budget_expired(elapsed: std::time::Duration) -> bool {
+        elapsed > OPENING_FIT_BUDGET
+    }
+
     #[cfg(test)]
     mod tests {
         use super::{
-            COLUMN_MAX, DEFAULT_SIZE, LABEL_WIDTH, MIN_SIZE, PAIRED_MIN, ZOOM_MAX, ZOOM_MIN,
-            column_width, fields_paired, fit_to_monitor, step_zoom,
+            COLUMN_MAX, DEFAULT_SIZE, LABEL_WIDTH, MIN_SIZE, OPENING_FIT_BUDGET, PAIRED_MIN,
+            ZOOM_MAX, ZOOM_MIN, column_width, fields_paired, fit_to_monitor,
+            opening_fit_budget_expired, origin_moved, step_zoom,
         };
 
         fn close(left: f32, right: f32) -> bool {
@@ -483,6 +504,19 @@ mod layout {
             }
             assert!(close(zoom, 1.0));
             assert!(close(step_zoom(f32::NAN, 1), 1.1));
+        }
+
+        /// A drag is a real move of the outer origin, not compositor jitter,
+        /// and the opening budget is spent once rather than on every later
+        /// monitor the window crosses.
+        #[test]
+        fn opening_fit_stops_after_a_move_or_the_budget() {
+            assert!(!origin_moved([100.0, 80.0], [100.5, 80.5]));
+            assert!(origin_moved([100.0, 80.0], [120.0, 80.0]));
+            assert!(!opening_fit_budget_expired(OPENING_FIT_BUDGET));
+            assert!(opening_fit_budget_expired(
+                OPENING_FIT_BUDGET + std::time::Duration::from_millis(1)
+            ));
         }
     }
 }
@@ -671,7 +705,6 @@ mod desktop {
         user: String,
         password: Zeroizing<String>,
         sudo_password: Zeroizing<String>,
-        bootstrap_root_password: Zeroizing<String>,
         known_hosts: String,
         hostname: String,
         os_root_password: Zeroizing<String>,
@@ -700,11 +733,16 @@ mod desktop {
     }
 
     /// Whether the opening window has been fitted to the display it landed on.
-    /// Settled on the first frame that names a monitor, because that is the
-    /// first moment the display behind the window is known.
-    #[derive(PartialEq, Eq)]
+    ///
+    /// Pending until that fit runs, the window is dragged, or the opening
+    /// budget expires. A monitor size that appears after any of those is the
+    /// window crossing a display; resizing then cancels the drag.
+    #[derive(Clone, Copy)]
     enum Fit {
-        Pending,
+        Pending {
+            started: std::time::Instant,
+            origin: Option<egui::Pos2>,
+        },
         Settled,
     }
 
@@ -726,7 +764,6 @@ mod desktop {
                 user: "root".into(),
                 password: Zeroizing::new(String::new()),
                 sudo_password: Zeroizing::new(String::new()),
-                bootstrap_root_password: Zeroizing::new(String::new()),
                 known_hosts: String::new(),
                 hostname: "omt-client".into(),
                 os_root_password: Zeroizing::new(String::new()),
@@ -748,7 +785,10 @@ mod desktop {
                 events: None,
                 prerequisites: Vec::new(),
                 picker: None,
-                fit: Fit::Pending,
+                fit: Fit::Pending {
+                    started: std::time::Instant::now(),
+                    origin: None,
+                },
                 pending_confirmation: None,
                 pending_alpine_confirm: false,
                 apply_alpine_login: false,
@@ -817,11 +857,14 @@ mod desktop {
                         .map_err(|error| error.to_string())?,
                 )
             };
-            let bootstrap_root_password = if self.bootstrap_root_password.is_empty() {
+            // Alpine's root password is the bootstrap secret: first Deploy
+            // uses it once through `su` to install bash/sudo when the SSH
+            // account is not root. Connection no longer asks for it separately.
+            let bootstrap_root_password = if self.os_root_password.is_empty() {
                 None
             } else {
                 Some(
-                    Secret::new((*self.bootstrap_root_password).clone())
+                    Secret::new((*self.os_root_password).clone())
                         .map_err(|error| error.to_string())?,
                 )
             };
@@ -1012,9 +1055,8 @@ mod desktop {
                             self.user = "pi".into();
                             self.password = self.os_pi_password.clone();
                             self.sudo_password = self.os_pi_password.clone();
-                            self.bootstrap_root_password = self.os_root_password.clone();
                             self.activity.push(
-                                "Connection updated to user pi. Deploy next; sudo is installed on first deploy."
+                                "Connection updated to user pi. Deploy next; the Alpine root password installs sudo on first deploy."
                                     .into(),
                             );
                         }
@@ -1033,11 +1075,34 @@ mod desktop {
         ///
         /// eframe clamps the requested size against the *largest* monitor and
         /// with no margin, which is the wrong monitor on a mixed-DPI desk and
-        /// the wrong size under a task bar. The first frame is the first point
-        /// at which the window's own monitor is known, so the fit happens
-        /// here, once, and only ever shrinks.
+        /// the wrong size under a task bar. The first frames are the first
+        /// point at which the window's own monitor is known, so the fit
+        /// happens here, once, and only ever shrinks.
+        ///
+        /// It must not run after the window has been moved. Wayland often
+        /// names a monitor only once the surface is on an output, which can
+        /// be the frame the operator is already dragging onto another
+        /// display; `InnerSize` in the middle of that drag is what snaps the
+        /// window back.
         fn fit_window(&mut self, context: &egui::Context) {
-            if self.fit == Fit::Settled {
+            let Fit::Pending { started, origin } = self.fit else {
+                return;
+            };
+            if let Some(outer) = context.input(|input| input.viewport().outer_rect) {
+                if let Some(first) = origin {
+                    if layout::origin_moved([first.x, first.y], [outer.min.x, outer.min.y]) {
+                        self.fit = Fit::Settled;
+                        return;
+                    }
+                } else {
+                    self.fit = Fit::Pending {
+                        started,
+                        origin: Some(outer.min),
+                    };
+                }
+            }
+            if layout::opening_fit_budget_expired(started.elapsed()) {
+                self.fit = Fit::Settled;
                 return;
             }
             // Already in egui points: egui-winit divides the monitor's
@@ -1047,10 +1112,10 @@ mod desktop {
             let Some(monitor) = context.input(|input| input.viewport().monitor_size) else {
                 return;
             };
-            self.fit = Fit::Settled;
             let current = context.screen_rect().size();
             let fitted =
                 layout::fit_to_monitor([current.x, current.y], Some([monitor.x, monitor.y]));
+            self.fit = Fit::Settled;
             // A point of slack: resizing to what the window already is costs a
             // needless round trip to the compositor on every launch.
             if fitted[0] < current.x - 1.0 || fitted[1] < current.y - 1.0 {
@@ -1488,15 +1553,13 @@ mod desktop {
                         });
                         ui.label(
                             egui::RichText::new(
-                                "Leave empty for a factory Alpine image (root, no password).",
+                                "Factory images: user root and an empty password, then the Alpine view. \
+                                 After Alpine setup this app switches to pi.",
                             )
                             .italics(),
                         );
                         field(ui, "sudo password (optional)", |ui| {
                             text_field(ui, &mut self.sudo_password, !self.reveal);
-                        });
-                        field(ui, "initial root password (clean Alpine only)", |ui| {
-                            text_field(ui, &mut self.bootstrap_root_password, !self.reveal);
                         });
                         let idle = !self.running() && self.picker.is_none();
                         field(ui, "known_hosts (optional)", |ui| {
@@ -1526,7 +1589,8 @@ mod desktop {
                             "Install Alpine in persistent sys mode on a factory Raspberry Pi image. \
                              This erases the SD/eMMC/USB disk. IPv4 uses DHCP on Ethernet, and on \
                              Wi-Fi when an SSID is set or the image already has Wi-Fi. The pi user \
-                             is created in the wheel group.",
+                             is created in the wheel group. First Deploy uses the root password \
+                             below to install bash and sudo when you connect as pi.",
                         );
                         ui.add_space(ui.spacing().item_spacing.y);
                         field(ui, "Hostname", |ui| {
@@ -1809,7 +1873,9 @@ mod desktop {
                 // stated rather than inherited: a window larger than the
                 // monitor is unusable everywhere and crashes some Linux
                 // compositors. `App::fit_window` then refines the result
-                // against the monitor the window actually opened on.
+                // against the monitor the window actually opened on, and only
+                // during that opening -- never while the window is being
+                // dragged onto another display.
                 .with_clamp_size_to_monitor_size(true),
             centered: true,
             ..eframe::NativeOptions::default()
@@ -1831,7 +1897,7 @@ mod desktop {
                 user: "pi".into(),
                 password: Zeroizing::new("ssh-password".into()),
                 sudo_password: Zeroizing::new("sudo-password".into()),
-                bootstrap_root_password: Zeroizing::new("root-password".into()),
+                os_root_password: Zeroizing::new("root-password".into()),
                 ..App::default()
             };
 
@@ -1851,6 +1917,32 @@ mod desktop {
                     .map(Secret::expose),
                 Some("root-password")
             );
+        }
+
+        #[test]
+        fn alpine_root_password_is_the_bootstrap_secret() {
+            let without_root = App {
+                user: "pi".into(),
+                password: Zeroizing::new("ssh-password".into()),
+                ..App::default()
+            };
+            assert!(
+                without_root
+                    .connection()
+                    .unwrap_or_else(|error| panic!("{error}"))
+                    .bootstrap_root_password
+                    .is_none()
+            );
+        }
+
+        #[test]
+        fn connection_does_not_ask_for_a_separate_bootstrap_root_password() {
+            let source = include_str!("main.rs");
+            assert!(
+                !source.contains(&["initial", "root", "password"].join(" ")),
+                "factory bootstrap belongs on the Alpine view"
+            );
+            assert!(!source.contains(&["clean", "Alpine", "only"].join(" ")));
         }
 
         /// The Setup jobs exist for a workstation that cannot deploy yet, so
