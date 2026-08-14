@@ -164,6 +164,79 @@ root_part_from_disk() {
     esac
 }
 
+# Whether device $2 is a partition of disk $1 (either argument may carry a
+# leading /dev/). A partition is the disk name followed by an index,
+# optionally separated by "p": mmcblk0p1 and sda1 belong to mmcblk0 and sda,
+# but sdaa1 does not belong to sda. sysfs is consulted first because that is
+# what alpine-conf's is_available_disk uses.
+dev_on_disk() {
+    _want="${1#/dev/}"
+    _have="${2#/dev/}"
+    [ "${_have}" = "${_want}" ] && return 0
+    [ -e "/sys/block/${_want}/${_have}" ] && return 0
+    _suffix="${_have#"${_want}"}"
+    [ "${_suffix}" = "${_have}" ] && return 1
+    case "${_suffix#p}" in
+        '' | *[!0-9]*) return 1 ;;
+        *) return 0 ;;
+    esac
+}
+
+# Whether any partition of this disk is mounted -- the exact question
+# alpine-conf's is_available_disk asks before it will partition anything.
+disk_has_mounted_part() {
+    _disk="${1#/dev/}"
+    for _dev in $(awk '$1 ~ /^\/dev\// { sub(/^\/dev\//, "", $1); print $1 }' /proc/mounts); do
+        dev_on_disk "${_disk}" "${_dev}" && return 0
+    done
+    return 1
+}
+
+# Release the boot media so setup-disk will partition the disk.
+#
+# alpine-conf's is_available_disk rejects any disk that has a mounted
+# partition, and a factory image boots with its own boot partition mounted --
+# find_boot_part above depends on exactly that. Left alone, setup-disk finds
+# no available disk, takes its "No disks available" branch, and *exits 0*
+# without installing anything, which set -e cannot see. setup-alpine's
+# interactive path escapes this by offering the boot media; do the same thing
+# without a prompt, because this script's stdin is at EOF.
+free_boot_media() {
+    disk_has_mounted_part "${INSTALL_DISK}" || return 0
+    echo "Releasing the boot media so ${INSTALL_DISK} can be partitioned..."
+    # The kernel modules live in a squashfs on the boot partition. They have
+    # to be in RAM before the unmount or the install loses its modules
+    # halfway through. copy-modloop exits 1 when the modloop service is not
+    # running; that means the modules are already local, so skip it. Any
+    # other failure must abort -- unmounting anyway would drop the live
+    # modules and firmware the rest of this script still needs.
+    if command -v copy-modloop >/dev/null 2>&1 &&
+        command -v rc-service >/dev/null 2>&1 &&
+        rc-service -q modloop status; then
+        DO_UMOUNT=1 copy-modloop || {
+            echo "ERROR: copy-modloop failed; leaving the boot media mounted." >&2
+            return 1
+        }
+    fi
+    # copy-modloop only releases the media backing /.modloop. Unmount whatever
+    # else on this disk is still mounted, deepest path first. Match partitions
+    # with the same rule as disk_has_mounted_part: a prefix test would treat
+    # sdaa1 as a partition of sda.
+    _disk="${INSTALL_DISK#/dev/}"
+    for _pair in $(awk '$1 ~ /^\/dev\// { sub(/^\/dev\//, "", $1); print $1 "#" $2 }' /proc/mounts | sort -t'#' -k2 -r); do
+        _dev="${_pair%%#*}"
+        _mnt="${_pair#*#}"
+        dev_on_disk "${_disk}" "${_dev}" || continue
+        umount "${_mnt}" 2>/dev/null || umount -l "${_mnt}" 2>/dev/null || true
+    done
+    if disk_has_mounted_part "${INSTALL_DISK}"; then
+        echo "ERROR: ${INSTALL_DISK} still has a mounted partition, so setup-disk would" >&2
+        echo "exit without installing. Free it and run Alpine setup again." >&2
+        return 1
+    fi
+    return 0
+}
+
 first_ethernet() {
     _iface=
     for _path in /sys/class/net/*; do
@@ -244,8 +317,12 @@ sync_clock() {
 
 install_local_prereqs() {
     echo "Installing OpenSSH, CA certificates, and disk tools from local media..."
+    # The bundle, not the ca-certificates package: the bundle is what supplies
+    # the trust store the HTTPS mirrors need, it is what the factory image's
+    # local repository actually carries, and asking here for a package that
+    # repository does not have leaves it recorded in an unsatisfiable
+    # /etc/apk/world. ca-certificates itself follows once a mirror is pinned.
     apk add --no-cache ca-certificates-bundle || true
-    apk add --no-cache ca-certificates || true
     apk add --no-cache \
         openssh \
         openssh-server \
@@ -287,10 +364,6 @@ enable_password_ssh() {
 
 pin_us_https_apk_mirrors() {
     _series="${SUPPORTED_ALPINE_SERIES}"
-    if ! [ -f /etc/ssl/certs/ca-certificates.crt ]; then
-        echo "Installing CA certificates so apk can use HTTPS mirrors..."
-        apk add --no-cache ca-certificates || true
-    fi
     _tmp="$(mktemp)"
     _ok=
     for _base in ${US_HTTPS_APK_MIRRORS}; do
@@ -310,6 +383,13 @@ pin_us_https_apk_mirrors() {
         echo "ERROR: no reputable US HTTPS apk mirror responded." >&2
         return 1
     }
+    # Only now, with a full index reachable. The factory image's local
+    # repository on the boot partition carries ca-certificates-bundle but not
+    # ca-certificates, and asking for it there fails *after* recording it in
+    # /etc/apk/world -- which leaves world unsatisfiable, so every later
+    # transaction, including the ones that populate the new root, fails to
+    # solve.
+    apk add --no-cache ca-certificates
 }
 
 BOOT_PART="$(find_boot_part)" || {
@@ -342,6 +422,38 @@ if [ "${WIFI_ENABLED}" = yes ]; then
 else
     echo "IPv4 DHCP on ${ETH_IFACE}."
 fi
+
+# Accounts and passwords come first, before anything can replace the sshd that
+# is carrying this session.
+#
+# A factory image answers as root with an *empty* password, which the running
+# sshd is configured to accept. Installing apk OpenSSH below can swap that
+# sshd for one built from a stock config, where PermitEmptyPasswords is off.
+# Setting the passwords first means the accounts are always ready before that
+# can happen; leaving it until later opens a window where a run that stops in
+# between -- for any reason -- leaves a board that no longer accepts the empty
+# password and does not yet accept the new one, reachable only by power
+# cycling it back to the factory overlay.
+echo "Creating administrator account pi..."
+if id pi >/dev/null 2>&1; then
+    echo "User pi already exists; granting wheel."
+    addgroup pi wheel || true
+else
+    adduser -D -g pi pi
+    addgroup pi wheel || true
+    addgroup pi audio || true
+    addgroup pi input || true
+    addgroup pi video || true
+    addgroup pi netdev || true
+fi
+
+echo "Setting root and pi passwords..."
+{
+    printf 'root:%s\n' "${ROOT_PASSWORD}"
+    printf 'pi:%s\n' "${PI_PASSWORD}"
+} | chpasswd
+ROOT_PASSWORD=
+PI_PASSWORD=
 
 install_local_prereqs
 sync_clock
@@ -410,6 +522,7 @@ elif [ -n "${EXISTING_WPA}" ]; then
     install_wpa_config_from "${EXISTING_WPA}"
     rc-update --quiet add wpa_supplicant boot || true
 fi
+WIFI_PSK=
 
 if command -v setup-timezone >/dev/null 2>&1; then
     echo "Setting timezone to UTC..."
@@ -423,28 +536,6 @@ if command -v setup-ntp >/dev/null 2>&1; then
     setup-ntp busybox || true
 fi
 
-echo "Creating administrator account pi..."
-if id pi >/dev/null 2>&1; then
-    echo "User pi already exists; granting wheel."
-    addgroup pi wheel || true
-else
-    adduser -D -g pi pi
-    addgroup pi wheel || true
-    addgroup pi audio || true
-    addgroup pi input || true
-    addgroup pi video || true
-    addgroup pi netdev || true
-fi
-
-echo "Setting root and pi passwords..."
-{
-    printf 'root:%s\n' "${ROOT_PASSWORD}"
-    printf 'pi:%s\n' "${PI_PASSWORD}"
-} | chpasswd
-ROOT_PASSWORD=
-PI_PASSWORD=
-WIFI_PSK=
-
 if command -v lbu >/dev/null 2>&1; then
     lbu add /home/pi 2>/dev/null || true
 fi
@@ -453,6 +544,15 @@ command -v setup-disk >/dev/null 2>&1 || {
     echo "ERROR: setup-disk is missing; alpine-conf is required." >&2
     exit 1
 }
+
+# A factory image carries neither sfdisk nor the filesystem tools, and the
+# local apk repository lives on the boot partition that is about to be
+# released. Install them from the pinned HTTPS mirrors while that is still
+# possible, and fail here rather than deep inside setup-disk.
+echo "Installing partitioning and filesystem tools..."
+apk add --no-cache sfdisk e2fsprogs e2fsprogs-extra dosfstools
+
+free_boot_media
 
 echo "Installing Alpine in persistent sys mode on ${INSTALL_DISK}..."
 echo "This erases the disk and copies the running overlay onto a new root."
@@ -479,45 +579,151 @@ setup-disk -q -m sys "${INSTALL_DISK}"
 stop_heartbeat
 trap - EXIT INT TERM
 
-echo "Copying host keys and accounts onto the new root..."
-if [ -b "${ROOT_PART}" ]; then
-    mkdir -p /mnt/omt-newroot
-    if mount -t ext4 "${ROOT_PART}" /mnt/omt-newroot; then
-        mkdir -p /mnt/omt-newroot/etc/ssh
-        cp -a /etc/ssh/ssh_host_* /mnt/omt-newroot/etc/ssh/ 2>/dev/null || true
-        if [ -d /etc/ssh/sshd_config.d ]; then
-            mkdir -p /mnt/omt-newroot/etc/ssh/sshd_config.d
-            cp -a /etc/ssh/sshd_config.d/. /mnt/omt-newroot/etc/ssh/sshd_config.d/ \
-                2>/dev/null || true
-        fi
-        [ -f /etc/ssh/sshd_config ] && \
-            cp -a /etc/ssh/sshd_config /mnt/omt-newroot/etc/ssh/sshd_config
-        cp -a /etc/passwd /etc/shadow /etc/group /etc/hostname \
-            /mnt/omt-newroot/etc/
-        [ -f /etc/hosts ] && cp -a /etc/hosts /mnt/omt-newroot/etc/hosts
-        if [ -f /etc/apk/repositories ]; then
-            mkdir -p /mnt/omt-newroot/etc/apk
-            cp -a /etc/apk/repositories /mnt/omt-newroot/etc/apk/repositories
-        fi
-        if [ -f /etc/network/interfaces ]; then
-            mkdir -p /mnt/omt-newroot/etc/network
-            cp -a /etc/network/interfaces /mnt/omt-newroot/etc/network/interfaces
-        fi
-        if [ -f /etc/wpa_supplicant/wpa_supplicant.conf ]; then
-            mkdir -p /mnt/omt-newroot/etc/wpa_supplicant
-            cp -a /etc/wpa_supplicant/wpa_supplicant.conf \
-                /mnt/omt-newroot/etc/wpa_supplicant/wpa_supplicant.conf
-        fi
-        if [ -d /etc/doas.d ]; then
-            mkdir -p /mnt/omt-newroot/etc/doas.d
-            cp -a /etc/doas.d/. /mnt/omt-newroot/etc/doas.d/ 2>/dev/null || true
-        fi
-        umount /mnt/omt-newroot
-    else
-        echo "WARNING: could not mount ${ROOT_PART} to copy host keys; SSH may require a new known_hosts entry after reboot." >&2
-    fi
-    rmdir /mnt/omt-newroot 2>/dev/null || true
+# setup-disk returns 0 from several paths that install nothing at all, so the
+# only trustworthy evidence is the root filesystem it was supposed to build.
+# Everything below, including the completion marker the deployer keys on, is
+# gated on finding it.
+[ -b "${ROOT_PART}" ] || {
+    echo "ERROR: setup-disk left no root partition at ${ROOT_PART}." >&2
+    echo "The persistent sys install did not happen; this host is unchanged." >&2
+    exit 1
+}
+
+echo "Mounting the new root to install network packages and copy host state..."
+mkdir -p /mnt/omt-newroot
+mount -t ext4 "${ROOT_PART}" /mnt/omt-newroot || {
+    echo "ERROR: ${ROOT_PART} exists but is not a mountable ext4 root." >&2
+    echo "The persistent sys install did not complete." >&2
+    exit 1
+}
+[ -d /mnt/omt-newroot/etc ] && [ -d /mnt/omt-newroot/sbin ] || {
+    umount /mnt/omt-newroot || true
+    echo "ERROR: ${ROOT_PART} does not contain an Alpine root filesystem." >&2
+    echo "The persistent sys install did not complete." >&2
+    exit 1
+}
+
+# Whether the new root contains anything matching any of these globs.
+#
+# Each glob is deliberately unquoted: it is the shell that expands it, and
+# `ls` handed a quoted pattern just looks for a file whose name contains an
+# asterisk, so it always says no. Several candidates per question because
+# `sbin` and `usr/sbin`, and `lib` and `usr/lib`, are the same place on a
+# merged-/usr layout and different places otherwise; asking about both is
+# steadier than tracking which Alpine release moved what.
+newroot_has() {
+    for _pattern in "$@"; do
+        for _match in /mnt/omt-newroot/${_pattern}; do
+            [ -e "${_match}" ] && return 0
+        done
+    done
+    return 1
+}
+
+# Pin the live HTTPS repositories (and keys) before apk --root, so the
+# transaction does not try the factory image's local media that we just
+# unmounted. Do this before unpacking OpenSSH: a first-time package install
+# can replace files that were copied in and not yet owned by apk.
+if [ -d /etc/apk/keys ]; then
+    mkdir -p /mnt/omt-newroot/etc/apk/keys
+    cp -a /etc/apk/keys/. /mnt/omt-newroot/etc/apk/keys/ 2>/dev/null || true
 fi
+if [ -f /etc/apk/repositories ]; then
+    mkdir -p /mnt/omt-newroot/etc/apk
+    cp -a /etc/apk/repositories /mnt/omt-newroot/etc/apk/repositories
+fi
+
+# Everything the appliance needs in order to come back on the network, put
+# into the new root rather than this one.
+#
+# setup-disk populates the new root from /etc/apk/world, and on a factory
+# image that file lists almost nothing: the running system comes off a
+# read-only modloop, so most of what it is using is not an installed package.
+# The Broadcom Wi-Fi firmware under /lib/firmware belongs to no package at
+# all, and /lib/firmware here cannot even be written to. So install into the
+# target with --root, where the filesystem is real and writable. On a
+# Wi-Fi-only board this is the difference between a reboot and a trip to the
+# SD card reader.
+echo "Installing the packages the persistent root needs to stay reachable..."
+apk add --root /mnt/omt-newroot --no-cache \
+    openssh openssh-server openssh-sftp-server openssh-keygen
+if [ "${WIFI_ENABLED}" = yes ]; then
+    echo "Adding Wi-Fi firmware and supplicant so ${WIFI_IFACE} comes back after reboot..."
+    apk add --root /mnt/omt-newroot --no-cache wpa_supplicant iw linux-firmware-brcm
+
+    # Fall back to the firmware this board is running right now.
+    #
+    # The package route is preferred because it leaves apk owning the files,
+    # but it has been observed to report success while installing nothing,
+    # and the cost of getting this wrong on a Wi-Fi-only board is that the
+    # board never comes back. The factory image's own /lib/firmware is the
+    # strongest possible evidence -- it is driving this exact chip at this
+    # moment -- so if the package did not land the files, copy them.
+    if ! newroot_has 'lib/firmware/brcm/brcmfmac*' 'usr/lib/firmware/brcm/brcmfmac*' &&
+        [ -d /lib/firmware/brcm ]; then
+        echo "Package did not provide the firmware; copying it from the running image..."
+        mkdir -p /mnt/omt-newroot/lib/firmware
+        cp -a /lib/firmware/brcm /mnt/omt-newroot/lib/firmware/ 2>/dev/null || true
+        if [ -d /lib/firmware/cypress ]; then
+            cp -a /lib/firmware/cypress /mnt/omt-newroot/lib/firmware/ 2>/dev/null || true
+        fi
+    fi
+fi
+
+echo "Copying host keys and accounts onto the new root..."
+mkdir -p /mnt/omt-newroot/etc/ssh
+cp -a /etc/ssh/ssh_host_* /mnt/omt-newroot/etc/ssh/ 2>/dev/null || true
+if [ -d /etc/ssh/sshd_config.d ]; then
+    mkdir -p /mnt/omt-newroot/etc/ssh/sshd_config.d
+    cp -a /etc/ssh/sshd_config.d/. /mnt/omt-newroot/etc/ssh/sshd_config.d/ \
+        2>/dev/null || true
+fi
+if [ -f /etc/ssh/sshd_config ]; then
+    cp -a /etc/ssh/sshd_config /mnt/omt-newroot/etc/ssh/sshd_config
+fi
+cp -a /etc/passwd /etc/shadow /etc/group /etc/hostname /mnt/omt-newroot/etc/
+if [ -f /etc/hosts ]; then
+    cp -a /etc/hosts /mnt/omt-newroot/etc/hosts
+fi
+if [ -f /etc/network/interfaces ]; then
+    mkdir -p /mnt/omt-newroot/etc/network
+    cp -a /etc/network/interfaces /mnt/omt-newroot/etc/network/interfaces
+fi
+if [ -f /etc/wpa_supplicant/wpa_supplicant.conf ]; then
+    mkdir -p /mnt/omt-newroot/etc/wpa_supplicant
+    cp -a /etc/wpa_supplicant/wpa_supplicant.conf \
+        /mnt/omt-newroot/etc/wpa_supplicant/wpa_supplicant.conf
+fi
+if [ -d /etc/doas.d ]; then
+    mkdir -p /mnt/omt-newroot/etc/doas.d
+    cp -a /etc/doas.d/. /mnt/omt-newroot/etc/doas.d/ 2>/dev/null || true
+fi
+
+# Prove the new root can get back on the network before anyone reboots into
+# it. The install itself has already happened by this point, so this is a
+# report on what is on the disk, not an offer to undo it.
+reachability_problem=
+if ! newroot_has 'usr/sbin/sshd' 'sbin/sshd'; then
+    reachability_problem="no sshd"
+elif [ "${WIFI_ENABLED}" = yes ] &&
+    ! newroot_has 'sbin/wpa_supplicant' 'usr/sbin/wpa_supplicant'; then
+    reachability_problem="no wpa_supplicant"
+elif [ "${WIFI_ENABLED}" = yes ] &&
+    ! newroot_has 'lib/firmware/brcm/brcmfmac*' 'usr/lib/firmware/brcm/brcmfmac*'; then
+    reachability_problem="no Broadcom Wi-Fi firmware"
+fi
+if [ -n "${reachability_problem}" ]; then
+    umount /mnt/omt-newroot || true
+    echo "ERROR: the persistent root on ${ROOT_PART} has ${reachability_problem}." >&2
+    echo "Alpine is installed and this disk now boots it, but on Wi-Fi alone the board" >&2
+    echo "may not come back. Do not count on this factory session for recovery: the" >&2
+    echo "OpenSSH install above has already replaced the sshd serving it." >&2
+    echo "Power cycle to boot the new root, and attach Ethernet if it does not appear." >&2
+    exit 1
+fi
+
+umount /mnt/omt-newroot
+rmdir /mnt/omt-newroot 2>/dev/null || true
 
 echo "${SETUP_COMPLETE_MARKER}"
 echo "Reboot to start the persistent sys install. SSH as pi, or as root with the passwords you set."

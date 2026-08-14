@@ -72,6 +72,178 @@ if grep -q 'rc-service --quiet sshd status' "${SETUP_SYS}"; then
     fail "setup-sys must not skip OpenSSH install because a headless overlay sshd is already listening"
 fi
 
+require 'free_boot_media' "setup-sys must release the boot media before setup-disk"
+require 'copy-modloop' "setup-sys must move kernel modules into RAM before unmounting the boot media"
+require 'apk add --no-cache sfdisk' "setup-sys must install sfdisk while the apk mirrors are still reachable"
+require 'dev_on_disk' "setup-sys must share one disk/partition matcher for mount detection and unmount"
+require 'rc-service -q modloop status' "setup-sys must run copy-modloop only when the modloop service is live"
+
+if grep -Eq 'copy-modloop \|\| true' "${SETUP_SYS}"; then
+    fail "copy-modloop failure must abort before the boot media is unmounted"
+fi
+if grep -Eq 'index\(\$1, d\)' "${SETUP_SYS}"; then
+    fail "boot-media unmount must not use a raw prefix match; sdaa1 is not a partition of sda"
+fi
+
+# Ordering is the whole correctness story for this script, and every one of
+# these was a real failure before it was a test:
+#   - setup-disk exits 0 from paths that install nothing, so a completion
+#     marker not gated on the new root filesystem is a false success;
+#   - the boot media has to be released or setup-disk takes one of those paths;
+#   - and the passwords have to be set before an apk OpenSSH install can
+#     replace the sshd that accepts the factory image's empty root password,
+#     or a run that stops in between leaves a board nobody can log in to.
+while read -r problem; do
+    [[ -n "${problem}" ]] && fail "${problem}"
+done < <(awk '
+    /^} \| chpasswd$/ { credentials = NR }
+    /^install_local_prereqs$/ { prereqs = NR }
+    /^free_boot_media$/ { freed = NR }
+    /setup-disk -q -m sys/ { installed = NR }
+    /^\[ -b "\$\{ROOT_PART\}" \] \|\|/ { verified = NR }
+    /apk add --root \/mnt\/omt-newroot/ { intoroot = NR }
+    /cp -a \/etc\/ssh\/ssh_host_/ { keys = NR }
+    /^echo "\$\{SETUP_COMPLETE_MARKER\}"/ { marker = NR }
+    END {
+        if (!credentials || !prereqs || credentials > prereqs)
+            print "passwords must be set before OpenSSH is installed"
+        if (!freed || !installed || freed > installed)
+            print "boot media must be freed before setup-disk runs"
+        if (!verified || verified < installed)
+            print "the root partition must be verified after setup-disk"
+        if (!intoroot || intoroot < installed)
+            print "network packages must be installed into the new root, after setup-disk"
+        if (!keys || keys < intoroot)
+            print "host keys must be copied after apk installs OpenSSH into the new root"
+        if (!marker || marker < verified)
+            print "the completion marker must come after the verification"
+    }
+' "${SETUP_SYS}")
+
+# The firmware the appliance needs to rejoin Wi-Fi lives on a read-only
+# modloop and belongs to no package, so it can only be installed with --root.
+if grep -Eq '^apk add --no-cache[^|]*linux-firmware-brcm' "${SETUP_SYS}"; then
+    fail "linux-firmware-brcm cannot be installed into the running factory image; use --root"
+fi
+require 'apk add --root /mnt/omt-newroot --no-cache wpa_supplicant iw linux-firmware-brcm' \
+    "the new root must get the Wi-Fi firmware or a Wi-Fi-only board never comes back"
+
+# The discovery rule that made setup-disk a silent no-op: alpine-conf skips any
+# disk with a mounted partition, and a factory image boots with its own boot
+# partition mounted. Exercise the real function against a synthetic
+# /proc/mounts rather than trusting a grep.
+mounts_probe="$(mktemp)"
+helper="$(mktemp)"
+trap 'rm -f -- "${mounts_probe}" "${helper}"' EXIT
+sed -n '/^dev_on_disk()/,/^}/p; /^disk_has_mounted_part()/,/^}/p' "${SETUP_SYS}" \
+    | sed "s#/proc/mounts#${mounts_probe}#g" > "${helper}"
+[[ -s "${helper}" ]] || fail "disk_has_mounted_part is missing from setup-sys"
+grep -q 'dev_on_disk' "${helper}" || fail "disk_has_mounted_part must call dev_on_disk"
+
+# A factory Pi: the FAT boot partition of the install disk is mounted.
+cat > "${mounts_probe}" <<'EOF'
+tmpfs / tmpfs rw,relatime,mode=755 0 0
+/dev/mmcblk0p1 /media/mmcblk0p1 vfat ro,relatime,errors=remount-ro 0 0
+EOF
+if sh -c ". '${helper}'; disk_has_mounted_part /dev/mmcblk0"; then
+    :
+else
+    fail "disk_has_mounted_part must detect the mounted boot partition that blocks setup-disk"
+fi
+
+# The same disk once the boot media has been released.
+cat > "${mounts_probe}" <<'EOF'
+tmpfs / tmpfs rw,relatime,mode=755 0 0
+EOF
+if sh -c ". '${helper}'; disk_has_mounted_part /dev/mmcblk0"; then
+    fail "disk_has_mounted_part must report a freed disk as available"
+fi
+
+# The new-root reachability check is a glob test, and a quoted glob silently
+# never matches -- which made this check fire on every run regardless of what
+# was actually installed. Exercise it against a real directory tree.
+newroot_probe="$(mktemp -d)"
+newroot_helper="$(mktemp)"
+sed -n '/^newroot_has()/,/^}/p' "${SETUP_SYS}" \
+    | sed "s#/mnt/omt-newroot#${newroot_probe}#g" > "${newroot_helper}"
+[[ -s "${newroot_helper}" ]] || fail "newroot_has is missing from setup-sys"
+
+mkdir -p "${newroot_probe}/lib/firmware/brcm" "${newroot_probe}/usr/sbin" \
+    "${newroot_probe}/sbin"
+touch "${newroot_probe}/usr/sbin/sshd"
+if sh -c ". '${newroot_helper}'; newroot_has 'usr/sbin/sshd' 'sbin/sshd'"; then
+    :
+else
+    fail "newroot_has must find a plain path that exists"
+fi
+if sh -c ". '${newroot_helper}'; newroot_has 'lib/firmware/brcm/brcmfmac*'"; then
+    fail "newroot_has must not report a match in an empty firmware directory"
+fi
+touch "${newroot_probe}/lib/firmware/brcm/brcmfmac43455-sdio.bin.zst"
+if sh -c ". '${newroot_helper}'; newroot_has 'lib/firmware/brcm/brcmfmac*'"; then
+    :
+else
+    fail "newroot_has must expand the glob; a quoted pattern never matches"
+fi
+if sh -c ". '${newroot_helper}'; newroot_has 'usr/sbin/nothing-here'"; then
+    fail "newroot_has must report a missing plain path as missing"
+fi
+
+# Alpine ships wpa_supplicant at sbin/, not usr/sbin/. Checking only the
+# second one aborted a complete install on hardware, so both are asked about
+# and this pins that either layout satisfies the check.
+touch "${newroot_probe}/sbin/wpa_supplicant"
+if sh -c ". '${newroot_helper}'; newroot_has 'sbin/wpa_supplicant' 'usr/sbin/wpa_supplicant'"; then
+    :
+else
+    fail "newroot_has must accept wpa_supplicant at Alpine's sbin/ location"
+fi
+rm -f "${newroot_probe}/sbin/wpa_supplicant"
+touch "${newroot_probe}/usr/sbin/wpa_supplicant"
+if sh -c ". '${newroot_helper}'; newroot_has 'sbin/wpa_supplicant' 'usr/sbin/wpa_supplicant'"; then
+    :
+else
+    fail "newroot_has must accept wpa_supplicant on a merged-/usr layout"
+fi
+rm -rf -- "${newroot_probe}" "${newroot_helper}"
+
+# The paths the reachability check asks about are the ones Alpine's packages
+# actually use; getting one wrong reads as a failed install.
+require "newroot_has 'sbin/wpa_supplicant' 'usr/sbin/wpa_supplicant'" \
+    "wpa_supplicant lives at sbin/ in Alpine's package, so that path must be checked"
+
+# A different disk's partition must not block this one.
+cat > "${mounts_probe}" <<'EOF'
+/dev/sda1 /media/sda1 vfat ro,relatime 0 0
+EOF
+if sh -c ". '${helper}'; disk_has_mounted_part /dev/mmcblk0"; then
+    fail "disk_has_mounted_part must not confuse another disk's partition for this one"
+fi
+
+# A name that merely starts with the disk name is a different disk: sdaa1 is
+# a partition of sdaa, not of sda. Erasing on this answer makes it worth a test.
+cat > "${mounts_probe}" <<'EOF'
+/dev/sdaa1 /media/sdaa1 ext4 rw,relatime 0 0
+EOF
+if sh -c ". '${helper}'; disk_has_mounted_part /dev/sda"; then
+    fail "disk_has_mounted_part must not treat sdaa1 as a partition of sda"
+fi
+
+# NVMe namespaces use the same p<index> rule.
+cat > "${mounts_probe}" <<'EOF'
+/dev/nvme0n1p2 / ext4 rw,relatime 0 0
+EOF
+if sh -c ". '${helper}'; disk_has_mounted_part /dev/nvme0n1"; then
+    :
+else
+    fail "disk_has_mounted_part must detect a mounted NVMe partition"
+fi
+
+# free_boot_media must use the same matcher, not a prefix that would unmount
+# another disk's partition.
+grep -A80 '^free_boot_media()' "${SETUP_SYS}" | grep -q 'dev_on_disk' || \
+    fail "free_boot_media must unmount with dev_on_disk, not a device-name prefix"
+
 grep -qxF 'deploy/host/setup-sys.sh' "${MANIFEST}" || \
     fail "deploy/host/setup-sys.sh must ship in the v3 manifest"
 

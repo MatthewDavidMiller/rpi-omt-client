@@ -85,7 +85,9 @@ tested against the same core validators the buttons' actions use. The same run
 covers the rules that answer the display: that a window never opens larger than
 the monitor it landed on and never grows to reach a floor, that an unreadable
 monitor size changes nothing, that the opening fit is not spent after the
-window has moved or after a short launch budget, that the form column stops
+window has moved or after a short wall-clock launch budget, that a resize is
+retried until the window is observed to fit, that the window is not centred
+on the primary monitor, that the form column stops
 widening, that labels stack at the narrowest window, and that zoom steps by a
 tenth, saturates at its bounds, and returns to exactly 100%. None of that
 needs a display attached.

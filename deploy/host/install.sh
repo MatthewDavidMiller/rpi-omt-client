@@ -486,6 +486,14 @@ chown root:root "${DOCKER_CONFIG_TMP}"
 dockerd --validate --config-file "${DOCKER_CONFIG_TMP}" >/dev/null
 mv -fT "${DOCKER_CONFIG_TMP}" /etc/docker/daemon.json
 
+# setup-sys.sh opens root password SSH so the deployer can drive a factory
+# image, and copies that drop-in onto the persistent root. It is a setup-time
+# credential, not an appliance one. Today 90- sorts ahead of it and sshd keeps
+# the first value it reads for a keyword, so the hardening below already wins;
+# delete the file anyway rather than let the appliance's root login policy
+# depend on two filenames continuing to sort in this order.
+rm -f /etc/ssh/sshd_config.d/99-omt-alpine-setup.conf
+
 host_publish_file /etc/ssh/sshd_config.d/90-omt-client-hardening.conf 0644 root root <<'EOF'
 # Preserve key-based emergency access while removing risky SSH features.
 PermitRootLogin prohibit-password

@@ -351,22 +351,28 @@ mod layout {
         column >= PAIRED_MIN
     }
 
-    /// How long after first paint the opening fit may still run. A monitor
-    /// size that appears later is the window crossing a display, not the
-    /// landing, and resizing then cancels the drag.
+    /// How long after the window's own monitor is first known the opening fit
+    /// may keep asking the compositor to shrink.
+    ///
+    /// A resize is a round trip: the frames right after the request still
+    /// report the old size, so a single attempt cannot tell "not applied yet"
+    /// from "refused". Retrying covers a dropped request. The budget is wall
+    /// time, not a frame count, because `request_repaint` can produce frames
+    /// far faster than the compositor applies `InnerSize`; counting those
+    /// would settle while the window is still oversized. The bound also stops
+    /// a compositor that simply will not resize -- a tiling one -- from being
+    /// asked for the life of the process.
     pub const OPENING_FIT_BUDGET: std::time::Duration = std::time::Duration::from_millis(750);
 
     /// Slack in points before a change of outer origin counts as a move.
     /// Sub-pixel compositor jitter must not spend the opening fit.
     const MOVE_SLACK: f32 = 2.0;
 
-    /// `current` moved `steps` notches, rounded to a whole percent-of-ten and
-    /// held inside the bounds. The one zoom rule: buttons and keyboard
-    /// shortcuts both go through it.
-    pub fn step_zoom(current: f32, steps: i8) -> f32 {
-        let base = if current.is_finite() { current } else { 1.0 };
-        let stepped = base + f32::from(steps) * ZOOM_STEP;
-        ((stepped * 10.0).round() / 10.0).clamp(ZOOM_MIN, ZOOM_MAX)
+    /// Whether `current` is still bigger than the monitor allows. A point of
+    /// slack: asking the compositor for what the window already is costs a
+    /// round trip and can itself perturb the window.
+    pub fn needs_shrink(current: [f32; 2], fitted: [f32; 2]) -> bool {
+        fitted[0] < current[0] - 1.0 || fitted[1] < current[1] - 1.0
     }
 
     /// Whether the window's outer origin has left the place it first appeared.
@@ -380,12 +386,46 @@ mod layout {
         elapsed > OPENING_FIT_BUDGET
     }
 
+    /// What the opening fit should do on a frame where the window's own
+    /// monitor is known and the window has not been dragged.
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    pub enum FitStep {
+        /// Ask the compositor for this size, and look again next frame.
+        Shrink([f32; 2]),
+        /// The window fits, the budget ran out, or the compositor will not
+        /// shrink it. Either way there is nothing further to ask for.
+        Done,
+    }
+
+    /// The opening fit's whole decision, kept here so that "when does the
+    /// window stop being resized" is a rule with a test rather than something
+    /// only reproducible on a particular desk.
+    pub fn fit_step(current: [f32; 2], monitor: [f32; 2], elapsed: std::time::Duration) -> FitStep {
+        if opening_fit_budget_expired(elapsed) {
+            return FitStep::Done;
+        }
+        let fitted = fit_to_monitor(current, Some(monitor));
+        if !needs_shrink(current, fitted) {
+            return FitStep::Done;
+        }
+        FitStep::Shrink(fitted)
+    }
+
+    /// `current` moved `steps` notches, rounded to a whole percent-of-ten and
+    /// held inside the bounds. The one zoom rule: buttons and keyboard
+    /// shortcuts both go through it.
+    pub fn step_zoom(current: f32, steps: i8) -> f32 {
+        let base = if current.is_finite() { current } else { 1.0 };
+        let stepped = base + f32::from(steps) * ZOOM_STEP;
+        ((stepped * 10.0).round() / 10.0).clamp(ZOOM_MIN, ZOOM_MAX)
+    }
+
     #[cfg(test)]
     mod tests {
         use super::{
-            COLUMN_MAX, DEFAULT_SIZE, LABEL_WIDTH, MIN_SIZE, OPENING_FIT_BUDGET, PAIRED_MIN,
-            ZOOM_MAX, ZOOM_MIN, column_width, fields_paired, fit_to_monitor,
-            opening_fit_budget_expired, origin_moved, step_zoom,
+            COLUMN_MAX, DEFAULT_SIZE, FitStep, LABEL_WIDTH, MIN_SIZE, OPENING_FIT_BUDGET,
+            PAIRED_MIN, ZOOM_MAX, ZOOM_MIN, column_width, fields_paired, fit_step, fit_to_monitor,
+            needs_shrink, opening_fit_budget_expired, origin_moved, step_zoom,
         };
 
         fn close(left: f32, right: f32) -> bool {
@@ -506,6 +546,16 @@ mod layout {
             assert!(close(step_zoom(f32::NAN, 1), 1.1));
         }
 
+        /// The opening fit stops asking once the window fits, and a point of
+        /// slack keeps it from asking for a size the window already has.
+        #[test]
+        fn the_fit_stops_when_the_window_fits() {
+            assert!(needs_shrink([960.0, 640.0], [800.0, 640.0]));
+            assert!(needs_shrink([960.0, 640.0], [960.0, 500.0]));
+            assert!(!needs_shrink([960.0, 640.0], [960.0, 640.0]));
+            assert!(!needs_shrink([960.0, 640.0], [959.5, 639.5]));
+        }
+
         /// A drag is a real move of the outer origin, not compositor jitter,
         /// and the opening budget is spent once rather than on every later
         /// monitor the window crosses.
@@ -517,6 +567,48 @@ mod layout {
             assert!(opening_fit_budget_expired(
                 OPENING_FIT_BUDGET + std::time::Duration::from_millis(1)
             ));
+        }
+
+        /// A resize is a round trip, so the frames right after a request still
+        /// report the old size. The fit has to keep asking across that lag,
+        /// stop as soon as the window fits, and still terminate against a
+        /// compositor that never applies it -- on wall time, not a frame
+        /// count, because a tight repaint loop can burn eight frames before
+        /// the first `InnerSize` lands.
+        #[test]
+        fn the_fit_converges_and_always_terminates() {
+            let early = std::time::Duration::from_millis(32);
+            // A monitor smaller than the default window: shrink towards it.
+            assert_eq!(
+                fit_step(DEFAULT_SIZE, [800.0, 600.0], std::time::Duration::ZERO),
+                FitStep::Shrink([720.0, 510.0])
+            );
+            // Still oversized later in the budget, because the resize has not
+            // landed yet. The fit must ask again rather than settle.
+            assert_eq!(
+                fit_step(DEFAULT_SIZE, [800.0, 600.0], early),
+                FitStep::Shrink([720.0, 510.0])
+            );
+            // Once it has landed, it is done.
+            assert_eq!(
+                fit_step([720.0, 510.0], [800.0, 600.0], early),
+                FitStep::Done
+            );
+            // A monitor with room to spare is never touched at all.
+            assert_eq!(
+                fit_step(DEFAULT_SIZE, [3840.0, 2160.0], std::time::Duration::ZERO),
+                FitStep::Done
+            );
+            // A compositor that refuses every request: the budget ends the
+            // loop `fit_window` runs, or it resizes on every frame forever.
+            assert_eq!(
+                fit_step(
+                    DEFAULT_SIZE,
+                    [800.0, 600.0],
+                    OPENING_FIT_BUDGET + std::time::Duration::from_millis(1)
+                ),
+                FitStep::Done
+            );
         }
     }
 }
@@ -734,13 +826,18 @@ mod desktop {
 
     /// Whether the opening window has been fitted to the display it landed on.
     ///
-    /// Pending until that fit runs, the window is dragged, or the opening
-    /// budget expires. A monitor size that appears after any of those is the
-    /// window crossing a display; resizing then cancels the drag.
+    /// Pending until the window is observed to fit, dragged, or the opening
+    /// budget expires. `started` is the first frame the window's own monitor
+    /// was known -- not process start -- so a backend that names the monitor
+    /// late still gets a fit. `origin` is the outer position on that first
+    /// named-monitor frame; a later move is a drag, and resizing then snaps
+    /// the window back. Settled is permanent: the fit belongs to the opening,
+    /// and re-running it later would resize the window out from under an
+    /// operator who had dragged it somewhere deliberately.
     #[derive(Clone, Copy)]
     enum Fit {
         Pending {
-            started: std::time::Instant,
+            started: Option<std::time::Instant>,
             origin: Option<egui::Pos2>,
         },
         Settled,
@@ -786,7 +883,7 @@ mod desktop {
                 prerequisites: Vec::new(),
                 picker: None,
                 fit: Fit::Pending {
-                    started: std::time::Instant::now(),
+                    started: None,
                     origin: None,
                 },
                 pending_confirmation: None,
@@ -1073,19 +1170,32 @@ mod desktop {
 
         /// Bring the opening window inside the display it landed on.
         ///
-        /// eframe clamps the requested size against the *largest* monitor and
-        /// with no margin, which is the wrong monitor on a mixed-DPI desk and
-        /// the wrong size under a task bar. The first frames are the first
-        /// point at which the window's own monitor is known, so the fit
-        /// happens here, once, and only ever shrinks.
+        /// eframe clamps the requested size against the *largest* monitor,
+        /// with no margin, which is both the wrong monitor on a mixed-DPI desk
+        /// and the wrong size under a task bar. `monitor_size` is the only
+        /// figure here that describes the display the window is actually on --
+        /// egui-winit reads it from `current_monitor` and divides by the
+        /// window's pixels-per-point, so it is in the same points as
+        /// `screen_rect` whatever the display scaling. That is also why this
+        /// works on Windows per-monitor DPI: the size is already in the
+        /// window's own point space.
         ///
-        /// It must not run after the window has been moved. Wayland often
-        /// names a monitor only once the surface is on an output, which can
-        /// be the frame the operator is already dragging onto another
-        /// display; `InnerSize` in the middle of that drag is what snaps the
-        /// window back.
+        /// The fit repeats until the window is observed to fit rather than
+        /// settling on the first request, because a resize is a round trip:
+        /// the frames immediately after it still report the old size, and a
+        /// request the compositor drops would otherwise leave the window
+        /// oversized for the whole session. It must not run after the window
+        /// has been moved. Wayland often names a monitor only once the surface
+        /// is on an output, which can be the frame the operator is already
+        /// dragging onto another display; `InnerSize` in the middle of that
+        /// drag is what snaps the window back. Once it fits, or the budget
+        /// expires, this is done for good.
         fn fit_window(&mut self, context: &egui::Context) {
-            let Fit::Pending { started, origin } = self.fit else {
+            let Fit::Pending {
+                mut started,
+                mut origin,
+            } = self.fit
+            else {
                 return;
             };
             if let Some(outer) = context.input(|input| input.viewport().outer_rect) {
@@ -1095,33 +1205,42 @@ mod desktop {
                         return;
                     }
                 } else {
-                    self.fit = Fit::Pending {
-                        started,
-                        origin: Some(outer.min),
-                    };
+                    origin = Some(outer.min);
                 }
             }
-            if layout::opening_fit_budget_expired(started.elapsed()) {
-                self.fit = Fit::Settled;
-                return;
-            }
-            // Already in egui points: egui-winit divides the monitor's
-            // physical size by the window's pixels-per-point. A backend that
-            // does not name a monitor yet leaves the fit pending rather than
-            // spending it on a guess.
+            // A backend that has not named a monitor yet leaves the fit
+            // pending rather than spending the budget on a guess. On Wayland
+            // this is every frame before the surface is on an output. The
+            // budget starts on the first named-monitor frame, not at process
+            // start, so a slow map still gets a fit.
             let Some(monitor) = context.input(|input| input.viewport().monitor_size) else {
+                self.fit = Fit::Pending { started, origin };
                 return;
             };
+            let started_at = started.unwrap_or_else(std::time::Instant::now);
+            started = Some(started_at);
             let current = context.screen_rect().size();
-            let fitted =
-                layout::fit_to_monitor([current.x, current.y], Some([monitor.x, monitor.y]));
-            self.fit = Fit::Settled;
-            // A point of slack: resizing to what the window already is costs a
-            // needless round trip to the compositor on every launch.
-            if fitted[0] < current.x - 1.0 || fitted[1] < current.y - 1.0 {
-                context.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
-                    fitted[0], fitted[1],
-                )));
+            match layout::fit_step(
+                [current.x, current.y],
+                [monitor.x, monitor.y],
+                started_at.elapsed(),
+            ) {
+                layout::FitStep::Done => {
+                    self.fit = Fit::Settled;
+                }
+                layout::FitStep::Shrink(fitted) => {
+                    self.fit = Fit::Pending { started, origin };
+                    context.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
+                        fitted[0], fitted[1],
+                    )));
+                    // The resize arrives asynchronously; without this the next
+                    // frame may not come until some input does, and the fit
+                    // would stall half-applied. Termination is the wall-clock
+                    // budget in `fit_step`, so a tight repaint loop cannot
+                    // spend the opening on frames that all still show the old
+                    // size.
+                    context.request_repaint();
+                }
             }
         }
 
@@ -1872,12 +1991,30 @@ mod desktop {
                 // egui's own default for this is platform-dependent, so it is
                 // stated rather than inherited: a window larger than the
                 // monitor is unusable everywhere and crashes some Linux
-                // compositors. `App::fit_window` then refines the result
-                // against the monitor the window actually opened on, and only
-                // during that opening -- never while the window is being
-                // dragged onto another display.
+                // compositors. It clamps against the largest monitor, which is
+                // only a crash guard; `App::fit_window` does the real fit
+                // against the monitor the window actually opened on.
                 .with_clamp_size_to_monitor_size(true),
-            centered: true,
+            // Deliberately not `centered`, and not the egui helper that
+            // centres the viewport on the primary monitor. Both take that
+            // monitor's size and use half of it as an absolute desktop
+            // position, never adding that monitor's origin. On a single
+            // display whose origin is (0, 0) it happens to work. With
+            // several, the offset lands wherever it falls in the desktop
+            // rectangle -- routinely a different display than the primary --
+            // and mixed scale factors move it again, because the value is
+            // then converted to physical pixels with one monitor's factor.
+            // egui exposes no monitor origin to correct this with, and this
+            // crate adds no extra windowing dependency to read one.
+            //
+            // Leaving the position unset is the placement that works on every
+            // desktop this binary ships for. Windows then uses CW_USEDEFAULT,
+            // which puts the window on the cursor's display at that display's
+            // scale. Linux and macOS window managers place new windows on the
+            // active display and inside its work area. `App::fit_window` then
+            // shrinks to `current_monitor` in that window's own points, so a
+            // 200%-scaled panel is measured in the same space as the window.
+            centered: false,
             ..eframe::NativeOptions::default()
         };
         eframe::run_native(
@@ -1943,6 +2080,20 @@ mod desktop {
                 "factory bootstrap belongs on the Alpine view"
             );
             assert!(!source.contains(&["clean", "Alpine", "only"].join(" ")));
+        }
+
+        /// eframe's centred-at-init flag and egui's centre-on-primary-monitor
+        /// helper both treat half the primary monitor's size as an absolute
+        /// desktop position, which is how a mixed-DPI Windows desk opens the
+        /// window on the wrong display. Placement is leaving the position unset.
+        #[test]
+        fn the_window_is_not_centred_on_the_primary_monitor() {
+            let source = include_str!("main.rs");
+            assert!(source.contains("centered: false"));
+            assert!(
+                !source.contains(&["centered:", "true"].join(" ")),
+                "eframe centred placement ignores monitor origin on Windows"
+            );
         }
 
         /// The Setup jobs exist for a workstation that cannot deploy yet, so

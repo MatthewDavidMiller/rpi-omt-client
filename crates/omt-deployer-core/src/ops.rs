@@ -202,8 +202,10 @@ fn bootstrap_escalation(tooling: &HostTooling) -> io::Result<&'static str> {
         Err(io::Error::other(
             "this Raspberry Pi has no sudo, no doas, and the deploy account is \
              not root, so the appliance cannot be bootstrapped remotely. Alpine \
-             ships neither by default. Connect as root, or run \
-             `su -c '/bin/sh bootstrap.sh'` once on the Pi with \
+             ships neither by default. Fill the Alpine view's root password \
+             (`bootstrap_root_password` in the CLI `--secrets-stdin`) and the \
+             first deploy installs them through `su`. Otherwise connect as root, or \
+             run `su -c '/bin/sh bootstrap.sh'` once on the Pi with \
              deploy/host/bootstrap.sh copied across.",
         ))
     }
@@ -304,14 +306,19 @@ fn wait_for_reboot(
 ) -> io::Result<SshSession> {
     progress("Waiting for the Raspberry Pi to reboot...");
     let deadline = Instant::now() + timeout;
-    let mut saw_down = false;
+    // Per connection, because these are different accounts on the same board
+    // and they do not have to fail together. One shared flag would let a
+    // refusal on one account stand in as proof that the *host* went away, and
+    // the next account to answer would then return a session belonging to the
+    // pre-reboot system that is still shutting down.
+    let mut saw_down = vec![false; connections.len()];
     while Instant::now() < deadline {
         cancelled(cancellation)?;
-        for connection in connections {
+        for (connection, saw_down) in connections.iter().zip(saw_down.iter_mut()) {
             match connect(connection) {
-                Ok(session) if saw_down => return Ok(session),
+                Ok(session) if *saw_down => return Ok(session),
                 Ok(_) => {}
-                Err(_) => saw_down = true,
+                Err(_) => *saw_down = true,
             }
         }
         thread::sleep(Duration::from_secs(2));

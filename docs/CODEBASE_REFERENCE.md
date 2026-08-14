@@ -126,6 +126,11 @@ subsystem) and drives hostname, IPv4 DHCP, optional Wi-Fi, user `pi`, root/`pi`
 passwords, US HTTPS apk mirrors, clock sync, apk OpenSSH, and
 `setup-disk -m sys` over that empty-password session. A blank SSID keeps a
 boot-partition Wi-Fi association so a Wi-Fi-only factory image stays reachable.
+`setup-sys.sh` releases the boot media before `setup-disk` (which otherwise
+finds no available disk and exits 0 without installing), installs the
+network-facing packages into the new root with `apk --root`, and verifies that
+root before printing its completion marker. `tests/unit/test_setup_sys.sh`
+pins those orderings.
 Privileged remote operations use the provided, zeroized sudo
 credential for non-root accounts and run directly for root. The SSH command
 adapter continues reading through an EOF notification so that the server's

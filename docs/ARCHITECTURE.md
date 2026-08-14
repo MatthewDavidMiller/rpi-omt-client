@@ -292,6 +292,18 @@ The Alpine view uploads `deploy/host/setup-sys.sh` over SFTP or a `cat` exec
 fallback (factory headless sshd often has no SFTP), sets hostname, IPv4 DHCP,
 optional or already-associated Wi-Fi, user `pi`, root/`pi` passwords, US HTTPS
 apk mirrors after an NTP clock step, apk OpenSSH, and persistent `sys` mode.
+Three orderings in that script are load-bearing. The passwords are set before
+apk OpenSSH can replace the sshd carrying the session, because a stock sshd
+config refuses the factory image's empty root password. The boot media is
+released first with `copy-modloop`, because alpine-conf skips any disk with a
+mounted partition and `setup-disk` then *exits 0* having installed nothing.
+And the packages the appliance needs to rejoin the network — OpenSSH, and on
+a Wi-Fi board `wpa_supplicant` with `linux-firmware-brcm` — are installed
+into the new root with `apk --root` after the install, because the factory
+image runs from a read-only modloop where the firmware belongs to no package
+and `/lib/firmware` cannot be written at all. The completion marker the
+deployer keys on is printed only after the new root has been mounted and
+checked, so a `setup-disk` that did nothing cannot report success.
 Fixed management actions cross the same privilege boundary as deployment and
 Wi-Fi: a non-root SSH account uses its bounded sudo-password channel, while a
 root session runs the fixed command directly. Neither account needs membership
@@ -344,9 +356,21 @@ than a drag across displays, the readable column width, when labels pair
 with their fields, and the zoom bounds. Each is only observable on hardware --
 a 200%-scaled laptop, a 4K desktop, a window dragged to its minimum -- so
 keeping the arithmetic out of egui is what lets `cargo test` cover it without
-one. The zoom bounds are applied to the keyboard shortcuts as well as the
+one. The opening fit retries until the window is observed to fit, and gives
+up on wall time rather than a frame count, because a `request_repaint` loop
+can burn frames faster than the compositor applies `InnerSize`. The zoom
+bounds are applied to the keyboard shortcuts as well as the
 buttons, which is why egui's own handler is turned off: two clamps for one
 control is the mistake the gating rules exist to prevent.
+
+The native window is not centred by eframe. Both `NativeOptions.centered` and
+`ViewportCommand::center_on_screen` take the primary monitor's size and use
+half of it as an absolute desktop position, never adding that monitor's
+origin, which on a mixed-DPI Windows desk opens the window on the wrong
+display. The position is left unset: Windows then uses `CW_USEDEFAULT` (the
+cursor's display, at that display's scale) and the Linux or macOS window
+manager places a new window on the active display. `fit_window` then shrinks
+to `current_monitor` in the window's own points.
 
 Windows sets per-monitor DPI awareness v2 from winit at process start, so the
 cross-built `.exe` needs no side-by-side manifest and

@@ -240,8 +240,16 @@ available if the result is smaller or larger than wanted. The opening window
 is then fitted to the monitor it actually landed on, taking at most 90% of
 its width and 85% of its height, so a heavily scaled panel -- 1366x768 at
 200% scaling leaves only 683x384 points in total -- never gets a window
-larger than itself. That opening fit is spent on the first moments after
-launch, not when the window later crosses a display.
+larger than itself. That opening fit retries until the compositor has applied
+the size, stops if the window is dragged, and gives up after a short
+wall-clock budget rather than a frame count.
+
+The window is not centred by eframe. That path uses the primary monitor's
+size as an absolute desktop position, which on Windows with several displays
+(especially mixed scale factors) opens the window on the wrong monitor. The
+position is left unset so Windows `CW_USEDEFAULT` and the Linux/macOS window
+manager place it on the display the operator is using; the opening fit then
+sizes it to that display in the window's own points.
 
 The window can be dragged down to 420x320 points. Every view scrolls rather
 than clipping, the navigation and the Manage buttons wrap, and labels move from
@@ -272,13 +280,22 @@ make build-arm64
 make deploy HOST=admin@192.168.1.50
 ```
 
-On a factory Alpine image, install persistent sys mode first (empty SSH
-password, then the root and `pi` passwords on stdin):
+On a factory Alpine image, install persistent sys mode first. The image
+answers as `root` with an empty password, so `password` is sent as an empty
+string — omitting the field entirely is what "no password" means to the
+client, and it rejects that as a missing credential:
 
 ```bash
+printf '%s\n' '{"password":"","root_password":"...","pi_password":"..."}' | \
 rpi-omt-deploy --project . --host 10.1.20.210 --username root --secrets-stdin \
     alpine-setup --hostname omt-client --ssid studio
 ```
+
+Leave `--ssid` off to keep a `wpa_supplicant.conf` the image already carries.
+Alpine setup is not resumable: it sets the root and `pi` passwords early, so a
+run that fails partway leaves the board on those passwords rather than the
+factory's empty one. Nothing is committed to disk until the install itself, so
+power cycling returns a factory image to its original state.
 
 `deploy/manifest-v3.txt` is the authoritative capsule. It includes the image,
 Compose definition, host scripts, OpenRC definitions, shared validation rules,
