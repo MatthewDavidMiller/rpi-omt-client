@@ -120,6 +120,7 @@ pub struct WifiSettings {
     pub ssid: String,
     pub password: Secret,
     pub connect: bool,
+    pub preserve_existing_profiles: bool,
 }
 
 /// Factory Alpine sys-mode install driven by the native deployer.

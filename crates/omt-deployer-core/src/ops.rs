@@ -24,7 +24,7 @@ const SETUP_SYS_COMPLETE: &str = "=== Alpine sys install complete ===";
 const WEB_PASSWORD_COMMAND: &str = "sh -eu -c 'docker exec -i omt-client /usr/local/bin/omt-web set-password && rc-service omt-client restart'";
 
 const WIFI_SCRIPT: &str = concat!(
-    "marker=$3\n",
+    "marker=$4\n",
     "found_marker=no\n",
     "while IFS= read -r line; do\n",
     "  if [ \"$line\" = \"$marker\" ]; then found_marker=yes; break; fi\n",
@@ -33,6 +33,14 @@ const WIFI_SCRIPT: &str = concat!(
     "if ! IFS= read -r wifi_password; then echo \"Wi-Fi password not provided\" >&2; exit 11; fi\n",
     "ssid_hex=$1\n",
     "activate=$2\n",
+    "preserve=$3\n",
+    "ssid_text=$5\n",
+    "config_path=/etc/wpa_supplicant/wpa_supplicant.conf\n",
+    "secure_saved_config() {\n",
+    "  [ -f \"$config_path\" ] && [ ! -L \"$config_path\" ] || { echo 'Unsafe wpa_supplicant configuration path' >&2; exit 15; }\n",
+    "  chown root:root \"$config_path\"\n",
+    "  chmod 600 \"$config_path\"\n",
+    "}\n",
     "command -v wpa_cli >/dev/null 2>&1 || { echo 'wpa_cli is unavailable' >&2; exit 12; }\n",
     "iface=\n",
     "if command -v iw >/dev/null 2>&1; then\n",
@@ -48,23 +56,54 @@ const WIFI_SCRIPT: &str = concat!(
     "fi\n",
     "[ -n \"$iface\" ] || iface=wlan0\n",
     "wpa_cli -i \"$iface\" ping | grep -Fxq PONG || { echo \"wpa_supplicant is unavailable on $iface\" >&2; exit 12; }\n",
+    "secure_saved_config\n",
     "wpa_cli -i \"$iface\" scan >/dev/null || true\n",
     "network_id=\n",
-    "for candidate in $(wpa_cli -i \"$iface\" list_networks | awk 'NR > 1 {print $1}'); do\n",
-    "  current=$(wpa_cli -i \"$iface\" get_network \"$candidate\" ssid 2>/dev/null || true)\n",
-    "  if [ \"$current\" = \"$ssid_hex\" ]; then network_id=$candidate; break; fi\n",
-    "done\n",
+    "if [ \"$preserve\" = yes ]; then\n",
+    "  network_id=$(wpa_cli -i \"$iface\" list_networks | SSID_TARGET=\"$ssid_text\" awk -F '\\t' 'NR > 1 && $2 == ENVIRON[\"SSID_TARGET\"] { print $1; exit }')\n",
+    "fi\n",
     "if [ -z \"$network_id\" ]; then network_id=$(wpa_cli -i \"$iface\" add_network); fi\n",
     "case \"$network_id\" in ''|*[!0-9]*) echo 'Unable to allocate Wi-Fi profile' >&2; exit 13;; esac\n",
     "wpa_cli -i \"$iface\" set_network \"$network_id\" ssid \"$ssid_hex\" | grep -Fxq OK\n",
     "wpa_cli -i \"$iface\" set_network \"$network_id\" key_mgmt WPA-PSK | grep -Fxq OK\n",
     "wpa_cli -i \"$iface\" set_network \"$network_id\" psk \"$wifi_password\" | grep -Fxq OK\n",
     "unset wifi_password\n",
+    "if [ \"$activate\" = no ]; then\n",
+    "  wpa_cli -i \"$iface\" disconnect | grep -Fxq OK\n",
+    "fi\n",
     "wpa_cli -i \"$iface\" enable_network \"$network_id\" | grep -Fxq OK\n",
-    "wpa_cli -i \"$iface\" save_config | grep -Fxq OK\n",
+    "if [ \"$preserve\" = yes ]; then\n",
+    "  wpa_cli -i \"$iface\" save_config | grep -Fxq OK\n",
+    "  secure_saved_config\n",
+    "fi\n",
     "if [ \"$activate\" = yes ]; then\n",
     "  wpa_cli -i \"$iface\" select_network \"$network_id\" >/dev/null\n",
     "  wpa_cli -i \"$iface\" reassociate >/dev/null\n",
+    "fi\n",
+    "if [ \"$preserve\" = no ] && [ \"$activate\" = yes ]; then\n",
+    "  association_ready=no\n",
+    "  attempt=0\n",
+    "  while [ \"$attempt\" -lt 30 ]; do\n",
+    "    status=$(wpa_cli -i \"$iface\" status 2>/dev/null || true)\n",
+    "    status_id=$(printf '%s\\n' \"$status\" | awk -F= '$1 == \"id\" { print $2; exit }')\n",
+    "    status_state=$(printf '%s\\n' \"$status\" | awk -F= '$1 == \"wpa_state\" { print $2; exit }')\n",
+    "    if [ \"$status_id\" = \"$network_id\" ] && [ \"$status_state\" = COMPLETED ]; then association_ready=yes; break; fi\n",
+    "    attempt=$((attempt + 1))\n",
+    "    sleep 1\n",
+    "  done\n",
+    "  if [ \"$association_ready\" != yes ]; then\n",
+    "    wpa_cli -i \"$iface\" reconfigure >/dev/null 2>&1 || true\n",
+    "    echo 'New Wi-Fi profile did not associate; existing profiles were retained' >&2\n",
+    "    exit 14\n",
+    "  fi\n",
+    "fi\n",
+    "if [ \"$preserve\" = no ]; then\n",
+    "  for candidate in $(wpa_cli -i \"$iface\" list_networks | awk 'NR > 1 {print $1}'); do\n",
+    "    [ \"$candidate\" = \"$network_id\" ] && continue\n",
+    "    wpa_cli -i \"$iface\" remove_network \"$candidate\" | grep -Fxq OK\n",
+    "  done\n",
+    "  wpa_cli -i \"$iface\" save_config | grep -Fxq OK\n",
+    "  secure_saved_config\n",
     "fi\n",
     "command -v iw >/dev/null 2>&1 && iw dev \"$iface\" set power_save off || true\n"
 );
@@ -795,6 +834,15 @@ pub fn apply_wifi(
     });
     if settings.connect {
         progress("SSH may disconnect if the Raspberry Pi switches networks.");
+    } else {
+        progress("Immediate Wi-Fi association is paused; Wi-Fi SSH may disconnect.");
+    }
+    if !settings.preserve_existing_profiles {
+        progress(if settings.connect {
+            "Existing Wi-Fi profiles will be removed after the new profile associates."
+        } else {
+            "Existing Wi-Fi profiles will be removed without testing the new profile; Wi-Fi SSH may disconnect."
+        });
     }
 
     let password = settings.password.expose();
@@ -812,11 +860,17 @@ pub fn apply_wifi(
     stdin.push('\n');
 
     let wifi_command = format!(
-        "sh -eu -c {} sh {} {} {}",
+        "sh -eu -c {} sh {} {} {} {} {}",
         shell_quote(WIFI_SCRIPT),
         shell_quote(&ssid_hex),
         shell_quote(if settings.connect { "yes" } else { "no" }),
+        shell_quote(if settings.preserve_existing_profiles {
+            "yes"
+        } else {
+            "no"
+        }),
         shell_quote(&marker),
+        shell_quote(&settings.ssid),
     );
     // Authenticate and execute in one sudo process. Alpine's default sudo
     // timestamp policy may not carry a non-interactive `sudo -v` ticket into
@@ -1381,6 +1435,57 @@ mod tests {
         assert!(WIFI_SCRIPT.contains("wpa_cli -i \"$iface\" ping"));
         assert!(WIFI_SCRIPT.contains("iw dev \"$iface\" set power_save off"));
         assert!(!WIFI_SCRIPT.contains("wpa_cli -i wlan0"));
+    }
+
+    #[test]
+    fn wifi_profile_replacement_is_verified_or_explicitly_deferred() {
+        let disconnect = WIFI_SCRIPT
+            .find("wpa_cli -i \"$iface\" disconnect")
+            .unwrap_or_else(|| panic!("deferred updates pause association"));
+        let enable = WIFI_SCRIPT
+            .find("wpa_cli -i \"$iface\" enable_network")
+            .unwrap_or_else(|| panic!("the new profile is enabled for the next boot"));
+        let completed = WIFI_SCRIPT
+            .find("status_state\" = COMPLETED")
+            .unwrap_or_else(|| panic!("immediate replacements verify association"));
+        let remove = WIFI_SCRIPT
+            .find("wpa_cli -i \"$iface\" remove_network")
+            .unwrap_or_else(|| panic!("replacement removes old profiles"));
+        assert!(disconnect < enable);
+        assert!(completed < remove);
+        assert!(WIFI_SCRIPT.contains("if [ \"$preserve\" = no ] && [ \"$activate\" = yes ]; then"));
+        assert!(
+            WIFI_SCRIPT
+                .contains("New Wi-Fi profile did not associate; existing profiles were retained")
+        );
+        assert!(WIFI_SCRIPT.contains("wpa_cli -i \"$iface\" reconfigure"));
+        assert_eq!(WIFI_SCRIPT.matches("secure_saved_config\n").count(), 3);
+        assert!(WIFI_SCRIPT.contains("chmod 600 \"$config_path\""));
+        assert!(WIFI_SCRIPT.contains("chown root:root \"$config_path\""));
+    }
+
+    #[test]
+    fn wifi_update_script_is_valid_posix_shell() {
+        use std::io::Write as _;
+        use std::process::{Command, Stdio};
+
+        let mut child = Command::new("sh")
+            .arg("-n")
+            .stdin(Stdio::piped())
+            .spawn()
+            .unwrap_or_else(|error| panic!("spawn sh -n: {error}"));
+        child
+            .stdin
+            .take()
+            .unwrap_or_else(|| panic!("sh stdin"))
+            .write_all(WIFI_SCRIPT.as_bytes())
+            .unwrap_or_else(|error| panic!("write Wi-Fi script: {error}"));
+        assert!(
+            child
+                .wait()
+                .unwrap_or_else(|error| panic!("wait for sh -n: {error}"))
+                .success()
+        );
     }
 
     #[test]

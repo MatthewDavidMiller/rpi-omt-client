@@ -30,6 +30,8 @@ mod gates {
         pub os_pi_password_confirmation: &'a str,
         pub wifi_ssid: &'a str,
         pub wifi_password: &'a str,
+        pub wifi_connect: bool,
+        pub wifi_preserve_existing_profiles: bool,
         pub rotate_web_password: bool,
         pub web_password: &'a str,
         pub web_password_confirmation: &'a str,
@@ -65,7 +67,8 @@ mod gates {
                     validate_wifi(&WifiSettings {
                         ssid: self.wifi_ssid.to_owned(),
                         password,
-                        connect: false,
+                        connect: self.wifi_connect,
+                        preserve_existing_profiles: self.wifi_preserve_existing_profiles,
                     })
                     .is_ok()
                 })
@@ -99,6 +102,7 @@ mod gates {
                     ssid: self.wifi_ssid.to_owned(),
                     password,
                     connect: false,
+                    preserve_existing_profiles: true,
                 })
                 .is_ok()
             })
@@ -122,6 +126,8 @@ mod gates {
                 os_pi_password_confirmation: "pipassword",
                 wifi_ssid,
                 wifi_password,
+                wifi_connect: true,
+                wifi_preserve_existing_profiles: true,
                 rotate_web_password: false,
                 web_password: "correct horse battery staple",
                 web_password_confirmation: "correct horse battery staple",
@@ -809,6 +815,7 @@ mod desktop {
         web_password: Zeroizing<String>,
         web_password_confirmation: Zeroizing<String>,
         wifi_connect: bool,
+        wifi_preserve_existing_profiles: bool,
         project_root: String,
         remote_directory: String,
         build_image: bool,
@@ -873,6 +880,7 @@ mod desktop {
                 web_password: Zeroizing::new(String::new()),
                 web_password_confirmation: Zeroizing::new(String::new()),
                 wifi_connect: true,
+                wifi_preserve_existing_profiles: true,
                 project_root: project,
                 remote_directory: "/opt/omt-client".into(),
                 build_image: true,
@@ -937,6 +945,8 @@ mod desktop {
                 os_pi_password_confirmation: &self.os_pi_password_confirmation,
                 wifi_ssid: &self.wifi_ssid,
                 wifi_password: &self.wifi_password,
+                wifi_connect: self.wifi_connect,
+                wifi_preserve_existing_profiles: self.wifi_preserve_existing_profiles,
                 rotate_web_password: self.rotate_web_password,
                 web_password: &self.web_password,
                 web_password_confirmation: &self.web_password_confirmation,
@@ -1015,6 +1025,7 @@ mod desktop {
                 wifi_ssid: self.wifi_ssid.clone(),
                 wifi_password: self.wifi_password.clone(),
                 wifi_connect: self.wifi_connect,
+                wifi_preserve_existing_profiles: self.wifi_preserve_existing_profiles,
                 hostname: self.hostname.clone(),
                 os_root_password: self.os_root_password.clone(),
                 os_pi_password: self.os_pi_password.clone(),
@@ -1503,6 +1514,7 @@ mod desktop {
         wifi_ssid: String,
         wifi_password: Zeroizing<String>,
         wifi_connect: bool,
+        wifi_preserve_existing_profiles: bool,
         hostname: String,
         os_root_password: Zeroizing<String>,
         os_pi_password: Zeroizing<String>,
@@ -1543,6 +1555,7 @@ mod desktop {
                         password: Secret::new((*request.wifi_password).clone())
                             .map_err(|error| error.to_string())?,
                         connect: false,
+                        preserve_existing_profiles: true,
                     })
                 };
                 let settings = AlpineSetupSettings {
@@ -1590,6 +1603,7 @@ mod desktop {
                     password: Secret::new((*request.wifi_password).clone())
                         .map_err(|error| error.to_string())?,
                     connect: request.wifi_connect,
+                    preserve_existing_profiles: request.wifi_preserve_existing_profiles,
                 };
                 validate_wifi(&settings).map_err(|error| error.to_string())?;
                 apply_wifi(remote()?, &settings, cancel, &mut progress)
@@ -1921,7 +1935,17 @@ mod desktop {
                     field(ui, "Passphrase", |ui| {
                         text_field(ui, &mut self.wifi_password, !self.reveal);
                     });
-                    ui.checkbox(&mut self.wifi_connect, "Connect after saving");
+                    ui.checkbox(
+                        &mut self.wifi_preserve_existing_profiles,
+                        "Preserve existing Wi-Fi profiles",
+                    )
+                    .on_hover_text(
+                        "Uncheck to remove every other saved network; connection is verified first when requested",
+                    );
+                    ui.checkbox(&mut self.wifi_connect, "Connect immediately after saving")
+                        .on_hover_text(
+                            "Uncheck to save the profile for a device that will connect at a new location",
+                        );
                     ui.add_space(ui.spacing().item_spacing.y);
                     let enabled = self.form().can_apply_wifi() && !self.running();
                     if ui
@@ -2175,6 +2199,13 @@ mod desktop {
         #[test]
         fn web_password_rotation_is_off_by_default() {
             assert!(!App::default().rotate_web_password);
+        }
+
+        #[test]
+        fn wifi_defaults_preserve_profiles_and_connect_immediately() {
+            let app = App::default();
+            assert!(app.wifi_preserve_existing_profiles);
+            assert!(app.wifi_connect);
         }
     }
 }

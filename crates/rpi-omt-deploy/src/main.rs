@@ -100,6 +100,10 @@ struct WifiArgs {
     ssid: String,
     #[arg(long)]
     no_connect: bool,
+    /// Remove every other saved Wi-Fi profile, verifying the new one first
+    /// unless --no-connect defers association until the next boot.
+    #[arg(long)]
+    replace_existing_profiles: bool,
 }
 #[derive(Default, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -380,6 +384,7 @@ fn run(cli: Cli) -> Result<(), (i32, String)> {
                     ssid,
                     password,
                     connect: false,
+                    preserve_existing_profiles: true,
                 })
             } else {
                 None
@@ -454,6 +459,7 @@ fn run(cli: Cli) -> Result<(), (i32, String)> {
                 ssid: args.ssid.clone(),
                 password,
                 connect: !args.no_connect,
+                preserve_existing_profiles: !args.replace_existing_profiles,
             };
             validate_wifi(&settings).map_err(|e| (2, e.to_string()))?;
             let connection = connection.ok_or_else(|| (2, "connection required".into()))?;

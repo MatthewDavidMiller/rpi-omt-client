@@ -216,7 +216,13 @@ does not need a separate SSH session. The same view can change the Web GUI
 password later without redeploying.
 Wi-Fi updates the running
 `wpa_supplicant` through its control socket and stores a derived WPA PSK rather
-than sending the plaintext passphrase to a command line.
+than sending the plaintext passphrase to a command line. Existing profiles are
+preserved by default. Clear **Preserve existing Wi-Fi profiles** to leave only
+the submitted profile; when immediate connection is enabled, the new profile
+must associate before the old profiles are removed. Clear **Connect immediately
+after saving** to prepare the appliance for a different location without trying
+the new network. That pauses automatic association, so perform a deferred
+replacement over Ethernet or expect a Wi-Fi SSH session to disconnect.
 
 About shows `LICENSE` and `THIRD_PARTY_NOTICES.txt` from inside the executable:
 `include_str!` compiles both texts in, so the page cannot go blank
