@@ -6,8 +6,17 @@
 // the incoming video format changes, and a format the display cannot show is
 // reported as unsupported rather than as a failure, so the playback loop keeps
 // the connection instead of reconnecting in a loop.
+//
+// A display's mode list rarely contains the sender's format. HDMI sinks
+// advertise what they were built to show, not what a production switcher emits,
+// and a set that stops at 720p is common on small panels and on TVs whose
+// larger timings the kernel prunes. Requiring an exact match meant the whole
+// picture was refused for a resolution mismatch alone, so when no mode carries
+// the format the closest usable one is taken and each frame is resampled into
+// it, aspect ratio preserved; see `scale.rs`.
 
 use crate::channel::Frame;
+use crate::scale::{Placement, Scaler};
 use drm::buffer::Buffer;
 use drm::control::{Device as ControlDevice, Mode, PageFlipFlags, connector, crtc, framebuffer};
 use drm::{Device, buffer::DrmFourcc};
@@ -18,7 +27,7 @@ use std::os::fd::{AsFd, BorrowedFd};
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 use std::time::{Duration, Instant};
-use vmx_decoder::{ColorSpace, Decoder, Dimensions};
+use vmx_decoder::{ColorSpace, Decoder, Dimensions, MAX_HEIGHT, MAX_WIDTH};
 
 /// Buffers in the flip chain. Three lets the compositor-free pipeline keep one
 /// scanning out, one queued, and one being decoded into.
@@ -36,6 +45,10 @@ const O_NONBLOCK: i32 = 0o4000;
 /// Decode workers. Every supported board -- Pi 3, Pi 4, Pi 5, and Zero 2 W --
 /// is quad-core, and the audio worker needs one of those cores.
 const DECODE_WORKERS: usize = 3;
+/// How close a mode's refresh has to be to count as the rate that was asked
+/// for. Displays advertise 59.94 as 59.94 and 60 as 60, so this only has to
+/// absorb the rounding in the timings, not bridge two rates.
+const RATE_TOLERANCE: f64 = 0.02;
 
 #[derive(Debug, Eq, PartialEq)]
 pub enum Present {
@@ -59,6 +72,19 @@ struct Surface {
     framebuffer: framebuffer::Handle,
 }
 
+/// The resample interposed between the decoder and the scanout buffer when the
+/// selected mode is not the video's size, with the frame it decodes into.
+///
+/// The intermediate costs one full frame of ordinary memory -- 8 MiB at the
+/// 1920x1080 maximum, against the appliance's 128 MiB container -- and it is
+/// only allocated for a session that actually needs scaling. It also puts the
+/// decoder's writes back on cached memory; only the resample's output crosses
+/// into the write-combined scanout mapping.
+struct Scaled {
+    scaler: Scaler,
+    frame: Vec<u8>,
+}
+
 /// The active mode and everything derived from it.
 struct Configured {
     crtc: crtc::Handle,
@@ -68,7 +94,15 @@ struct Configured {
     /// Whether that flip is still outstanding. DRM allows one per CRTC.
     flip_pending: bool,
     decoder: Decoder,
+    /// `None` when the mode carries the video's own size and the decoder can
+    /// write the scanout buffer directly.
+    scale: Option<Scaled>,
     format: VideoFormat,
+    /// What the dashboard says while this configuration presents. Built once
+    /// here rather than per frame, because the playback loop republishes the
+    /// running state for every frame it displays.
+    progressive_detail: String,
+    interlaced_detail: String,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -176,11 +210,16 @@ impl Output {
         // The mapping lives only for the decode. The scanout reads the buffer
         // through the GPU, so nothing needs the CPU view between frames.
         let decoded = match self.card.map_dumb_buffer(&mut surface.buffer) {
-            Ok(mut mapping) => active.decoder.decode_bgrx(mapping.as_mut(), pitch),
+            Ok(mut mapping) => paint(
+                &mut active.decoder,
+                active.scale.as_mut(),
+                mapping.as_mut(),
+                pitch,
+            ),
             Err(error) => return Present::Failed(format!("Unable to map DRM buffer: {error}")),
         };
         if let Err(error) = decoded {
-            return Present::Failed(format!("VMX decoder rejected the frame: {error}"));
+            return Present::Failed(error);
         }
 
         let framebuffer = surface.framebuffer;
@@ -293,9 +332,15 @@ impl Output {
             .and_then(|encoder| encoder.crtc())
             .ok_or_else(|| Present::Failed("Selected HDMI encoder is unavailable".into()))?;
 
-        let mode = select_mode(info.modes(), header).ok_or_else(|| {
-            Present::UnsupportedFormat("Display has no mode for the OMT video format".into())
+        let selected = select_mode(info.modes(), header).ok_or_else(|| {
+            Present::UnsupportedFormat(format!(
+                "The display offers no usable mode for {}x{} video.",
+                header.width, header.height
+            ))
         })?;
+        let mode = selected.mode;
+        let (mode_width, mode_height) = mode.size();
+        let mode_size = (usize::from(mode_width), usize::from(mode_height));
 
         // Build the software side before changing the CRTC. If decoder
         // allocation or worker creation fails, no newly active framebuffer
@@ -316,6 +361,11 @@ impl Output {
         .map_err(|error| {
             Present::UnsupportedFormat(format!("Unable to create the VMX decoder: {error}"))
         })?;
+        let scale = if selected.scaled {
+            Some(build_scale((width, height), mode_size)?)
+        } else {
+            None
+        };
 
         let mut surfaces = Vec::new();
         for _ in 0..BUFFERS {
@@ -326,6 +376,19 @@ impl Output {
                     return Err(error);
                 }
             }
+        }
+        // A resample that letterboxes leaves the bars unwritten for the life of
+        // the configuration. Fresh dumb buffers come back zeroed, which is
+        // already black in XRGB8888, but the bars are what the operator sees
+        // for as long as the session lasts, so they are cleared rather than
+        // assumed.
+        if scale
+            .as_ref()
+            .is_some_and(|scaled| !scaled.scaler.covers(mode_size))
+            && let Err(error) = self.clear_surfaces(&mut surfaces)
+        {
+            self.destroy_surfaces(surfaces);
+            return Err(error);
         }
         let Some(first) = surfaces.first().map(|surface| surface.framebuffer) else {
             self.destroy_surfaces(surfaces);
@@ -339,6 +402,7 @@ impl Output {
             return Err(Present::Failed(format!("Unable to set DRM mode: {error}")));
         }
 
+        let scaled_to = selected.scaled.then_some(mode_size);
         self.active = Some(Configured {
             crtc,
             surfaces,
@@ -346,8 +410,40 @@ impl Output {
             front: 0,
             flip_pending: false,
             decoder,
+            scale,
             format: VideoFormat::of(header),
+            progressive_detail: describe_presentation(false, (width, height), scaled_to),
+            interlaced_detail: describe_presentation(true, (width, height), scaled_to),
         });
+        Ok(())
+    }
+
+    /// What the dashboard reports while the current configuration presents.
+    ///
+    /// Falls back to the plain message when nothing is configured, which the
+    /// playback loop cannot observe: it only asks after a presented frame.
+    pub fn presentation_detail(&self, interlaced: bool) -> &str {
+        self.active.as_ref().map_or(PLAYING, |active| {
+            if interlaced {
+                &active.interlaced_detail
+            } else {
+                &active.progressive_detail
+            }
+        })
+    }
+
+    /// Fills every surface with black before the first frame is decoded into it.
+    fn clear_surfaces(&self, surfaces: &mut [Surface]) -> Result<(), Present> {
+        for surface in surfaces {
+            match self.card.map_dumb_buffer(&mut surface.buffer) {
+                Ok(mut mapping) => mapping.as_mut().fill(0),
+                Err(error) => {
+                    return Err(Present::Failed(format!(
+                        "Unable to map DRM buffer: {error}"
+                    )));
+                }
+            }
+        }
         Ok(())
     }
 
@@ -394,6 +490,73 @@ impl Drop for Output {
     }
 }
 
+/// The plain running message, and the base the scaled ones extend.
+const PLAYING: &str = "Playing OMT video.";
+const PLAYING_INTERLACED: &str = "Playing interlaced input progressively without deinterlacing.";
+
+/// What the dashboard reports for one configuration.
+///
+/// A resampled picture is softer than a native one, so the message names both
+/// sizes: it is the only place the operator can see that the display, not the
+/// sender, decided the resolution.
+fn describe_presentation(
+    interlaced: bool,
+    source: (usize, usize),
+    scaled_to: Option<(usize, usize)>,
+) -> String {
+    let base = if interlaced {
+        PLAYING_INTERLACED
+    } else {
+        PLAYING
+    };
+    match scaled_to {
+        None => base.to_owned(),
+        Some((width, height)) => format!(
+            "{base} Scaled from {}x{} to the display's {width}x{height} mode.",
+            source.0, source.1
+        ),
+    }
+}
+
+/// Builds the resample from the video's size into the selected mode.
+fn build_scale(source: (usize, usize), mode: (usize, usize)) -> Result<Scaled, Present> {
+    let placement = Placement::fit(source, mode).ok_or_else(|| {
+        Present::UnsupportedFormat("The display's mode cannot carry the OMT video format.".into())
+    })?;
+    let unsupported = || Present::UnsupportedFormat("Unsupported video dimensions".into());
+    let stride = source.0.checked_mul(4).ok_or_else(unsupported)?;
+    let length = stride.checked_mul(source.1).ok_or_else(unsupported)?;
+    let mut frame = Vec::new();
+    frame
+        .try_reserve_exact(length)
+        .map_err(|_| Present::Failed("Unable to reserve the scaled video frame".into()))?;
+    frame.resize(length, 0);
+    let scaler = Scaler::new(source, stride, placement).map_err(Present::Failed)?;
+    Ok(Scaled { scaler, frame })
+}
+
+/// Decodes the loaded frame into the mapped scanout buffer, going through the
+/// intermediate frame first when the mode is not the video's size.
+fn paint(
+    decoder: &mut Decoder,
+    scale: Option<&mut Scaled>,
+    target: &mut [u8],
+    pitch: usize,
+) -> Result<(), String> {
+    match scale {
+        Some(scaled) => {
+            let stride = scaled.scaler.source_stride();
+            decoder
+                .decode_bgrx(&mut scaled.frame, stride)
+                .map_err(|error| format!("VMX decoder rejected the frame: {error}"))?;
+            scaled.scaler.render(&scaled.frame, target, pitch)
+        }
+        None => decoder
+            .decode_bgrx(target, pitch)
+            .map_err(|error| format!("VMX decoder rejected the frame: {error}")),
+    }
+}
+
 /// What mode selection reads from one connector mode.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct ModeShape {
@@ -401,6 +564,22 @@ struct ModeShape {
     height: u16,
     refresh: f64,
     interlaced: bool,
+}
+
+impl ModeShape {
+    /// A mode this appliance will drive: progressive, with timings that yield a
+    /// real refresh rate, and inside the fixed video envelope the decoder and
+    /// the scanout buffers are sized for.
+    ///
+    /// A mode whose totals are zero has no rate to match and setting it would
+    /// fail, so it is excluded here rather than left for the scaled fallback to
+    /// pick when nothing else is on offer.
+    fn is_usable(self) -> bool {
+        !self.interlaced
+            && self.refresh > 0.0
+            && usize::from(self.width) <= MAX_WIDTH
+            && usize::from(self.height) <= MAX_HEIGHT
+    }
 }
 
 fn shape_of(mode: &Mode) -> ModeShape {
@@ -413,32 +592,121 @@ fn shape_of(mode: &Mode) -> ModeShape {
     }
 }
 
-/// Picks the display mode for an incoming format: the exact refresh rate, then
-/// its nearest whole rate, then 60 Hz. Interlaced modes are never selected.
-fn select_mode(modes: &[Mode], header: &VideoHeader) -> Option<Mode> {
+/// The mode chosen for an incoming format, and whether it has to be resampled.
+struct Selected {
+    mode: Mode,
+    scaled: bool,
+}
+
+/// Picks the display mode for an incoming format.
+fn select_mode(modes: &[Mode], header: &VideoHeader) -> Option<Selected> {
     let width = u16::try_from(header.width).ok()?;
     let height = u16::try_from(header.height).ok()?;
     let requested = f64::from(header.frame_rate_n) / f64::from(header.frame_rate_d);
     let shapes: Vec<ModeShape> = modes.iter().map(shape_of).collect();
-    let index = choose_mode(&shapes, width, height, requested)?;
-    modes.get(index).copied()
+    let choice = choose_mode(&shapes, width, height, requested)?;
+    Some(Selected {
+        mode: *modes.get(choice.index)?,
+        scaled: choice.scaled,
+    })
+}
+
+/// One mode's place in the list, and whether taking it means resampling.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct Choice {
+    index: usize,
+    scaled: bool,
 }
 
 /// The selection itself, over what a mode means rather than over DRM handles,
 /// so the fallback order can be tested without a display.
-fn choose_mode(shapes: &[ModeShape], width: u16, height: u16, requested: f64) -> Option<usize> {
-    for expected in [requested, requested.round(), 60.0] {
-        let found = shapes.iter().position(|shape| {
-            shape.width == width
-                && shape.height == height
-                && !shape.interlaced
-                && (shape.refresh - expected).abs() < 0.02
+///
+/// A mode at the video's own size always wins, because the decoder can write
+/// the scanout buffer directly. Only when the display advertises no such mode
+/// does the resampled path open, and it takes the closest usable size rather
+/// than refusing the picture for a resolution mismatch alone.
+fn choose_mode(shapes: &[ModeShape], width: u16, height: u16, requested: f64) -> Option<Choice> {
+    let usable: Vec<usize> = shapes
+        .iter()
+        .enumerate()
+        .filter(|(_, shape)| shape.is_usable())
+        .map(|(index, _)| index)
+        .collect();
+
+    let native: Vec<usize> = usable
+        .iter()
+        .copied()
+        .filter(|&index| shapes[index].width == width && shapes[index].height == height)
+        .collect();
+    if let Some(index) = best_rate(shapes, &native, requested) {
+        return Some(Choice {
+            index,
+            scaled: false,
         });
+    }
+
+    let size = scaled_size(shapes, &usable, width, height)?;
+    let candidates: Vec<usize> = usable
+        .iter()
+        .copied()
+        .filter(|&index| (shapes[index].width, shapes[index].height) == size)
+        .collect();
+    best_rate(shapes, &candidates, requested).map(|index| Choice {
+        index,
+        scaled: true,
+    })
+}
+
+/// The mode size to resample into: the largest the video can be reduced into,
+/// or the smallest on offer when every mode is larger than the video.
+///
+/// Reduction is preferred over enlargement. It is the case an appliance
+/// actually meets -- a production switcher sending more than the panel can
+/// show -- and it never asks the resample to write more pixels than the
+/// decoder produced.
+fn scaled_size(
+    shapes: &[ModeShape],
+    usable: &[usize],
+    width: u16,
+    height: u16,
+) -> Option<(u16, u16)> {
+    let area = |index: &usize| u32::from(shapes[*index].width) * u32::from(shapes[*index].height);
+    let reduced = usable
+        .iter()
+        .copied()
+        .filter(|&index| shapes[index].width <= width && shapes[index].height <= height)
+        .max_by_key(|index| area(index));
+    let chosen = match reduced {
+        Some(index) => index,
+        None => usable.iter().copied().min_by_key(|index| area(index))?,
+    };
+    Some((shapes[chosen].width, shapes[chosen].height))
+}
+
+/// The best refresh among the modes of one size: the rate that was asked for,
+/// then its nearest whole rate, then 60 Hz, then the fastest on offer.
+///
+/// The last fallback is what keeps a display that advertises only 50 Hz from
+/// refusing a 24 fps stream outright. The flip loop paces on arriving frames
+/// rather than on vblank, so a mode faster than the stream costs nothing and
+/// puts each frame on screen sooner.
+fn best_rate(shapes: &[ModeShape], candidates: &[usize], requested: f64) -> Option<usize> {
+    for expected in [requested, requested.round(), 60.0] {
+        let found = candidates
+            .iter()
+            .copied()
+            .find(|&index| (shapes[index].refresh - expected).abs() < RATE_TOLERANCE);
         if found.is_some() {
             return found;
         }
     }
-    None
+    candidates.iter().copied().reduce(|best, index| {
+        if shapes[index].refresh > shapes[best].refresh {
+            index
+        } else {
+            best
+        }
+    })
 }
 
 fn refresh_rate(mode: &Mode) -> f64 {
@@ -462,6 +730,20 @@ mod tests {
         }
     }
 
+    fn native(index: usize) -> Choice {
+        Choice {
+            index,
+            scaled: false,
+        }
+    }
+
+    fn scaled(index: usize) -> Choice {
+        Choice {
+            index,
+            scaled: true,
+        }
+    }
+
     /// A sender's rate is rarely a mode's rate. The order matters: 59.94 has to
     /// take a 59.94 mode when one exists and a 60 Hz mode when one does not,
     /// and must never take the 1080i mode that a Pi HDMI display also offers.
@@ -477,38 +759,109 @@ mod tests {
             shape(1920, 1080, 60.0),
             shape(1280, 720, 59.94),
         ];
-        assert_eq!(choose_mode(&modes, 1920, 1080, 59.94), Some(2));
-        assert_eq!(choose_mode(&modes, 1920, 1080, 60.0), Some(3));
-        assert_eq!(choose_mode(&modes, 1920, 1080, 50.0), Some(1));
-        assert_eq!(choose_mode(&modes, 1280, 720, 59.94), Some(4));
+        assert_eq!(choose_mode(&modes, 1920, 1080, 59.94), Some(native(2)));
+        assert_eq!(choose_mode(&modes, 1920, 1080, 60.0), Some(native(3)));
+        assert_eq!(choose_mode(&modes, 1920, 1080, 50.0), Some(native(1)));
+        assert_eq!(choose_mode(&modes, 1280, 720, 59.94), Some(native(4)));
         // 29.97 rounds to 30, which this display has no mode for, so the 60 Hz
         // fallback carries it.
-        assert_eq!(choose_mode(&modes, 1920, 1080, 29.97), Some(3));
-        // Only the interlaced mode matches, so there is nothing to select.
+        assert_eq!(choose_mode(&modes, 1920, 1080, 29.97), Some(native(3)));
+        // Only the interlaced mode is on offer, so there is nothing to select.
         assert_eq!(
             choose_mode(&modes[..1], 1920, 1080, 59.94),
             None,
             "an interlaced mode was selected"
         );
-        assert_eq!(choose_mode(&modes, 1920, 1200, 60.0), None);
         assert_eq!(choose_mode(&[], 1920, 1080, 60.0), None);
+    }
+
+    /// The display this appliance failed on: a TV whose mode list stops at
+    /// 720p, fed 1080p30. Refusing it left the operator looking at a console
+    /// login, so the largest mode the frame reduces into is taken instead.
+    #[test]
+    fn a_format_no_mode_carries_is_scaled_into_the_largest_that_fits() {
+        let modes = [
+            shape(1280, 720, 60.0),
+            shape(1280, 720, 59.94),
+            shape(800, 600, 60.0),
+            shape(640, 480, 60.0),
+            ModeShape {
+                interlaced: true,
+                ..shape(1920, 1080, 60.0)
+            },
+        ];
+        // 30 fps has no mode, so the 60 Hz fallback applies inside the size
+        // that was chosen: 1280x720 over the smaller ones, and never the 1080i.
+        assert_eq!(choose_mode(&modes, 1920, 1080, 30.0), Some(scaled(0)));
+        assert_eq!(choose_mode(&modes, 1920, 1080, 59.94), Some(scaled(1)));
+        // A native size still wins over any resample.
+        assert_eq!(choose_mode(&modes, 1280, 720, 60.0), Some(native(0)));
+    }
+
+    /// A stream smaller than everything the display offers has to be enlarged
+    /// into the smallest mode rather than refused, and a mode outside the
+    /// appliance's fixed video envelope is never selected at all.
+    #[test]
+    fn a_small_format_takes_the_smallest_mode_and_oversized_modes_are_skipped() {
+        let modes = [
+            shape(1920, 1080, 60.0),
+            shape(1280, 720, 60.0),
+            shape(3840, 2160, 60.0),
+        ];
+        assert_eq!(choose_mode(&modes, 640, 480, 60.0), Some(scaled(1)));
+        // 1920x1200 reduces into 1920x1080; the 4K mode is outside the envelope
+        // the decoder and the scanout buffers are sized for.
+        assert_eq!(choose_mode(&modes, 1920, 1200, 60.0), Some(scaled(0)));
+        assert_eq!(choose_mode(&modes[2..], 1920, 1080, 60.0), None);
+    }
+
+    /// When no mode's rate is the stream's, its rounding, or 60 Hz, the fastest
+    /// mode carries it. A display that offers only 50 Hz used to refuse a 24
+    /// fps stream outright.
+    #[test]
+    fn the_fastest_mode_carries_a_rate_nothing_matches() {
+        let modes = [shape(1920, 1080, 24.0), shape(1920, 1080, 50.0)];
+        assert_eq!(choose_mode(&modes, 1920, 1080, 25.0), Some(native(1)));
+        assert_eq!(choose_mode(&modes, 1920, 1080, 24.0), Some(native(0)));
     }
 
     #[test]
     fn a_rate_within_the_tolerance_is_the_same_mode() {
-        let modes = [shape(1920, 1080, 59.9401)];
-        assert_eq!(choose_mode(&modes, 1920, 1080, 59.94), Some(0));
-        assert_eq!(choose_mode(&modes, 1920, 1080, 59.9), None);
+        let modes = [shape(1920, 1080, 59.9401), shape(1920, 1080, 60.0)];
+        assert_eq!(choose_mode(&modes, 1920, 1080, 59.94), Some(native(0)));
+        // 59.9 is outside the tolerance of the 59.9401 mode, so it rounds to
+        // 60 and takes the mode that advertises exactly that.
+        assert_eq!(choose_mode(&modes, 1920, 1080, 59.9), Some(native(1)));
     }
 
     /// `refresh_rate` divides by the mode's totals, so a mode with a zero total
-    /// has to report a rate that never matches rather than an infinity that
-    /// compares equal to nothing and a NaN that compares equal to everything.
+    /// reports a rate of zero. Such a mode cannot be set, so it is excluded
+    /// outright rather than left for a zero-rate stream to match.
     #[test]
     fn a_degenerate_mode_is_never_selected() {
         let modes = [shape(1920, 1080, 0.0)];
         assert_eq!(choose_mode(&modes, 1920, 1080, 60.0), None);
-        assert_eq!(choose_mode(&modes, 1920, 1080, 0.0), Some(0));
+        assert_eq!(choose_mode(&modes, 1920, 1080, 0.0), None);
+    }
+
+    /// The running detail is what tells the operator the display, not the
+    /// sender, chose the resolution, so a resampled session must say so and a
+    /// native one must not.
+    #[test]
+    fn the_running_detail_names_a_resample() {
+        assert_eq!(describe_presentation(false, (1280, 720), None), PLAYING);
+        assert_eq!(
+            describe_presentation(true, (1280, 720), None),
+            PLAYING_INTERLACED
+        );
+        assert_eq!(
+            describe_presentation(false, (1920, 1080), Some((1280, 720))),
+            "Playing OMT video. Scaled from 1920x1080 to the display's 1280x720 mode."
+        );
+        assert!(
+            describe_presentation(true, (1920, 1080), Some((1280, 720)))
+                .starts_with(PLAYING_INTERLACED)
+        );
     }
 
     #[test]

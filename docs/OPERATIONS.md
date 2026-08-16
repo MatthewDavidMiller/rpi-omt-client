@@ -54,7 +54,11 @@ non-symlinked reads from the image.
 ## Video limit
 
 `/system` shows the detected board and the decode limit in force. Video above
-it is reported as `unsupported-format` rather than downscaled. POST
+it is reported as `unsupported-format` rather than downscaled; resampling would
+not lower the decode cost the limit exists to bound. Video the board can decode
+but the display has no matching mode for is a different case and is resampled
+into the closest mode rather than refused — the dashboard's running detail then
+names both the sender's size and the display's mode. POST
 `/system/video-limit` with one or more comma-separated `WIDTHxHEIGHT@FPS`
 values to override the board default, or an empty value to restore it; the
 change restarts playback. Raising the limit past the board default is allowed
@@ -139,8 +143,26 @@ receiver.
 - Waiting for HDMI: verify `/sys/class/drm/*/status` and the selected connector.
 - Unsupported format: the dashboard names this appliance's limit. Configure
   the sender within it, or raise it on `/system`. Limits are per board; see
-  the video limit table in [CONFIGURATION.md](CONFIGURATION.md).
+  the video limit table in [CONFIGURATION.md](CONFIGURATION.md). A display
+  that advertises no timing at the sender's size no longer reports this: the
+  picture is resampled into the closest mode instead. The message now only
+  appears for video over the board's limit, or for a display offering no
+  usable mode at all.
+- Picture is soft, or has black bars: the display's mode list carries nothing
+  at the sender's size, so the frame is being resampled into the closest mode.
+  The running detail on the dashboard names both sizes. Check the display's
+  advertised modes with `cat /sys/class/drm/card0-HDMI-A-1/modes` on the Pi;
+  if the mode you expect is in the EDID but not that list, the kernel pruned
+  it, and `install.sh --hdmi-video HDMI-A-1:1920x1080@60` forces it onto the
+  kernel command line.
 - Video without audio: inspect ALSA devices and ELD; video remains degraded.
+- Choppy audio, or audio dropping out in short gaps: the dashboard's playing
+  detail counts the underruns. Each one is a gap, and they mean audio is
+  arriving later than HDMI consumes it. Check the link first — a support
+  bundle's `wlan0 link` section gives the PHY rate and signal, and 2.4 GHz
+  carrying 1080p video alongside the audio stream is the usual cause. The
+  bundle's ALSA playback stream state section shows the negotiated buffer,
+  period, and start threshold, and whether the stream is in `XRUN`.
 - Service does not start after install: confirm Alpine loaded `linux-rpi`, then
   inspect `/dev/dri`, `/dev/snd`, `dmesg`, Docker readiness, and
   `rc-service omt-client status`.

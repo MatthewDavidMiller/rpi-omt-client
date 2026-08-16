@@ -132,7 +132,13 @@ a Cortex-A53 is not a Cortex-A76. `deploy/lib/board-profile.sh` is the table:
 A ceiling is a comma-separated list of `WIDTHxHEIGHT@FPS` shapes, and video is
 accepted when it fits inside any one of them — which is how the Pi 4 takes
 either 1080p30 or 720p60. Video above the ceiling is reported as
-`unsupported-format`; it is never downscaled or frame-dropped to fit.
+`unsupported-format`; it is never downscaled or frame-dropped to fit, because
+the ceiling is a decode limit and resampling would not lower the decode cost.
+
+This is separate from the attached display's mode list. Video the board can
+decode but the display advertises no matching timing for is resampled into the
+closest usable mode, aspect ratio preserved, rather than refused; the running
+status on the dashboard names both sizes when it is.
 
 Override it with `install.sh --max-video 1280x720@30`, or from the Web GUI's
 System page. `auto` restores the board default. No ceiling may exceed

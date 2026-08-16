@@ -173,15 +173,14 @@ fn session(
         let interlaced = frame.video.as_ref().is_some_and(|v| v.flags & 1 != 0);
         match output.present(frame) {
             Present::Presented => {
+                // The output owns this message: it is the only place that knows
+                // whether the display's mode carried the format natively or the
+                // frame had to be resampled into it.
                 note_status(
                     status_failed,
                     status.video(
                         VideoState::Running,
-                        if interlaced {
-                            "Playing interlaced input progressively without deinterlacing."
-                        } else {
-                            "Playing OMT video."
-                        },
+                        output.presentation_detail(interlaced),
                         &described,
                     ),
                 );
@@ -302,6 +301,22 @@ impl AudioContext {
     }
 }
 
+/// What the dashboard says while audio plays.
+///
+/// An underrun is a gap the operator heard. Reporting the count is what turns
+/// "the sound is choppy" into something with a number behind it, and it
+/// separates a starved sink from a link that is dropping the audio stream
+/// altogether -- the two look identical from the room.
+fn describe_audio(underruns: u64) -> String {
+    if underruns == 0 {
+        return "Playing OMT video and audio.".to_owned();
+    }
+    format!(
+        "Playing OMT video and audio. {underruns} audio underrun(s) in this session; \
+         the sender's audio is arriving later than the display consumes it."
+    )
+}
+
 /// Audio runs independently of video: a failing sink degrades the session
 /// rather than ending it, and the worker keeps retrying behind a backoff.
 fn audio_loop(context: &AudioContext) {
@@ -315,6 +330,11 @@ fn audio_loop(context: &AudioContext) {
             Instant::now() + CONNECT_TIMEOUT,
         ) {
             Ok(()) => {
+                // The running message is rebuilt only when the underrun count
+                // moves, so a healthy session formats one string for its whole
+                // life rather than one per audio frame.
+                let mut detail = describe_audio(0);
+                let mut reported = 0_u64;
                 while context.wanted() {
                     // The same slice the video loop reads on. An audio frame
                     // is a fraction of a video frame's size, but a read that
@@ -332,9 +352,14 @@ fn audio_loop(context: &AudioContext) {
                                 failure = error;
                                 break;
                             }
+                            let underruns = output.underruns();
+                            if underruns != reported {
+                                reported = underruns;
+                                detail = describe_audio(underruns);
+                            }
                             context.note_status(context.status.audio(
                                 AudioState::Running,
-                                "Playing OMT video and audio.",
+                                &detail,
                                 &context.connector,
                             ));
                         }
@@ -407,7 +432,21 @@ fn note_status(logged: &mut bool, result: std::io::Result<bool>) {
 
 #[cfg(test)]
 mod tests {
-    use super::note_status;
+    use super::{describe_audio, note_status};
+
+    /// A clean session must not carry a count the operator has to read past,
+    /// and a session with underruns must name the number rather than only
+    /// saying that playback is running.
+    #[test]
+    fn the_audio_detail_reports_underruns_only_when_there_are_some() {
+        assert_eq!(describe_audio(0), "Playing OMT video and audio.");
+        let reported = describe_audio(7);
+        assert!(
+            reported.starts_with("Playing OMT video and audio."),
+            "{reported}"
+        );
+        assert!(reported.contains('7'), "{reported}");
+    }
 
     #[test]
     fn a_success_rearms_status_failure_reporting() {

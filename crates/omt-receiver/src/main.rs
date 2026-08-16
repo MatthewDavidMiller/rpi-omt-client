@@ -12,6 +12,7 @@ mod connector;
 mod discovery;
 mod mdns;
 mod play;
+mod scale;
 mod video;
 mod xml;
 

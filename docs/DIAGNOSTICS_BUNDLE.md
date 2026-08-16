@@ -28,6 +28,12 @@ The bundle may reveal source names, network addresses, device details,
 configuration, and—when explicitly selected—raw network packets, so inspect it
 before sharing.
 
+`host-report.txt` carries both what the HDMI sink advertises and what the
+streams are doing: the connector's EDID and mode list, and the ALSA playback
+substream's `status`, `hw_params`, and `sw_params`. The last three are what
+make an underrun report checkable — the ELD alone says what the sink accepts,
+not whether the stream ran dry.
+
 Host diagnostics are collected by the root-owned
 `deploy/host/host-diagnostics.sh`. The Web process writes a bounded versioned
 request with a random request ID and `capture_pcap=0|1` to a pre-created

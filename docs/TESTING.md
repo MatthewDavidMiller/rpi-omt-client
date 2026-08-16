@@ -215,7 +215,20 @@ one is not evidence for another:
    promises, lower that board's profile rather than shipping a limit it cannot
    hold. The Zero 2 W's 720p60 is the most optimistic entry and 720p30 may be
    what it actually sustains. Then confirm that over-ceiling input reports
-   `unsupported-format` rather than stuttering.
+   `unsupported-format` rather than stuttering;
+7. verify the resampled path on a display whose mode list does not carry the
+   sender's format — a panel that stops at 720p fed 1080p is the case this was
+   written for. Confirm a full picture rather than `unsupported-format`, that
+   the running detail names both sizes, that a mismatched aspect ratio gets
+   black bars rather than a stretch, and that the board still holds the frame
+   interval with the resample in the loop. This path is unit-tested only; it is
+   on the DRM hardware boundary and has not been exercised on a Pi;
+8. verify HDMI audio timing under a loaded link. Play a full session over the
+   Wi-Fi link the appliance will actually use and confirm the playing detail
+   reports no underruns, then confirm the bundle's ALSA playback stream state
+   shows the negotiated buffer and a start threshold near 100 ms rather than
+   ALSA's one-frame default. The start threshold and ring size are set through
+   the device and cannot be asserted off the board.
 
 Useful commands are in `docs/OPERATIONS.md`. Any release not completing this
 physical tier must state the skipped Pi-specific checks.

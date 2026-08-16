@@ -10,6 +10,7 @@
 | Bounded XML reads for settings and announcements | `crates/omt-receiver/src/xml.rs` |
 | HDMI connector selection and hotplug checks | `crates/omt-receiver/src/connector.rs` |
 | Direct KMS scanout and mode selection | `crates/omt-receiver/src/video.rs` |
+| Aspect-preserving resample into a mode that is not the video's size | `crates/omt-receiver/src/scale.rs` |
 | HDMI audio through ALSA | `crates/omt-receiver/src/audio.rs` |
 | Playback supervisor, retry, and audio worker | `crates/omt-receiver/src/play.rs` |
 | OMT wire transport and validation | `crates/omt-protocol/src/lib.rs` |

@@ -127,12 +127,57 @@ instead of exiting. Frames above the board's ceiling are reported as
 `unsupported-format`. Interlaced input is presented progressively without
 deinterlacing.
 
+The board's ceiling and the display's mode list are separate limits and are
+answered separately. The ceiling says what this SoC can decode, and video above
+it is refused. The mode list only says what timings the sink advertises, and a
+sender's format is often not among them: HDMI sinks advertise what they were
+built to show, and a set that stops at 720p is common on small panels and on
+TVs whose larger timings the kernel prunes from an otherwise valid EDID.
+Selection therefore prefers a mode at the video's own size — the decoder writes
+that scanout buffer directly — and otherwise takes the largest usable mode the
+frame reduces into, or the smallest one it has to be enlarged into, and
+resamples each frame into it with the aspect ratio preserved and black bars
+around it. Interlaced modes, modes whose timings give no refresh rate, and
+modes outside the fixed 1920x1080 envelope are never selected. Only a display
+offering no usable mode at all is now reported as `unsupported-format`, and the
+running status names both sizes so a resample is visible rather than silent.
+
+The resample is nearest-neighbour with pixel-centre sampling, and it is the
+filter the budget allows: the Pi 4 tier already spends 26.4 ms of its 33.3 ms
+interval decoding a 1080p frame, so a bilinear pass over the destination would
+not fit. It costs one intermediate frame of ordinary memory, at most 8 MiB
+against the 128 MiB container, and only for a session that needs it. **The
+resampled path has not been exercised on hardware**; it is on the DRM boundary
+described under trust and legal surfaces and must be validated on a Pi with a
+display whose mode list does not carry the sender's format before release.
+
 HDMI audio is resolved rather than assumed. The Pi 4 and Pi 5 register one ALSA
 card per output, `vc4hdmi0` and `vc4hdmi1`; the Pi 3 and Zero 2 W have one
 output and register a single unindexed `vc4hdmi`. The receiver reads
 `/sys/class/sound/card*/id` and takes the indexed card when it exists, a lone
 `vc4hdmi` otherwise. Deriving the name from the connector alone is what made
 HDMI audio fail silently on the single-output boards while video kept playing.
+
+The PCM's software timing is set explicitly rather than left at ALSA's
+defaults. `snd_pcm_hw_params` leaves `start_threshold` at a single frame, so
+the device begins playing on the first write with nothing queued behind it and
+the next late audio frame is an underrun the operator hears. The receiver sets
+a 100 ms start threshold against a 240 ms ring, so playback only begins once
+there is a cushion, and because underrun recovery re-prepares the device that
+cushion is rebuilt after every underrun instead of restarting empty into the
+next one. The ring is capacity, not latency: the appliance's link is Wi-Fi
+carrying this session's own video, which delivers audio in bursts, and a ring
+only as deep as a couple of bursts runs dry between them. The 100 ms threshold
+is what sets the audio latency, chosen inside the ITU-R BT.1359 lip-sync
+tolerance and partly offset by the video path's own decode and scanout delay.
+Buffer and period sizes are read back from the device after `hw_params` rather
+than derived from the times requested, because the device refines both and the
+start threshold has to be expressed in the frames it actually chose.
+
+Recovered underruns are counted for the life of the audio session and named in
+the running status. An underrun is a gap in the sound, so reporting the count
+is what separates a starved sink from a link dropping the audio stream
+outright — the two are indistinguishable in the room.
 
 The PCM is opened non-blocking, so a momentarily full ring buffer answers a
 write with `EAGAIN`. That is back-pressure and it happens in steady playback
@@ -176,9 +221,9 @@ flip. DRM allows one flip per CRTC, so with three surfaces the buffer being
 decoded into is neither the one on screen nor the one queued, and the decode
 overlaps the previous frame's scanout; waiting first left the decoder idle for
 most of every frame interval and made the third buffer pointless. A format the
-display has no mode for is remembered with the reason it was refused, so an
-unsupported stream stops re-reading the connector's mode list at its own frame
-rate. Dumb buffers and framebuffers are kernel objects that a dropped handle
+display can carry no mode for is remembered with the reason it was refused, so
+an unsupported stream stops re-reading the connector's mode list at its own
+frame rate. Dumb buffers and framebuffers are kernel objects that a dropped handle
 does not release, so one path retires any pending flip and destroys both, for
 reconfiguration and for shutdown alike. The card is opened non-blocking,
 because DRM events arrive by reading it: on a blocking descriptor the wait for

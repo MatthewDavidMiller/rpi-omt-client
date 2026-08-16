@@ -440,6 +440,14 @@ start_packet_captures
         'if command -v modetest >/dev/null 2>&1; then timeout 5 modetest -M vc4 2>&1 | sed -n "1,400p"; else echo modetest_not_installed; fi'
     run "host ALSA HDMI state" sh -c \
         'for file in /proc/asound/cards /proc/asound/pcm /proc/asound/devices; do printf "### %s\n" "$file"; cat "$file" 2>&1; done; for eld in /proc/asound/card*/eld*; do [ -e "$eld" ] || continue; printf "### %s\n" "$eld"; sed -n "1,120p" "$eld"; done'
+    # The ELD says what the sink accepts; these say what the stream is actually
+    # doing. `status` carries the XRUN state and the running hardware pointer,
+    # and hw_params/sw_params carry the buffer, period, and start threshold the
+    # device settled on. Without them a report of choppy audio has nothing in
+    # the bundle to confirm or refute it, which is exactly what happened.
+    # shellcheck disable=SC2016 # Expanded by the nested host shell.
+    run "host ALSA playback stream state" sh -c \
+        'found=0; for sub in /proc/asound/card*/pcm*p/sub*; do [ -d "$sub" ] || continue; found=1; for file in status hw_params sw_params; do [ -r "$sub/$file" ] || continue; printf "### %s/%s\n" "$sub" "$file"; sed -n "1,40p" "$sub/$file" 2>&1; done; done; [ "$found" = 1 ] || echo no_playback_substream'
     run "kernel security denials" sh -c \
         'dmesg 2>&1 | grep -Ei "apparmor|audit|denied|seccomp|operation not permitted" | tail -n 200 || true'
     run "kernel vc4 DRM HDMI and ALSA messages" sh -c \
