@@ -198,6 +198,52 @@ as `OMT frame was truncated by a timeout` several times a minute on 2.4 GHz.
 The first byte consumed now switches the read onto its own frame budget, which
 still ends a sender that genuinely stops talking mid-frame.
 
+A closed video socket no longer tears down HDMI and audio with it. The play
+loop publishes `retrying`, then reconnects to the endpoint this session already
+resolved. Success keeps the last DRM frame scanning and the audio worker
+running, counts the reconnect in the playing detail, and resumes; VMX carries no
+inter-frame prediction, so the sender's next frame decodes on its own and there
+is no keyframe to wait for and nothing to re-sync against the audio that kept
+playing. An idle socket whose polling slice expires (`WouldBlock`) stays
+connected and is not a reconnect.
+
+That recovery is bounded, because the two failures it sits between look
+identical for the first few milliseconds. A sender that restarted its socket is
+back on the first attempt; a sender that accepts a connection and then drops it
+— one at its subscriber limit, or shutting down — would otherwise fail a
+reconnect as fast as the kernel completes a handshake, which is a spin on a core
+and a flood of connections at the sender. So a session gets three consecutive
+attempts, the first immediate and the rest behind a 250 ms escalating backoff,
+each waiting one second rather than the three a session's first connect gets. A
+refused connection spends an attempt like any other failure, because a sender
+that is restarting has its port shut for a second or two and that is the blip
+this exists to ride out. Any frame that arrives clears the count, so a link that
+drops occasionally is carried indefinitely without audio ever breaking or the
+display going black. Exhausting the budget bounds
+the held picture to under four seconds and returns to the outer loop, which is
+the only place that backs off and asks discovery where the source is now — the
+case a reconnect to a remembered address can never fix.
+
+TCP packet loss does not flip VMX bits; it stalls or resets the socket. That
+cuts both ways: a body the decoder rejects arrived intact, so it is a sender-side
+glitch rather than link damage, and a glitch clears within a frame or two. Frame-
+local damage — a bad slice bitstream, a bad stream table — is therefore a typed
+skip that leaves the on-screen buffer alone and counts itself in the playing
+detail, but only for twenty consecutive frames. Past that the stream is not
+damaged, it is one this receiver cannot decode, and no further frame from the
+same sender changes that; holding indefinitely would freeze the picture while
+reporting healthy playback. A presented frame clears the run, so a stream losing
+the occasional frame is tolerated for as long as it keeps recovering. Skips are
+also refused before the first page flip of a configuration: there is nothing on
+screen to hold but the buffer `set_crtc` scanned out.
+
+Three decoder outcomes are deliberately not skippable. An interlaced envelope is
+format policy and reports `unsupported-format`, which keeps the session rather
+than restarting it in a loop. An empty body, and a frame whose `metadata_length`
+overlaps its own video header, mean the sender and this receiver disagree about
+frame layout — deterministic, and repeated on every following frame. Internal
+decoder and DRM failures are not frame-local at all.
+
 The audio worker reads on the same slice as the video loop. Its frames are a
 fraction of a video frame's size, but a read that stalls after its first byte
 cannot be resumed and ends the session, and on a link already carrying this
@@ -213,10 +259,12 @@ small enough for that slice on loopback but not necessarily over a busy Pi
 Wi-Fi link; consuming part of it and then timing out closes the video channel,
 which previously made a healthy A/V sender report as audio-only.
 
-The presenter returns a typed `PresentOutcome`, so the play loop distinguishes a
-stream this display cannot show — which keeps the session and reports
-`unsupported-format` — from a failure of the output itself, which ends the
-session and retries. The two are not inferred from the error text: a genuine
+The presenter returns a typed `Present` outcome, so the play loop distinguishes
+three things: a stream this display cannot show, which keeps the session and
+reports `unsupported-format`; frame-local VMX damage inside the skip budget,
+which holds the last picture and keeps reporting `running`; and a failure of the
+output itself, which ends the session and retries. None of the three is inferred
+from the error text: a genuine
 `drmModeSetCrtc` failure also mentions "mode", and treating it as recoverable
 reconfigured the display, tearing down and reallocating three 1080p scanout
 buffers, once per decoded frame. During playback, connector

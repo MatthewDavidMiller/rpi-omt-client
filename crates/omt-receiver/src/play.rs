@@ -27,6 +27,25 @@ const CONNECTOR_POLL: Duration = Duration::from_millis(500);
 const RECEIVE_SLICE: Duration = Duration::from_millis(500);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
 const RESOLVE_TIMEOUT: Duration = Duration::from_millis(1500);
+/// Consecutive in-session video reconnects before the session is rebuilt.
+///
+/// Recovering the video socket alone is what keeps the picture on screen and
+/// audio unbroken across a blip, so it is worth a few tries. It is not worth
+/// more: a sender that keeps dropping the socket needs the outer loop, which is
+/// the only place that backs off and asks discovery where the source is now.
+const RECOVER_ATTEMPTS: u32 = 3;
+/// Added before each attempt after the first. A peer that accepts and then
+/// immediately closes fails a reconnect as fast as the kernel can complete the
+/// handshake, and without this that is a spin on a core and a flood of
+/// connections at the sender.
+const RECOVER_BACKOFF: Duration = Duration::from_millis(250);
+/// How long one in-session reconnect waits, against [`CONNECT_TIMEOUT`] for the
+/// first connect of a session.
+///
+/// This one races a frozen picture: the endpoint was reachable moments ago, so
+/// a handshake that has not completed in this long is a link problem, and the
+/// budget above bounds the whole recovery to under four seconds of held frame.
+const RECOVER_TIMEOUT: Duration = Duration::from_secs(1);
 
 pub struct Options {
     pub target: String,
@@ -133,6 +152,10 @@ fn session(
     let mut last_frame = Instant::now() + MEDIA_GRACE;
     let mut next_connector_check = Instant::now();
     let mut failure = None;
+    let mut reconnects = 0_u64;
+    let mut skipped = 0_u64;
+    let mut attempts = 0_u32;
+    let mut running = RunningDetail::default();
 
     while !stop.load(Ordering::Relaxed) {
         if Instant::now() >= next_connector_check {
@@ -146,6 +169,8 @@ fn session(
         let outcome = next_video_frame(&mut video, deadline);
         let frame = match outcome {
             Ok(()) => {
+                // A frame arrived, so whatever the last outage was, it is over.
+                attempts = 0;
                 // The borrow of the channel ends with each receive, so the
                 // frame is re-read here for presentation.
                 video.frame()
@@ -153,8 +178,49 @@ fn session(
             Err(error) => {
                 note_status(status_failed, status.heartbeat(&described));
                 if !video.connected() {
-                    failure = Some(error);
-                    break;
+                    if attempts >= RECOVER_ATTEMPTS {
+                        // Naming the exhausted budget is what separates "the
+                        // link dropped once" from "this endpoint keeps
+                        // accepting and dropping us" in the operator's detail.
+                        failure = Some(format!(
+                            "{error}; {attempts} in-session video reconnects did not hold."
+                        ));
+                        break;
+                    }
+                    note_status(
+                        status_failed,
+                        status.video(VideoState::Retrying, &sanitize_detail(&error), &described),
+                    );
+                    // The first attempt is immediate, so the common case -- a
+                    // sender that restarted its socket -- costs one handshake
+                    // rather than a visible gap.
+                    wait(
+                        RECOVER_BACKOFF * attempts,
+                        status,
+                        Some(connector),
+                        stop,
+                        status_failed,
+                    );
+                    if stop.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    attempts += 1;
+                    if let Err(error) = recover_video(&mut video, &endpoint) {
+                        // A refused connection spends an attempt like any other
+                        // failure: a sender that is restarting has its port shut
+                        // for a second or two, which is the blip this exists to
+                        // ride out, not a reason to drop audio and the picture.
+                        if attempts >= RECOVER_ATTEMPTS {
+                            failure = Some(format!(
+                                "{error}; {attempts} in-session video reconnects did not hold."
+                            ));
+                            break;
+                        }
+                        continue;
+                    }
+                    reconnects = reconnects.saturating_add(1);
+                    last_frame = Instant::now() + MEDIA_GRACE;
+                    continue;
                 }
                 if Instant::now() >= last_frame {
                     note_status(
@@ -172,15 +238,22 @@ fn session(
         last_frame = Instant::now() + MEDIA_GRACE;
         let interlaced = frame.video.as_ref().is_some_and(|v| v.flags & 1 != 0);
         match output.present(frame) {
-            Present::Presented => {
+            // A held frame is still a running session: the picture on screen is
+            // the sender's, audio never stopped, and the presenter bounds how
+            // long a run of them can last before it fails the session instead.
+            outcome @ (Present::Presented | Present::Skipped) => {
+                if outcome == Present::Skipped {
+                    skipped = skipped.saturating_add(1);
+                }
                 // The output owns this message: it is the only place that knows
                 // whether the display's mode carried the format natively or the
                 // frame had to be resampled into it.
+                let base = output.presentation_detail(interlaced);
                 note_status(
                     status_failed,
                     status.video(
                         VideoState::Running,
-                        output.presentation_detail(interlaced),
+                        running.detail(base, reconnects, skipped),
                         &described,
                     ),
                 );
@@ -216,6 +289,58 @@ fn next_video_frame(channel: &mut Channel, deadline: Instant) -> Result<(), Stri
         }
     }
     Err("OMT media deadline expired".into())
+}
+
+/// One in-session reconnect to the endpoint this session already resolved.
+///
+/// Success keeps the DRM configuration, the picture on screen, and the audio
+/// worker; the sender resumes at its live point and VMX carries no inter-frame
+/// prediction, so there is nothing to wait for and nothing to re-sync. Failure,
+/// or a run of them, returns to the outer loop so discovery can follow a source
+/// that has moved. `WouldBlock` never reaches here: an idle socket whose polling
+/// slice expired is still connected.
+fn recover_video(channel: &mut Channel, endpoint: &Endpoint) -> Result<(), String> {
+    channel
+        .connect(endpoint, FrameType::Video, Instant::now() + RECOVER_TIMEOUT)
+        .map_err(|error| error.to_string())
+}
+
+/// The running message, with this session's reconnect and skip counts.
+///
+/// The playback loop republishes the running state for every frame it displays,
+/// so this is rebuilt only when a count moves or the presenter's sentence
+/// changes: a healthy session formats one string for its whole life.
+#[derive(Default)]
+struct RunningDetail {
+    reconnects: u64,
+    skipped: u64,
+    base: String,
+    text: String,
+}
+
+impl RunningDetail {
+    fn detail(&mut self, base: &str, reconnects: u64, skipped: u64) -> &str {
+        if self.reconnects != reconnects || self.skipped != skipped || self.base != base {
+            self.reconnects = reconnects;
+            self.skipped = skipped;
+            base.clone_into(&mut self.base);
+            self.text = describe_running(base, reconnects, skipped);
+        }
+        &self.text
+    }
+}
+
+fn describe_running(base: &str, reconnects: u64, skipped: u64) -> String {
+    match (reconnects, skipped) {
+        (0, 0) => base.to_owned(),
+        (reconnects, 0) => {
+            format!("{base} {reconnects} video reconnect(s) in this session.")
+        }
+        (0, skipped) => format!("{base} {skipped} skipped frame(s) in this session."),
+        (reconnects, skipped) => format!(
+            "{base} {reconnects} video reconnect(s) and {skipped} skipped frame(s) in this session."
+        ),
+    }
 }
 
 struct AudioWorker {
@@ -432,7 +557,16 @@ fn note_status(logged: &mut bool, result: std::io::Result<bool>) {
 
 #[cfg(test)]
 mod tests {
-    use super::{describe_audio, note_status};
+    use super::{
+        CONNECT_TIMEOUT, RECOVER_ATTEMPTS, RECOVER_BACKOFF, RECOVER_TIMEOUT, RunningDetail,
+        describe_audio, describe_running, note_status, recover_video,
+    };
+    use crate::channel::{Channel, Endpoint};
+    use omt_protocol::FrameType;
+    use std::net::TcpListener;
+    use std::sync::mpsc;
+    use std::thread;
+    use std::time::{Duration, Instant};
 
     /// A clean session must not carry a count the operator has to read past,
     /// and a session with underruns must name the number rather than only
@@ -460,5 +594,185 @@ mod tests {
         assert!(!logged);
         note_status(&mut logged, Err(std::io::Error::other("later outage")));
         assert!(logged);
+    }
+
+    /// A clean session must read exactly as it did before there were counts to
+    /// report, so the operator has nothing to read past.
+    #[test]
+    fn zero_running_counts_read_as_the_presenter_wrote_them() {
+        let mut cache = RunningDetail::default();
+        let base = "Playing OMT video.";
+        assert_eq!(cache.detail(base, 0, 0), base);
+        assert_eq!(describe_running(base, 0, 0), base);
+    }
+
+    #[test]
+    fn running_detail_names_reconnects_and_skips() {
+        let base = "Playing OMT video.";
+        assert_eq!(
+            describe_running(base, 2, 0),
+            "Playing OMT video. 2 video reconnect(s) in this session."
+        );
+        assert_eq!(
+            describe_running(base, 0, 3),
+            "Playing OMT video. 3 skipped frame(s) in this session."
+        );
+        assert_eq!(
+            describe_running(base, 2, 3),
+            "Playing OMT video. 2 video reconnect(s) and 3 skipped frame(s) in this session."
+        );
+        let scaled = "Playing OMT video. Scaled from 1920x1080 to the display's 1280x720 mode.";
+        assert_eq!(
+            describe_running(scaled, 1, 0),
+            "Playing OMT video. Scaled from 1920x1080 to the display's 1280x720 mode. 1 video reconnect(s) in this session."
+        );
+        assert!(describe_running(base, u64::MAX, 0).contains(&u64::MAX.to_string()));
+        assert_eq!(u64::MAX.saturating_add(1), u64::MAX);
+    }
+
+    /// The loop republishes this for every displayed frame, so an unchanged
+    /// message must not be rebuilt -- and a changed one must be.
+    #[test]
+    fn the_running_detail_is_reused_until_something_it_names_changes() {
+        let mut cache = RunningDetail::default();
+        let base = "Playing OMT video.";
+        let ptr = cache.detail(base, 2, 3).as_ptr();
+        assert_eq!(cache.detail(base, 2, 3).as_ptr(), ptr);
+
+        let rebuilt = cache.detail(base, 2, 4);
+        assert_ne!(rebuilt.as_ptr(), ptr);
+        assert!(rebuilt.contains("4 skipped frame(s)"), "{rebuilt}");
+
+        // A mid-session format change moves the presenter's own sentence, and
+        // the interlaced and progressive sentences are never the same string.
+        let interlaced = "Playing interlaced input progressively without deinterlacing.";
+        let switched = cache.detail(interlaced, 2, 4);
+        assert!(switched.starts_with(interlaced), "{switched}");
+        assert!(switched.contains("4 skipped frame(s)"), "{switched}");
+    }
+
+    #[test]
+    fn recover_video_resubscribes_after_the_socket_closes() {
+        let listener =
+            TcpListener::bind("127.0.0.1:0").unwrap_or_else(|error| panic!("bind: {error}"));
+        let port = listener
+            .local_addr()
+            .unwrap_or_else(|error| panic!("addr: {error}"))
+            .port();
+        let (to_server, from_client) = mpsc::channel::<&'static str>();
+        let (to_client, from_server) = mpsc::channel::<&'static str>();
+        let server = thread::spawn(move || {
+            let (first, _) = listener
+                .accept()
+                .unwrap_or_else(|error| panic!("first accept: {error}"));
+            to_client
+                .send("first")
+                .unwrap_or_else(|error| panic!("first: {error}"));
+            assert_eq!(
+                from_client
+                    .recv()
+                    .unwrap_or_else(|error| panic!("close: {error}")),
+                "close"
+            );
+            drop(first);
+            to_client
+                .send("closed")
+                .unwrap_or_else(|error| panic!("closed: {error}"));
+            let (_second, _) = listener
+                .accept()
+                .unwrap_or_else(|error| panic!("second accept: {error}"));
+            to_client
+                .send("second")
+                .unwrap_or_else(|error| panic!("second: {error}"));
+            thread::sleep(Duration::from_millis(200));
+        });
+
+        let endpoint = Endpoint {
+            host: "127.0.0.1".into(),
+            port,
+        };
+        let mut channel = Channel::new();
+        channel
+            .connect(
+                &endpoint,
+                FrameType::Video,
+                Instant::now() + Duration::from_secs(5),
+            )
+            .unwrap_or_else(|error| panic!("connect: {error}"));
+        assert_eq!(
+            from_server
+                .recv()
+                .unwrap_or_else(|error| panic!("first: {error}")),
+            "first"
+        );
+        to_server
+            .send("close")
+            .unwrap_or_else(|error| panic!("close: {error}"));
+        assert_eq!(
+            from_server
+                .recv()
+                .unwrap_or_else(|error| panic!("closed: {error}")),
+            "closed"
+        );
+        let error = channel.receive(Instant::now() + Duration::from_secs(1));
+        assert!(error.is_err(), "peer close must fail the receive");
+        assert!(
+            !channel.connected(),
+            "peer close must drop the video channel"
+        );
+        recover_video(&mut channel, &endpoint).unwrap_or_else(|error| panic!("recover: {error}"));
+        assert!(channel.connected(), "recover must resubscribe");
+        assert_eq!(
+            from_server
+                .recv()
+                .unwrap_or_else(|error| panic!("second: {error}")),
+            "second"
+        );
+        drop(channel);
+        server
+            .join()
+            .unwrap_or_else(|_| panic!("server thread panicked"));
+    }
+
+    #[test]
+    fn a_failed_in_session_reconnect_returns_err() {
+        let listener =
+            TcpListener::bind("127.0.0.1:0").unwrap_or_else(|error| panic!("bind: {error}"));
+        let port = listener
+            .local_addr()
+            .unwrap_or_else(|error| panic!("addr: {error}"))
+            .port();
+        drop(listener);
+        let endpoint = Endpoint {
+            host: "127.0.0.1".into(),
+            port,
+        };
+        let mut channel = Channel::new();
+        assert!(
+            recover_video(&mut channel, &endpoint).is_err(),
+            "a closed listener must fail the in-session reconnect"
+        );
+        assert!(
+            !channel.connected(),
+            "a failed reconnect must leave the channel down"
+        );
+    }
+
+    /// The whole point of recovering in-session is that the picture and audio
+    /// survive it, so the wait before giving up has to stay short enough that
+    /// a frozen frame is not what the operator is left looking at.
+    #[test]
+    fn in_session_recovery_is_bounded_to_a_few_seconds() {
+        let worst_case: Duration = (0..RECOVER_ATTEMPTS)
+            .map(|attempt| RECOVER_TIMEOUT + RECOVER_BACKOFF * attempt)
+            .sum();
+        assert!(
+            worst_case <= Duration::from_secs(4),
+            "a held picture must not outlast a session rebuild: {worst_case:?}"
+        );
+        assert!(
+            RECOVER_TIMEOUT < CONNECT_TIMEOUT,
+            "a reconnect races a frozen picture; the first connect of a session does not"
+        );
     }
 }

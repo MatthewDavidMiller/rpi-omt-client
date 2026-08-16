@@ -165,14 +165,27 @@ receiver.
 - Video is choppy and keeps dropping out, with the dashboard cycling through
   `retrying`: read the detail. `OMT frame was truncated by a timeout` means a
   frame started arriving and did not finish inside the receiver's budget, which
-  on this appliance almost always means the link cannot carry the stream. Check
-  the band first. A support bundle's **Wi-Fi bands, regulatory domain, and
-  firmware** section answers that directly: a 2.4 GHz association at 72 MBit/s
-  has roughly a sixth of the throughput a 1080p OMT stream needs, and every
-  retry restarts video, audio, and the display output together. If the phy
-  reports no channels above 5 GHz, or `regulatory.db absent`, the radio is in
-  the world domain rather than genuinely single-band — see the regulatory
+  on this appliance almost always means the link cannot carry the stream. The
+  receiver first reconnects the video TCP session only, up to three times: the
+  last picture stays on screen and audio keeps playing throughout, for under
+  four seconds in the worst case. A playing detail that names video reconnects
+  means that recovery succeeded and the session never dropped. If the dashboard
+  goes to `retrying` with `in-session video reconnects did not hold`, the budget
+  was spent, discovery ran again, and video, audio, and the display rebuilt
+  together. Check the band first. A support bundle's **Wi-Fi bands, regulatory
+  domain, and firmware** section answers that directly: a 2.4 GHz association at
+  72 MBit/s has roughly a sixth of the throughput a 1080p OMT stream needs. If
+  the phy reports no channels above 5 GHz, or `regulatory.db absent`, the radio
+  is in the world domain rather than genuinely single-band — see the regulatory
   entry below.
+- The picture freezes for a moment while audio keeps playing, and the playing
+  detail names skipped frames: those are VMX bodies the decoder rejected, not
+  packet loss — TCP does not deliver flipped codec bytes, so the frame arrived
+  as the sender encoded it. A handful over a long session is a sender-side
+  glitch and needs nothing. Twenty in a row ends the session with
+  `VMX decoder rejected 21 consecutive frames`, which names the decoder's own
+  fault code: that is a stream this build cannot decode, so check the sender's
+  codec and quality settings rather than the network.
 - Wi-Fi will not associate, or the deployer's Wi-Fi view offers no networks:
   the appliance is 5 GHz only. `wpa_supplicant.conf` carries a `freq_list` of
   the US 5 GHz channels and nothing else, so a 2.4 GHz SSID is never scanned

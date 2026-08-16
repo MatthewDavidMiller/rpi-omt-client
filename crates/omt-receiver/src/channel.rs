@@ -491,6 +491,50 @@ mod tests {
         let _ = sender.join();
     }
 
+    /// The play loop reconnects only when the channel has closed. An idle
+    /// socket whose polling slice expires must stay up so DRM can hold the
+    /// last frame.
+    #[test]
+    fn an_idle_connected_socket_would_block_without_closing() {
+        use std::net::TcpListener;
+
+        let listener =
+            TcpListener::bind("127.0.0.1:0").unwrap_or_else(|error| panic!("bind: {error}"));
+        let port = listener
+            .local_addr()
+            .unwrap_or_else(|error| panic!("addr: {error}"))
+            .port();
+        let sender = std::thread::spawn(move || {
+            let (_stream, _) = listener
+                .accept()
+                .unwrap_or_else(|error| panic!("accept: {error}"));
+            std::thread::sleep(Duration::from_millis(500));
+        });
+
+        let mut channel = Channel::new();
+        channel
+            .connect(
+                &Endpoint {
+                    host: "127.0.0.1".into(),
+                    port,
+                },
+                FrameType::Metadata,
+                Instant::now() + Duration::from_secs(5),
+            )
+            .unwrap_or_else(|error| panic!("connect: {error}"));
+        let Err(error) = channel.receive(Instant::now() + Duration::from_millis(50)) else {
+            panic!("an idle socket must not produce a frame")
+        };
+        assert_eq!(error.kind(), std::io::ErrorKind::WouldBlock);
+        assert!(
+            channel.connected(),
+            "WouldBlock on an idle socket must not close the channel"
+        );
+
+        drop(channel);
+        let _ = sender.join();
+    }
+
     #[test]
     fn payload_resize_reuses_capacity_without_clearing() {
         let mut payload = Vec::with_capacity(128);

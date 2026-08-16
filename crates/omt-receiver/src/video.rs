@@ -27,7 +27,7 @@ use std::os::fd::{AsFd, BorrowedFd};
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 use std::time::{Duration, Instant};
-use vmx_decoder::{ColorSpace, Decoder, Dimensions, MAX_HEIGHT, MAX_WIDTH};
+use vmx_decoder::{ColorSpace, DecodeError, Decoder, Dimensions, MAX_HEIGHT, MAX_WIDTH};
 
 /// Buffers in the flip chain. Three lets the compositor-free pipeline keep one
 /// scanning out, one queued, and one being decoded into.
@@ -49,12 +49,33 @@ const DECODE_WORKERS: usize = 3;
 /// for. Displays advertise 59.94 as 59.94 and 60 as 60, so this only has to
 /// absorb the rounding in the timings, not bridge two rates.
 const RATE_TOLERANCE: f64 = 0.02;
+/// Undecodable frames held over in a row before the session is rebuilt.
+///
+/// Holding the last picture is only worth it while the *next* frame might
+/// decode. TCP delivers the bytes it delivers intact, so a frame the decoder
+/// rejects is a sender-side glitch rather than link damage; a glitch clears
+/// within a frame or two, and a run this long is a stream this receiver cannot
+/// decode at all. At 60 Hz the bound is a third of a second of frozen picture,
+/// which is shorter than the blink a session rebuild costs and far shorter than
+/// the indefinite freeze an unbounded hold would report as healthy playback.
+const SKIP_BUDGET: u32 = 20;
 
 #[derive(Debug, Eq, PartialEq)]
 pub enum Present {
     Presented,
+    /// Frame-local VMX damage on a configuration that has already page-flipped,
+    /// inside [`SKIP_BUDGET`]. The on-screen buffer is left alone and the play
+    /// loop keeps the session, so audio never breaks for a dropped frame.
+    Skipped,
     UnsupportedFormat(String),
     Failed(String),
+}
+
+/// Decode vs resample failures from [`paint`]. Decode errors stay typed so
+/// [`present`] can classify them without parsing a formatted string.
+enum PaintError {
+    Decode(DecodeError),
+    Scale(String),
 }
 
 struct Card(File);
@@ -103,6 +124,15 @@ struct Configured {
     /// running state for every frame it displays.
     progressive_detail: String,
     interlaced_detail: String,
+    /// Set after the first successful page flip for this configuration.
+    /// Frame-local VMX skips are only allowed once a picture is on screen:
+    /// before that there is nothing to hold but the buffer `set_crtc` scanned
+    /// out, and freezing on that is worse than rebuilding the session.
+    presented: bool,
+    /// Undecodable frames since the last presented one, against
+    /// [`SKIP_BUDGET`]. Consecutive, so a stream that loses the occasional
+    /// frame is tolerated for as long as it keeps recovering.
+    skips: u32,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -192,6 +222,10 @@ impl Output {
                 Err(outcome) => return outcome,
             }
         }
+        // `metadata_length` is already known not to exceed the payload, and the
+        // payload is already known to hold the video header, so a body that
+        // cannot be sliced out means the two overlap: the sender and this
+        // receiver disagree about frame layout, which no later frame repairs.
         let Some(compressed) = frame.media(VIDEO_HEADER_SIZE) else {
             return Present::Failed("Truncated VMX frame".into());
         };
@@ -204,8 +238,9 @@ impl Output {
             return Present::Failed("DRM buffer is unavailable".into());
         };
         let pitch = surface.buffer.pitch() as usize;
+        let framebuffer = surface.framebuffer;
         if let Err(error) = active.decoder.load(compressed) {
-            return Present::Failed(format!("VMX decoder rejected the frame: {error}"));
+            return classify_decode(error, active.presented, &mut active.skips);
         }
         // The mapping lives only for the decode. The scanout reads the buffer
         // through the GPU, so nothing needs the CPU view between frames.
@@ -219,10 +254,14 @@ impl Output {
             Err(error) => return Present::Failed(format!("Unable to map DRM buffer: {error}")),
         };
         if let Err(error) = decoded {
-            return Present::Failed(error);
+            return match error {
+                PaintError::Decode(error) => {
+                    classify_decode(error, active.presented, &mut active.skips)
+                }
+                PaintError::Scale(detail) => Present::Failed(detail),
+            };
         }
 
-        let framebuffer = surface.framebuffer;
         let crtc = active.crtc;
         if let Err(error) = self.retire_flip() {
             return Present::Failed(error);
@@ -236,6 +275,8 @@ impl Output {
         if let Some(active) = self.active.as_mut() {
             active.front = next;
             active.flip_pending = true;
+            active.presented = true;
+            active.skips = 0;
         }
         Present::Presented
     }
@@ -414,6 +455,8 @@ impl Output {
             format: VideoFormat::of(header),
             progressive_detail: describe_presentation(false, (width, height), scaled_to),
             interlaced_detail: describe_presentation(true, (width, height), scaled_to),
+            presented: false,
+            skips: 0,
         });
         Ok(())
     }
@@ -535,6 +578,42 @@ fn build_scale(source: (usize, usize), mode: (usize, usize)) -> Result<Scaled, P
     Ok(Scaled { scaler, frame })
 }
 
+/// Decides what one decoder rejection means for the session, and counts the
+/// run of held frames against [`SKIP_BUDGET`].
+///
+/// Only damage to this frame's own bitstream can be waited out, and only while
+/// a picture is on screen to hold and the run is short enough to still be a
+/// glitch. An interlaced envelope is format policy; an empty body is a framing
+/// disagreement; the remaining variants are this receiver's own state. None of
+/// those three improves by looking at another frame from the same sender.
+fn classify_decode(error: DecodeError, presented: bool, skips: &mut u32) -> Present {
+    let rejected = || format!("VMX decoder rejected the frame: {error}");
+    match error {
+        DecodeError::Truncated
+        | DecodeError::InvalidFormat
+        | DecodeError::Oversized
+        | DecodeError::SliceCount
+        | DecodeError::CorruptStream => {
+            if !presented {
+                return Present::Failed(rejected());
+            }
+            *skips += 1;
+            if *skips <= SKIP_BUDGET {
+                Present::Skipped
+            } else {
+                Present::Failed(format!(
+                    "VMX decoder rejected {skips} consecutive frames: {error}"
+                ))
+            }
+        }
+        DecodeError::UnsupportedFormat => Present::UnsupportedFormat(rejected()),
+        DecodeError::Empty
+        | DecodeError::InvalidDimensions
+        | DecodeError::OutputSize
+        | DecodeError::WorkerFailure => Present::Failed(rejected()),
+    }
+}
+
 /// Decodes the loaded frame into the mapped scanout buffer, going through the
 /// intermediate frame first when the mode is not the video's size.
 fn paint(
@@ -542,18 +621,21 @@ fn paint(
     scale: Option<&mut Scaled>,
     target: &mut [u8],
     pitch: usize,
-) -> Result<(), String> {
+) -> Result<(), PaintError> {
     match scale {
         Some(scaled) => {
             let stride = scaled.scaler.source_stride();
             decoder
                 .decode_bgrx(&mut scaled.frame, stride)
-                .map_err(|error| format!("VMX decoder rejected the frame: {error}"))?;
-            scaled.scaler.render(&scaled.frame, target, pitch)
+                .map_err(PaintError::Decode)?;
+            scaled
+                .scaler
+                .render(&scaled.frame, target, pitch)
+                .map_err(PaintError::Scale)
         }
         None => decoder
             .decode_bgrx(target, pitch)
-            .map_err(|error| format!("VMX decoder rejected the frame: {error}")),
+            .map_err(PaintError::Decode),
     }
 }
 
@@ -867,5 +949,102 @@ mod tests {
     #[test]
     fn the_card_is_opened_nonblocking() {
         assert_eq!(O_NONBLOCK, 0o4000);
+    }
+
+    const ALL_DECODE_ERRORS: [DecodeError; 10] = [
+        DecodeError::InvalidDimensions,
+        DecodeError::Empty,
+        DecodeError::Oversized,
+        DecodeError::Truncated,
+        DecodeError::InvalidFormat,
+        DecodeError::UnsupportedFormat,
+        DecodeError::SliceCount,
+        DecodeError::OutputSize,
+        DecodeError::WorkerFailure,
+        DecodeError::CorruptStream,
+    ];
+
+    /// Damage to one frame's bitstream, which the next frame does not inherit.
+    fn frame_local(error: DecodeError) -> bool {
+        matches!(
+            error,
+            DecodeError::Truncated
+                | DecodeError::InvalidFormat
+                | DecodeError::Oversized
+                | DecodeError::SliceCount
+                | DecodeError::CorruptStream
+        )
+    }
+
+    /// Every decoder error has a home, and none of them is inferred from text.
+    /// Only frame-local damage may hold the last picture, and only once a
+    /// picture is on screen: an empty body, an interlaced envelope, and the
+    /// decoder's own failures all repeat on the next frame.
+    #[test]
+    fn decode_errors_are_classified_without_parsing_strings() {
+        for error in ALL_DECODE_ERRORS {
+            let mut skips = 0;
+            match classify_decode(error, true, &mut skips) {
+                Present::Skipped => assert!(frame_local(error), "{error:?} skipped"),
+                Present::UnsupportedFormat(_) => {
+                    assert_eq!(error, DecodeError::UnsupportedFormat);
+                }
+                Present::Failed(_) => assert!(
+                    !frame_local(error) && error != DecodeError::UnsupportedFormat,
+                    "{error:?} must not fail when it should skip or stay unsupported"
+                ),
+                Present::Presented => panic!("{error:?} classified as presented"),
+            }
+            let mut before_first_flip = 0;
+            match classify_decode(error, false, &mut before_first_flip) {
+                Present::Skipped => panic!("{error:?} skipped before a frame presented"),
+                Present::UnsupportedFormat(_) => {
+                    assert_eq!(error, DecodeError::UnsupportedFormat);
+                }
+                Present::Failed(_) => assert_ne!(error, DecodeError::UnsupportedFormat),
+                Present::Presented => panic!("{error:?} classified as presented"),
+            }
+            assert_eq!(
+                before_first_flip, 0,
+                "{error:?} counted a skip it was not granted"
+            );
+        }
+    }
+
+    /// A frozen picture is worth a glitch, not a stream that never decodes.
+    #[test]
+    fn a_run_of_undecodable_frames_ends_the_session() {
+        let mut skips = 0;
+        for held in 1..=SKIP_BUDGET {
+            assert_eq!(
+                classify_decode(DecodeError::CorruptStream, true, &mut skips),
+                Present::Skipped,
+                "frame {held} must hold the last picture"
+            );
+            assert_eq!(skips, held);
+        }
+        let Present::Failed(detail) = classify_decode(DecodeError::CorruptStream, true, &mut skips)
+        else {
+            panic!("a run past the budget must end the session")
+        };
+        assert!(
+            detail.contains(&(SKIP_BUDGET + 1).to_string()) && detail.contains("CorruptStream"),
+            "{detail}"
+        );
+    }
+
+    /// The budget counts a *run*: a stream that keeps recovering is tolerated
+    /// for as long as it does, because each held frame is a glitch of its own.
+    #[test]
+    fn a_presented_frame_clears_the_held_run() {
+        let mut skips = 0;
+        for _ in 0..SKIP_BUDGET * 4 {
+            assert_eq!(
+                classify_decode(DecodeError::CorruptStream, true, &mut skips),
+                Present::Skipped
+            );
+            // What `present` does after a page flip.
+            skips = 0;
+        }
     }
 }

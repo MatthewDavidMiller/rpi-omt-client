@@ -224,7 +224,25 @@ decode throughput, so a pass on one is not evidence for another:
    reports no underruns, then confirm the bundle's ALSA playback stream state
    shows the negotiated buffer and a start threshold near 100 ms rather than
    ALSA's one-frame default. The start threshold and ring size are set through
-   the device and cannot be asserted off the board.
+   the device and cannot be asserted off the board;
+9. induce a video TCP disconnect on a Pi 4 and a Pi 5 while a session is
+   playing — dropping the sender's socket, or an `nft` rule on the video port
+   is enough. The last picture and the audio must both survive the in-session
+   reconnect with no gap in sound and no black frame, and the playing detail
+   must then name a video reconnect. Leave the port blocked to spend the whole
+   budget: within about four seconds the detail must read
+   `in-session video reconnects did not hold`, discovery must re-resolve, and
+   DRM and audio must rebuild together. Restore the port and confirm the count
+   resets — a link that drops occasionally must never exhaust the budget;
+10. confirm a held frame on damaged input. Nothing off the board proves that a
+    skipped frame leaves the previous picture scanning out: the unit tests
+    cover only which decoder faults are allowed to skip and how long a run is
+    tolerated, and the hold itself is DRM behaviour. Feed a sender emitting
+    corrupt VMX bodies, or corrupt them in flight, and confirm the picture
+    freezes rather than tearing or going black, that audio continues, that the
+    playing detail counts the skips, and that a sustained run ends the session
+    with `VMX decoder rejected 21 consecutive frames` rather than freezing
+    indefinitely on `running`.
 
 Useful commands are in `docs/OPERATIONS.md`. Any release not completing this
 physical tier must state the skipped Pi-specific checks.
