@@ -1,18 +1,32 @@
 # Raspberry Pi OMT Client
 
+> **Beta — not production ready.**
+>
+> Every `0.9.x` release is a beta. Interfaces, defaults, the supported-board
+> matrix, and on-disk state may change between them without a migration path,
+> and some behaviour is verified only by unit tests rather than on hardware.
+> Run it on equipment you can physically reach, and do not put it in front of
+> an audience you cannot afford to disappoint. **Version 1.0 will be the first
+> production release.**
+
 Raspberry Pi OMT Client receives Open Media Transport (OMT) video and audio on
 a Raspberry Pi and presents it directly on HDMI. It combines a bounded
 Rust 2024 OMT receiver, direct DRM/KMS video output, ALSA audio, a hardened
 Rust HTTPS Web GUI, and a portable native deployment GUI.
 
-The supported appliance hosts are the Raspberry Pi 5, Raspberry Pi 4 Model B,
-Raspberry Pi 3 Model A+/B/B+, and Raspberry Pi Zero 2 W, each running Alpine
-Linux 3.24 aarch64 in persistent `sys` mode. Diskless Alpine, Raspberry Pi OS,
-32-bit userspace, and every other board are not supported.
+The supported appliance hosts are the Raspberry Pi 5 and Raspberry Pi 4
+Model B, each running Alpine Linux 3.24 aarch64 in persistent `sys` mode.
+Diskless Alpine, Raspberry Pi OS, 32-bit userspace, and every other board are
+not supported.
+
+The appliance is 5 GHz Wi-Fi only. Real-world testing showed 2.4 GHz cannot
+carry an OMT stream: its packet loss makes playback unusable however strong the
+signal is. That is why boards with a 2.4 GHz-only radio — every Pi Zero, and
+the Pi 3 tier whose Model B has no 5 GHz radio — are not supported hosts.
 
 The receiver supports discovered source names and explicit `omt://host:port`
 targets. Because it decodes VMX in software, each board has its own decode
-ceiling — 1080p60 on a Pi 5, down to 720p60 on a Pi 3 or Zero 2 W. Larger or
+ceiling — 1080p60 on a Pi 5, 1080p30 or 720p60 on a Pi 4. Larger or
 faster input is reported as unsupported instead of being silently converted.
 See [docs/CONFIGURATION.md](docs/CONFIGURATION.md) for the table and how to
 override it.

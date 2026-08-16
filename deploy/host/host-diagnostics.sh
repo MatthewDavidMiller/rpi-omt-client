@@ -405,6 +405,14 @@ start_packet_captures
         'if ! command -v iw >/dev/null 2>&1; then echo iw_not_installed; exit; fi; iw dev 2>&1; iw dev 2>/dev/null | while read -r key iface remainder; do [ "$key" = Interface ] || continue; printf "### %s link\n" "$iface"; iw dev "$iface" link 2>&1; printf "### %s stations\n" "$iface"; iw dev "$iface" station dump 2>&1 | sed -n "1,240p"; done'
     run "radio block state" sh -c \
         'if command -v rfkill >/dev/null 2>&1; then rfkill list; else echo rfkill_not_installed; fi'
+    # What band the appliance *could* use, as opposed to the one it happens to
+    # be on. An association report alone cannot distinguish a 2.4 GHz-only site
+    # from a radio that was never allowed to see 5 GHz, and those have opposite
+    # fixes. The regulatory domain and the presence of regulatory.db are the
+    # deciding evidence: in the world domain channels 149-165 are absent from
+    # the frequency list entirely, so their absence here is the answer.
+    run "Wi-Fi bands, regulatory domain, and firmware" sh -c \
+        'printf "### regulatory domain\n"; if command -v iw >/dev/null 2>&1; then iw reg get 2>&1 | sed -n "1,60p"; else echo iw_not_installed; fi; printf "### regulatory database\n"; found=no; for db in /lib/firmware/regulatory.db /usr/lib/firmware/regulatory.db; do [ -f "$db" ] || continue; found=yes; printf "%s bytes=%s\n" "$db" "$(wc -c < "$db")"; done; [ "$found" = yes ] || echo "regulatory.db absent: the radio stays in the world domain and 5 GHz is restricted"; printf "### phy bands and channels\n"; if command -v iw >/dev/null 2>&1; then for phy in /sys/class/ieee80211/*; do [ -d "$phy" ] || continue; name=${phy##*/}; printf "#### %s\n" "$name"; iw phy "$name" info 2>&1 | grep -E "Band [0-9]|MHz \[[0-9]+\]|VHT Capabilities|HE Iftypes" | sed -n "1,240p"; done; else echo iw_not_installed; fi; printf "### wireless driver and firmware messages\n"; dmesg 2>/dev/null | grep -iE "brcmfmac|regulatory\.db|clm_blob|cfg80211" | sed -n "1,60p" || true'
     run "neighbor tables" ip -details neigh show
     run "bridge links FDB and MDB" sh -c \
         'if ! command -v bridge >/dev/null 2>&1; then echo bridge_not_installed; exit; fi; bridge -details link show 2>&1; printf "\n### FDB\n"; bridge -details fdb show 2>&1; printf "\n### MDB\n"; bridge -details mdb show 2>&1'

@@ -32,6 +32,14 @@ https://mirror.math.princeton.edu/pub/alpinelinux
 "
 # END US HTTPS APK MIRRORS
 
+# The appliance's 5 GHz band policy. Keep this identical to
+# HOST_WIFI_FREQ_LIST in deploy/lib/service-install.sh, which this script
+# cannot source: it runs on a factory image that has no bash and no copy of
+# deploy/lib. tests/unit/test_setup_sys.sh compares the two.
+# BEGIN WIFI FREQ LIST
+WIFI_FREQ_LIST="5180 5200 5220 5240 5260 5280 5300 5320 5500 5520 5540 5560 5580 5600 5620 5640 5660 5680 5700 5720 5745 5765 5785 5805 5825"
+# END WIFI FREQ LIST
+
 [ "$(id -u)" = 0 ] || {
     echo "ERROR: setup-sys.sh must run as root." >&2
     exit 1
@@ -289,14 +297,30 @@ install_wpa_config_from() {
     install -d -m 0700 /etc/wpa_supplicant
     WPA_TMP="$(mktemp /etc/wpa_supplicant/.wpa_supplicant.conf.XXXXXX)"
     umask 077
-    awk '
-        BEGIN {
+    # The same globals `host_wpa_supplicant_config` writes: the regulatory
+    # country, which defaults to US when the image carries none, and the 5 GHz
+    # scan list. This path is the hand-written boot-partition
+    # wpa_supplicant.conf, so it is the one most likely to name a 2.4 GHz
+    # network, and the least likely to have thought about `country=` at all.
+    # The `freq_list` strip is anchored for the reason given there: it is a
+    # legal per-network key and only the global is band policy.
+    awk -v freq_list="${WIFI_FREQ_LIST}" '
+        /^[ \t]*country[ \t]*=/ {
+            sub(/^[ \t]*country[ \t]*=[ \t]*/, "")
+            if ($0 != "") { country = $0 }
+            next
+        }
+        /^[ \t]*(ctrl_interface|ctrl_interface_group|update_config)[ \t]*=/ { next }
+        /^freq_list[ \t]*=/ { next }
+        { body[++lines] = $0 }
+        END {
             print "ctrl_interface=/run/wpa_supplicant"
             print "ctrl_interface_group=wheel"
             print "update_config=1"
+            printf "country=%s\n", (country != "" ? country : "US")
+            printf "freq_list=%s\n", freq_list
+            for (i = 1; i <= lines; i++) { print body[i] }
         }
-        /^[ \t]*(ctrl_interface|ctrl_interface_group|update_config)[ \t]*=/ { next }
-        { print }
     ' "${_src}" > "${WPA_TMP}"
     umask 022
     chown root:root "${WPA_TMP}"
@@ -506,6 +530,9 @@ if [ -n "${SSID_HEX}" ]; then
         printf 'ctrl_interface_group=wheel\n'
         printf 'update_config=1\n'
         printf 'country=US\n'
+        # 5 GHz only: the appliance does not support 2.4 GHz, so the SSID the
+        # operator just entered is only joined on a band that can carry it.
+        printf 'freq_list=%s\n' "${WIFI_FREQ_LIST}"
         printf 'network={\n'
         printf '\tssid=%s\n' "${SSID_HEX}"
         printf '\tpsk=%s\n' "${WIFI_PSK}"
@@ -649,7 +676,13 @@ apk add --root /mnt/omt-newroot --no-cache \
     openssh openssh-server openssh-sftp-server openssh-keygen
 if [ "${WIFI_ENABLED}" = yes ]; then
     echo "Adding Wi-Fi firmware and supplicant so ${WIFI_IFACE} comes back after reboot..."
-    apk add --root /mnt/omt-newroot --no-cache wpa_supplicant iw linux-firmware-brcm
+    # wireless-regdb is what makes the country= written above mean anything:
+    # the kernel reads /lib/firmware/regulatory.db, and without it the radio
+    # stays in the world domain, where channels 149-165 do not exist and the
+    # rest of 5 GHz cannot be initiated on. The board still associates -- on
+    # 2.4 GHz, at a fraction of the throughput OMT video needs.
+    apk add --root /mnt/omt-newroot --no-cache \
+        wpa_supplicant iw linux-firmware-brcm wireless-regdb
 
     # Fall back to the firmware this board is running right now.
     #
@@ -667,6 +700,18 @@ if [ "${WIFI_ENABLED}" = yes ]; then
         if [ -d /lib/firmware/cypress ]; then
             cp -a /lib/firmware/cypress /mnt/omt-newroot/lib/firmware/ 2>/dev/null || true
         fi
+    fi
+
+    # The regulatory database gets the same treatment for the same reason: it
+    # is a firmware-loader blob, apk can report success without placing it, and
+    # its absence is silent -- the band simply is not there.
+    if ! newroot_has 'lib/firmware/regulatory.db' 'usr/lib/firmware/regulatory.db'; then
+        mkdir -p /mnt/omt-newroot/lib/firmware
+        for blob in regulatory.db regulatory.db.p7s; do
+            [ -f "/lib/firmware/${blob}" ] || continue
+            cp -a "/lib/firmware/${blob}" /mnt/omt-newroot/lib/firmware/ \
+                2>/dev/null || true
+        done
     fi
 fi
 

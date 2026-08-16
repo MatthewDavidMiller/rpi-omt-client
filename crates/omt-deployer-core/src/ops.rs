@@ -23,6 +23,23 @@ const SETUP_SYS_MEMBER: &str = "deploy/host/setup-sys.sh";
 const SETUP_SYS_COMPLETE: &str = "=== Alpine sys install complete ===";
 const WEB_PASSWORD_COMMAND: &str = "sh -eu -c 'docker exec -i omt-client /usr/local/bin/omt-web set-password && rc-service omt-client restart'";
 
+/// The appliance's 5 GHz band policy, as `wpa_supplicant`'s `freq_list`.
+///
+/// Real-world testing settled that 2.4 GHz cannot carry an OMT stream: the loss
+/// rate makes playback unusable however strong the signal is. Keep this
+/// identical to `HOST_WIFI_FREQ_LIST` in `deploy/lib/service-install.sh` and
+/// `WIFI_FREQ_LIST` in `deploy/host/setup-sys.sh`; the three cannot share a
+/// definition because they run on a workstation, an installed appliance, and a
+/// factory image respectively. `tests/unit/test_setup_sys.sh` compares them.
+///
+/// A macro rather than a `const` because [`WIFI_SCRIPT`] is built with
+/// `concat!`, which takes literals only.
+macro_rules! wifi_freq_list {
+    () => {
+        "5180 5200 5220 5240 5260 5280 5300 5320 5500 5520 5540 5560 5580 5600 5620 5640 5660 5680 5700 5720 5745 5765 5785 5805 5825"
+    };
+}
+
 const WIFI_SCRIPT: &str = concat!(
     "marker=$4\n",
     "found_marker=no\n",
@@ -57,6 +74,26 @@ const WIFI_SCRIPT: &str = concat!(
     "[ -n \"$iface\" ] || iface=wlan0\n",
     "wpa_cli -i \"$iface\" ping | grep -Fxq PONG || { echo \"wpa_supplicant is unavailable on $iface\" >&2; exit 12; }\n",
     "secure_saved_config\n",
+    // Establish the regulatory country before scanning, defaulting to US.
+    // Without one the radio is in the world domain, which has no channels
+    // 149-165 at all -- so a scan run first cannot see the 5 GHz access points
+    // most US sites use, and the operator is offered 2.4 GHz networks only. A
+    // country the board already declares is left alone; it is where the
+    // appliance actually is, and managing Wi-Fi must not relabel the radio.
+    "country=$(wpa_cli -i \"$iface\" get country 2>/dev/null || true)\n",
+    "case \"$country\" in\n",
+    "  [A-Z][A-Z]) ;;\n",
+    "  *) wpa_cli -i \"$iface\" set country US >/dev/null 2>&1 || true;;\n",
+    "esac\n",
+    // The appliance is 5 GHz only, so the scan is too. This runs before the
+    // scan for the same reason the country does: the operator can only be
+    // offered networks the supplicant looked for. Unlike the country this is
+    // policy rather than a default, so an existing value is replaced.
+    // Association is still verified below, and a profile that does not come up
+    // on 5 GHz fails the action with the old profiles retained.
+    "wpa_cli -i \"$iface\" set freq_list \"",
+    wifi_freq_list!(),
+    "\" >/dev/null 2>&1 || true\n",
     "wpa_cli -i \"$iface\" scan >/dev/null || true\n",
     "network_id=\n",
     "if [ \"$preserve\" = yes ]; then\n",
@@ -463,15 +500,14 @@ fn parse_sha256_line(output: &str) -> Option<String> {
 /// This is the Rust half of the table in `deploy/lib/board-profile.sh`; the
 /// installer refuses the same set on the host itself. Each prefix ends at a
 /// word boundary, which is why the Pi 5 entry is not simply `Raspberry Pi 5`:
-/// that also matches `Raspberry Pi 500`. Two spellings are easy to get wrong --
-/// the Pi 3 B+ reports `Model B Plus`, and early Zero 2 W boards report
-/// `Zero 2` with no W.
-const SUPPORTED_BOARDS: [&str; 4] = [
-    "Raspberry Pi 5",
-    "Raspberry Pi 4 Model B",
-    "Raspberry Pi 3 Model ",
-    "Raspberry Pi Zero 2",
-];
+/// that also matches `Raspberry Pi 500`.
+///
+/// Both entries have a dual-band radio, and that is a support criterion rather
+/// than a coincidence. The appliance is 5 GHz only because real-world testing
+/// showed 2.4 GHz packet loss makes OMT playback unusable, so a board that
+/// cannot leave 2.4 GHz cannot be a host. That removed the Pi Zero 2 W
+/// (BCM43436) and the Pi 3 tier, whose Model B (BCM43438) has no 5 GHz radio.
+const SUPPORTED_BOARDS: [&str; 2] = ["Raspberry Pi 5", "Raspberry Pi 4 Model B"];
 
 /// Whether a device-tree model names a board this appliance supports.
 fn is_supported_board(model: &str) -> bool {
@@ -498,8 +534,8 @@ fn require_supported_appliance(output: &str) -> io::Result<()> {
         Ok(())
     } else {
         Err(io::Error::other(
-            "remote host must run Alpine Linux 3.24 aarch64 on a Raspberry Pi 5, \
-             Raspberry Pi 4 Model B, Raspberry Pi 3, or Raspberry Pi Zero 2 W",
+            "remote host must run Alpine Linux 3.24 aarch64 on a Raspberry Pi 5 \
+             or Raspberry Pi 4 Model B",
         ))
     }
 }
@@ -1195,11 +1231,6 @@ mod tests {
         for model in [
             "Raspberry Pi 5 Model B Rev 1.0",
             "Raspberry Pi 4 Model B Rev 1.4",
-            "Raspberry Pi 3 Model B Rev 1.2",
-            "Raspberry Pi 3 Model B Plus Rev 1.3",
-            "Raspberry Pi 3 Model A Plus Rev 1.0",
-            "Raspberry Pi Zero 2 W Rev 1.0",
-            "Raspberry Pi Zero 2 Rev 1.0",
         ] {
             assert!(
                 require_supported_appliance(&probe(model)).is_ok(),
@@ -1209,14 +1240,22 @@ mod tests {
     }
 
     /// The near misses matter most: a `Raspberry Pi 5` prefix without a word
-    /// boundary also matches the Pi 500, and a loosened Zero prefix would
-    /// catch the 32-bit-only original Zero W.
+    /// boundary also matches the Pi 500.
+    ///
+    /// Every Zero and every Pi 3 is refused for having no 5 GHz radio, and
+    /// both spellings of each have to be, because the Pi 3 B+ reports
+    /// `Model B Plus` and early Zero 2 W boards report `Zero 2` with no W.
     #[test]
     fn refuses_unsupported_boards_and_near_misses() {
         for model in [
             "Raspberry Pi 500 Rev 1.0",
             "Raspberry Pi 400 Rev 1.0",
             "Raspberry Pi 2 Model B Rev 1.1",
+            "Raspberry Pi 3 Model B Rev 1.2",
+            "Raspberry Pi 3 Model B Plus Rev 1.3",
+            "Raspberry Pi 3 Model A Plus Rev 1.0",
+            "Raspberry Pi Zero 2 W Rev 1.0",
+            "Raspberry Pi Zero 2 Rev 1.0",
             "Raspberry Pi Zero W Rev 1.1",
             "Raspberry Pi Model B Plus Rev 1.2",
             "Raspberry Pi Compute Module 4 Rev 1.0",
@@ -1462,6 +1501,24 @@ mod tests {
         assert_eq!(WIFI_SCRIPT.matches("secure_saved_config\n").count(), 3);
         assert!(WIFI_SCRIPT.contains("chmod 600 \"$config_path\""));
         assert!(WIFI_SCRIPT.contains("chown root:root \"$config_path\""));
+    }
+
+    /// The country has to be established before the scan, not after it. In the
+    /// world domain channels 149-165 do not exist, so a scan run first returns
+    /// 2.4 GHz networks only and the operator is never offered the 5 GHz access
+    /// point they are standing next to. A board that already declares a country
+    /// keeps it: managing Wi-Fi must not relabel where the appliance is.
+    #[test]
+    fn wifi_defaults_the_regulatory_country_to_us_before_scanning() {
+        let default_country = WIFI_SCRIPT
+            .find("set country US")
+            .unwrap_or_else(|| panic!("an unset country defaults to US"));
+        let scan = WIFI_SCRIPT
+            .find("wpa_cli -i \"$iface\" scan")
+            .unwrap_or_else(|| panic!("the script scans for networks"));
+        assert!(default_country < scan);
+        assert!(WIFI_SCRIPT.contains("get country"));
+        assert!(WIFI_SCRIPT.contains("[A-Z][A-Z]) ;;"));
     }
 
     #[test]

@@ -16,6 +16,24 @@ use std::time::{Duration, Instant};
 /// Maximum addresses tried for one endpoint, bounding a hostile DNS answer.
 const MAX_ADDRESSES: usize = 16;
 
+/// How long a frame that has already started arriving is allowed to finish.
+///
+/// The caller's deadline is a *slice*: how long the playback loop is willing to
+/// sit in one receive before it re-checks the stop flag and the HDMI connector.
+/// It is not a statement about how long a frame may take. Applying it to the
+/// payload made the two the same thing, and a 1080p frame is around 200 KiB --
+/// on a link already carrying this session's own video that is tens of
+/// milliseconds of wire time. A frame whose header landed near the end of a
+/// slice therefore ran out of budget mid-payload, and because a half-read frame
+/// cannot be resumed the connection was torn down and the whole session
+/// restarted. The link was not stalled; the budget was simply being measured
+/// from the wrong instant.
+///
+/// So the slice bounds only the wait for a frame to *begin*. Once a byte is
+/// consumed the read runs on this budget instead, which still ends a sender
+/// that has genuinely stopped talking mid-frame.
+const BODY_BUDGET: Duration = Duration::from_secs(2);
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Endpoint {
     pub host: String,
@@ -211,13 +229,17 @@ impl Channel {
 
     /// `resumable` marks a read that has not yet consumed any of the frame, so
     /// a deadline can expire without invalidating the connection.
-    fn read_exact(
-        &mut self,
-        target: &mut [u8],
-        deadline: Instant,
-        resumable: bool,
-    ) -> io::Result<()> {
+    ///
+    /// `slice` bounds only the wait for the first byte of such a read. From the
+    /// byte that commits this connection to a frame onwards, [`BODY_BUDGET`]
+    /// applies: see its documentation for why the two cannot be the same bound.
+    fn read_exact(&mut self, target: &mut [u8], slice: Instant, resumable: bool) -> io::Result<()> {
         let mut filled = 0;
+        let mut deadline = if resumable {
+            slice
+        } else {
+            body_deadline(slice)
+        };
         let expired = |filled: usize| {
             if resumable && filled == 0 {
                 io::Error::new(io::ErrorKind::WouldBlock, "OMT socket deadline expired")
@@ -240,7 +262,14 @@ impl Channel {
             stream.set_read_timeout(Some(left))?;
             match stream.read(&mut target[filled..]) {
                 Ok(0) => return Err(io::Error::other("OMT source disconnected")),
-                Ok(count) => filled += count,
+                Ok(count) => {
+                    if filled == 0 {
+                        // This read is now committed to a frame, so the
+                        // caller's polling slice stops bounding it.
+                        deadline = body_deadline(slice);
+                    }
+                    filled += count;
+                }
                 Err(error)
                     if matches!(
                         error.kind(),
@@ -269,6 +298,14 @@ impl Default for Channel {
 #[must_use]
 pub fn remaining(deadline: Instant) -> Duration {
     deadline.saturating_duration_since(Instant::now())
+}
+
+/// The deadline a frame already in flight finishes on.
+///
+/// A caller that asked for longer than [`BODY_BUDGET`] -- connect and subscribe
+/// both do -- keeps what it asked for; this only ever raises a floor.
+fn body_deadline(slice: Instant) -> Instant {
+    slice.max(Instant::now() + BODY_BUDGET)
 }
 
 fn positive(value: Duration) -> Duration {
@@ -360,6 +397,98 @@ mod tests {
         assert!(remaining(past).is_zero());
         assert_eq!(positive(remaining(past)), Duration::from_millis(1));
         assert!(!remaining(Instant::now() + Duration::from_secs(5)).is_zero());
+    }
+
+    /// The slice is a polling interval, not a frame budget, so an expired one
+    /// is raised to what a frame in flight needs. A caller that asked for more
+    /// than the budget -- `connect` and `subscribe` do -- keeps its own bound.
+    #[test]
+    fn a_frame_in_flight_outlives_the_polling_slice() {
+        let expired = Instant::now()
+            .checked_sub(Duration::from_secs(5))
+            .unwrap_or_else(|| panic!("the monotonic clock has no past"));
+        assert!(remaining(body_deadline(expired)) > Duration::from_secs(1));
+
+        let generous = Instant::now() + BODY_BUDGET + Duration::from_secs(30);
+        assert_eq!(body_deadline(generous), generous);
+
+        // Still bounded, and bounded by something concrete: `control-omt.sh`
+        // gives SIGTERM five seconds before SIGKILL, and a receiver killed
+        // mid-frame still holds /dev/dri while the kernel tears it down. A
+        // budget at or above that grace would turn a stalled sender into a
+        // failed restart.
+        assert!(BODY_BUDGET < Duration::from_secs(5));
+    }
+
+    /// The failure the appliance actually showed: a 1080p payload takes tens of
+    /// milliseconds of wire time, so a frame whose header lands near the end of
+    /// a slice finishes after that slice has expired. Bounding the payload by
+    /// the slice reported "OMT frame was truncated by a timeout", closed a
+    /// working connection, and restarted the whole session -- video, audio, and
+    /// DRM output -- several times a minute.
+    #[test]
+    fn a_payload_arriving_after_the_slice_is_received_rather_than_dropped() {
+        use std::net::TcpListener;
+
+        let listener =
+            TcpListener::bind("127.0.0.1:0").unwrap_or_else(|error| panic!("bind: {error}"));
+        let port = listener
+            .local_addr()
+            .unwrap_or_else(|error| panic!("addr: {error}"))
+            .port();
+        let frame =
+            build_metadata("<OMTPayload/>", 7).unwrap_or_else(|error| panic!("build: {error:?}"));
+        let (header, payload) = frame.split_at(omt_protocol::HEADER_SIZE);
+        let (header, payload) = (header.to_vec(), payload.to_vec());
+
+        let sender = std::thread::spawn(move || {
+            let (mut stream, _) = listener
+                .accept()
+                .unwrap_or_else(|error| panic!("accept: {error}"));
+            stream
+                .write_all(&header)
+                .unwrap_or_else(|error| panic!("header: {error}"));
+            stream
+                .flush()
+                .unwrap_or_else(|error| panic!("flush: {error}"));
+            // Longer than the receiver's slice, far shorter than the budget.
+            std::thread::sleep(Duration::from_millis(300));
+            stream
+                .write_all(&payload)
+                .unwrap_or_else(|error| panic!("payload: {error}"));
+            stream
+                .flush()
+                .unwrap_or_else(|error| panic!("flush: {error}"));
+            // Hold the connection open so the receiver's own state is what the
+            // assertions below observe.
+            std::thread::sleep(Duration::from_millis(500));
+        });
+
+        let mut channel = Channel::new();
+        channel
+            .connect(
+                &Endpoint {
+                    host: "127.0.0.1".into(),
+                    port,
+                },
+                FrameType::Metadata,
+                Instant::now() + Duration::from_secs(5),
+            )
+            .unwrap_or_else(|error| panic!("connect: {error}"));
+
+        let received = channel
+            .receive(Instant::now() + Duration::from_millis(50))
+            .unwrap_or_else(|error| panic!("receive: {error}"));
+        assert_eq!(received.header.frame_type, FrameType::Metadata);
+        assert_eq!(received.header.timestamp, 7);
+        assert_eq!(received.payload, b"<OMTPayload/>");
+        assert!(
+            channel.connected(),
+            "a late payload must not close the connection"
+        );
+
+        drop(channel);
+        let _ = sender.join();
     }
 
     #[test]

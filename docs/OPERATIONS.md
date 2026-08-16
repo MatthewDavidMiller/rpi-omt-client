@@ -1,5 +1,11 @@
 # Operations
 
+> **Beta — not production ready.** Every `0.9.x` release is a beta. Treat an
+> appliance running one as equipment under evaluation: keep physical access to
+> it, expect behaviour to change between releases, and collect a diagnostics
+> bundle before reporting anything. **Version 1.0 will be the first production
+> release.**
+
 ## Web GUI layout
 
 Every page shares a sticky header holding the hostname, the primary navigation
@@ -156,6 +162,44 @@ receiver.
   it, and `install.sh --hdmi-video HDMI-A-1:1920x1080@60` forces it onto the
   kernel command line.
 - Video without audio: inspect ALSA devices and ELD; video remains degraded.
+- Video is choppy and keeps dropping out, with the dashboard cycling through
+  `retrying`: read the detail. `OMT frame was truncated by a timeout` means a
+  frame started arriving and did not finish inside the receiver's budget, which
+  on this appliance almost always means the link cannot carry the stream. Check
+  the band first. A support bundle's **Wi-Fi bands, regulatory domain, and
+  firmware** section answers that directly: a 2.4 GHz association at 72 MBit/s
+  has roughly a sixth of the throughput a 1080p OMT stream needs, and every
+  retry restarts video, audio, and the display output together. If the phy
+  reports no channels above 5 GHz, or `regulatory.db absent`, the radio is in
+  the world domain rather than genuinely single-band — see the regulatory
+  entry below.
+- Wi-Fi will not associate, or the deployer's Wi-Fi view offers no networks:
+  the appliance is 5 GHz only. `wpa_supplicant.conf` carries a `freq_list` of
+  the US 5 GHz channels and nothing else, so a 2.4 GHz SSID is never scanned
+  for and cannot be joined. This is deliberate — real-world testing showed
+  2.4 GHz packet loss makes OMT playback unusable — and it is why the Pi Zero
+  and Pi 3 tiers are no longer supported hosts. Move the SSID to 5 GHz or use
+  Ethernet.
+- Associated on 2.4 GHz after an upgrade: the restriction lands in
+  `wpa_supplicant.conf` and takes effect at the next association, so a board
+  that was already on 2.4 GHz when it was upgraded stays there until it
+  reassociates. The installer leaves that link connected on purpose — it is
+  usually carrying the deployment's own SSH session — and prints a warning
+  naming the frequency. Move the SSID to 5 GHz or attach Ethernet **before**
+  rebooting, or the board will not come back on Wi-Fi.
+- No 5 GHz channels offered at all: this is regulatory, not hardware. The
+  kernel reads its domain from `/lib/firmware/regulatory.db`, which
+  `wireless-regdb` installs; without it the world domain applies, and that
+  domain has no channels 149-165 at all. Most US 5 GHz access points sit in
+  exactly that range. Confirm with `iw reg get` (country `00` is the world
+  domain) and `iw phy phy0 info`, which lists no 5 GHz frequencies when the
+  database is missing. `install.sh` installs the database and writes
+  `country=` into `wpa_supplicant.conf`, defaulting to `US` when nothing
+  declares one; a board provisioned before that needs one more deploy. To
+  place the appliance in another domain, set `country=` in
+  `/etc/wpa_supplicant/wpa_supplicant.conf` and redeploy — a declared country
+  is preserved, never overwritten. Both supported boards use the CYW43455
+  (802.11ac 1x1), which negotiates VHT80 at 433 MBit/s on 5 GHz.
 - Choppy audio, or audio dropping out in short gaps: the dashboard's playing
   detail counts the underruns. Each one is a gap, and they mean audio is
   arriving later than HDMI consumes it. Check the link first — a support

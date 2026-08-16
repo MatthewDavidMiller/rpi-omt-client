@@ -34,6 +34,13 @@ substream's `status`, `hw_params`, and `sw_params`. The last three are what
 make an underrun report checkable — the ELD alone says what the sink accepts,
 not whether the stream ran dry.
 
+It also reports what band the radio *could* use, not only the one it is on:
+the regulatory domain, whether `regulatory.db` is present, and each phy's
+supported bands and channels. An association report alone cannot separate a
+2.4 GHz-only site from a dual-band radio that was never allowed to see 5 GHz,
+and those have opposite fixes. In the world domain channels 149-165 are absent
+from the frequency list entirely, so their absence there is the answer.
+
 Host diagnostics are collected by the root-owned
 `deploy/host/host-diagnostics.sh`. The Web process writes a bounded versioned
 request with a random request ID and `capture_pcap=0|1` to a pre-created

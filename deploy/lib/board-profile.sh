@@ -14,9 +14,16 @@
 #
 # The Pi 5 and Pi 4 ceilings have been confirmed on hardware with
 # `cargo test --release -p vmx-decoder --test decode_bench -- --ignored`; the
-# margins are recorded beside each. The Pi 3 and Zero 2 W tiers remain targets
-# derived from core count and clock. Run the bench on those boards before
-# release and lower the tier here if one cannot hold it.
+# margins are recorded beside each.
+#
+# Every supported board has a dual-band radio, and that is a support criterion
+# rather than a coincidence. Real-world testing showed 2.4 GHz cannot carry an
+# OMT stream: the packet loss makes playback unusable however generous the
+# decode ceiling is. So the appliance is 5 GHz only, and a board whose radio
+# cannot leave 2.4 GHz cannot be supported at all. That removed the Raspberry
+# Pi Zero 2 W (BCM43436) and the Pi 3 tier, whose Model B (BCM43438) is
+# 2.4 GHz-only; the Pi 3 A+/B+ are dual-band but went with it rather than
+# leaving a tier where one board installs and its sibling does not.
 
 # Absolute limits, matching omt-protocol's parse_video_header. No profile and
 # no operator override may exceed these: they bound the decoder's allocations.
@@ -29,10 +36,8 @@ HOST_MAX_CEILING_SHAPES=4
 # Print a board's profile as key=value lines, or fail for an unsupported model.
 #
 # The caller owns the error message, because the installer and the deployment
-# probe word it differently. Matching is by prefix over the model string: the
-# revision suffix varies per board batch, the Pi 3 B+ reports "Model B Plus"
-# rather than "B+", and early Zero 2 W boards were silkscreened "Zero 2" with
-# no W, so "Raspberry Pi Zero 2" is the prefix that covers the product.
+# probe word it differently. Matching is by prefix over the model string,
+# because the revision suffix varies per board batch.
 host_board_profile() {
     local model="$1"
     local board_id board_label connectors ceiling
@@ -58,18 +63,6 @@ host_board_profile() {
             # 1080p30 holds with roughly a fifth of the interval spare.
             ceiling="1920x1080@30,1280x720@60"
             ;;
-        "Raspberry Pi 3 Model "*)
-            board_id=pi3
-            board_label="Raspberry Pi 3"
-            connectors=1
-            ceiling="1280x720@60"
-            ;;
-        "Raspberry Pi Zero 2" | "Raspberry Pi Zero 2 "*)
-            board_id=pizero2w
-            board_label="Raspberry Pi Zero 2 W"
-            connectors=1
-            ceiling="1280x720@60"
-            ;;
         *)
             return 1
             ;;
@@ -85,9 +78,7 @@ host_board_profile() {
 host_supported_boards() {
     printf '%s\n' \
         "Raspberry Pi 5" \
-        "Raspberry Pi 4 Model B" \
-        "Raspberry Pi 3 Model A+/B/B+" \
-        "Raspberry Pi Zero 2 W"
+        "Raspberry Pi 4 Model B"
 }
 
 # Accept a ceiling: one or more WIDTHxHEIGHT@FPS shapes, comma separated.

@@ -25,7 +25,7 @@
 | `OMT_SOURCE_TARGET_FILE` | `$OMT_CONFIG_DIR/source_target.json` |
 | `OMT_PLAYBACK_STATUS_FILE` | `$OMT_RUNTIME_DIR/playback-status.json` |
 | `OMT_PLAYBACK_STATUS_STALE_SECONDS` | `5`, minimum `1`; must stay above the receiver's 500 ms status heartbeat |
-| `OMT_HDMI_CONNECTOR` | `auto`, `HDMI-A-1`, or `HDMI-A-2`. The Pi 3 and Zero 2 W have one output, so only `HDMI-A-1` ever resolves there |
+| `OMT_HDMI_CONNECTOR` | `auto`, `HDMI-A-1`, or `HDMI-A-2`; both supported boards have two outputs |
 | `OMT_BOARD_LABEL` | Detected board, written by the installer; defaults to `Raspberry Pi` |
 | `OMT_VIDEO_CEILING` | The board's decode ceiling, written by the installer; defaults to `1920x1080@60` |
 | `OMT_VIDEO_CEILING_FILE` | `$OMT_CONFIG_DIR/video_ceiling.json`, the operator's override of `OMT_VIDEO_CEILING` |
@@ -126,8 +126,6 @@ a Cortex-A53 is not a Cortex-A76. `deploy/lib/board-profile.sh` is the table:
 |-------|------|-----------------|
 | Raspberry Pi 5 | 2 | `1920x1080@60` |
 | Raspberry Pi 4 Model B | 2 | `1920x1080@30,1280x720@60` |
-| Raspberry Pi 3 Model A+/B/B+ | 1 | `1280x720@60` |
-| Raspberry Pi Zero 2 W | 1 | `1280x720@60` |
 
 A ceiling is a comma-separated list of `WIDTHxHEIGHT@FPS` shapes, and video is
 accepted when it fits inside any one of them — which is how the Pi 4 takes
@@ -146,9 +144,8 @@ System page. `auto` restores the board default. No ceiling may exceed
 Raising a ceiling above the board default is permitted and is not validated:
 a board that cannot decode the format will drop frames rather than refuse them.
 
-**These ceilings are engineering targets derived from core count and clock, not
-measurements.** Confirm one on the board with
+Both ceilings are measured, not derived: the Pi 5 decodes the 1080p gradient
+vector in 6.5 ms against a 16.7 ms budget, and the Pi 4 in 26.4 ms against
+33.3 ms. Re-confirm with
 `cargo test --release -p vmx-decoder --test decode_bench -- --ignored` and lower
-the profile if it does not hold. The Zero 2 W is the most optimistic entry: four
-Cortex-A53 cores at 1.0 GHz is roughly a quarter of a Pi 5's per-core NEON
-throughput, so 720p60 there may need to become 720p30.
+the profile if a board cannot hold its tier.

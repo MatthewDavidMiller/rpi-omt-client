@@ -82,13 +82,13 @@ and bitstream readers grow to the loaded payload instead of memset-ing the
 uncompressed worst case on every frame. Worker jobs travel inline through bounded channels, and the receiver reserves
 only the additional bytes needed when a network payload grows, so neither jobs
 nor a second full-size payload buffer are allocated in the steady-state frame
-path. The HTTPS operator uses a current-thread Tokio runtime. The
-512 MiB Pi Zero 2 W is the memory-design floor and is inside the
-supported matrix at that cap.
+path. The HTTPS operator uses a current-thread Tokio runtime. The 1 GiB Pi 4
+Model B is the memory-design floor and is inside the supported matrix at that
+cap.
 
 Memory is not what separates the boards; decode throughput is. VMX is decoded in
-software on three of the four cores every supported board has, and a 1.0 GHz
-Cortex-A53 is not a 2.4 GHz Cortex-A76. So each board carries a decode ceiling
+software on three of the four cores every supported board has, and a 1.5 GHz
+Cortex-A72 is not a 2.4 GHz Cortex-A76. So each board carries a decode ceiling
 from `deploy/lib/board-profile.sh`, which the installer resolves once and passes
 to the receiver as `--video-ceiling`. A ceiling is a list of shapes and a frame
 is admitted when it fits inside any one of them, which is how a Pi 4 takes
@@ -103,9 +103,7 @@ three-worker pool -- the row that decides a tier -- at 6.5 ms per 1080p
 gradient frame on the Pi 5 against a 16.7 ms budget, and 26.4 ms on the Pi 4
 against a 33.3 ms one. Both hold, the Pi 4 with the thinner margin, and a Pi 4
 pointed at a 1080p60 sender refuses it with a message naming its own limit.
-The Pi 3 and Zero 2 W tiers are still targets derived from core count and
-clock, and stay on the hardware boundary described under trust and legal
-surfaces until the bench has been run on them.
+No supported board ships a ceiling that is only reasoned about.
 
 The colour conversion has an AArch64 kernel for the same reason the inverse DCT
 does. Once the entropy decode is spread over the pool, packing 1080p into the
@@ -119,8 +117,8 @@ Both kernels are checked against each other lane for lane, and the committed
 conformance vectors still decode bit-exactly against the reference decoder on
 both boards.
 
-Playback supports either HDMI connector on the two-output boards; the Pi 3 and
-Zero 2 W expose only `HDMI-A-1`, where `HDMI-A-2` simply never resolves and
+Playback supports either HDMI connector: both supported boards have two.
+`HDMI-A-2` on a board that does not populate it simply never resolves and
 already reads as no display. A missing, unreadable, or half-populated DRM tree
 reads the same way, so the play loop reports `waiting-for-hdmi` and retries
 instead of exiting. Frames above the board's ceiling are reported as
@@ -152,8 +150,8 @@ described under trust and legal surfaces and must be validated on a Pi with a
 display whose mode list does not carry the sender's format before release.
 
 HDMI audio is resolved rather than assumed. The Pi 4 and Pi 5 register one ALSA
-card per output, `vc4hdmi0` and `vc4hdmi1`; the Pi 3 and Zero 2 W have one
-output and register a single unindexed `vc4hdmi`. The receiver reads
+card per output, `vc4hdmi0` and `vc4hdmi1`, while a single-output board
+registers one unindexed `vc4hdmi`. The receiver reads
 `/sys/class/sound/card*/id` and takes the indexed card when it exists, a lone
 `vc4hdmi` otherwise. Deriving the name from the connector alone is what made
 HDMI audio fail silently on the single-output boards while video kept playing.
@@ -187,6 +185,18 @@ working HDMI sink as lost and dropped playback to `degraded` on both the Pi 4
 and the Pi 5. It now waits for room on the same bounded budget a device that
 accepts nothing gets, which still ends the audio session for a sink that has
 genuinely vanished.
+
+The receive slice bounds how long a loop waits for a frame to *begin*, not how
+long a frame may take. Those were once the same bound, and a 1080p VMX payload
+is around 200 KiB — tens of milliseconds of wire time on a link already
+carrying this session's own video. A frame whose header landed near the end of
+a slice therefore ran out of budget mid-payload; because a half-read frame
+cannot be resumed, the channel closed, the session ended, and video, audio, and
+the DRM output all restarted behind the retry backoff. Nothing had stalled. The
+budget was being measured from the wrong instant, and the appliance reported it
+as `OMT frame was truncated by a timeout` several times a minute on 2.4 GHz.
+The first byte consumed now switches the read onto its own frame budget, which
+still ends a sender that genuinely stops talking mid-frame.
 
 The audio worker reads on the same slice as the video loop. Its frames are a
 fraction of a video frame's size, but a read that stalls after its first byte
@@ -343,12 +353,39 @@ config refuses the factory image's empty root password. The boot media is
 released first with `copy-modloop`, because alpine-conf skips any disk with a
 mounted partition and `setup-disk` then *exits 0* having installed nothing.
 And the packages the appliance needs to rejoin the network — OpenSSH, and on
-a Wi-Fi board `wpa_supplicant` with `linux-firmware-brcm` — are installed
-into the new root with `apk --root` after the install, because the factory
-image runs from a read-only modloop where the firmware belongs to no package
-and `/lib/firmware` cannot be written at all. The completion marker the
-deployer keys on is printed only after the new root has been mounted and
-checked, so a `setup-disk` that did nothing cannot report success.
+a Wi-Fi board `wpa_supplicant` with `linux-firmware-brcm` and
+`wireless-regdb` — are installed into the new root with `apk --root` after the
+install, because the factory image runs from a read-only modloop where the
+firmware belongs to no package and `/lib/firmware` cannot be written at all.
+The completion marker the deployer keys on is printed only after the new root
+has been mounted and checked, so a `setup-disk` that did nothing cannot report
+success.
+
+`linux-firmware-brcm` carries the Pi 5's radio: the CYW43455 is 802.11ac 1x1
+dual-band, and the package ships its `brcmfmac43455-sdio.raspberrypi,5-model-b`
+firmware, NVRAM, and CLM blob. `wireless-regdb` is the other half and was
+easier to miss, because leaving it out produces no error anywhere. The kernel
+resolves its regulatory domain by reading `/lib/firmware/regulatory.db`; with
+no database the world domain applies, and that domain contains no channels
+149-165 at all. A dual-band board then associates happily on 2.4 GHz and
+delivers a fraction of the throughput a 1080p OMT stream needs. Both scripts
+install the database, and the firmware copy-from-running-image fallback covers
+it for the same reason it covers the Broadcom firmware: `apk` has been observed
+to report success while placing nothing, and on a Wi-Fi-only board that is a
+trip to the SD card reader.
+
+Every path that can write a Wi-Fi configuration defaults the country to `US`,
+and every one of them preserves a country that is already declared — that is
+the operator saying where the appliance is, and neither a re-deploy nor a
+Wi-Fi change may relabel a radio. There are three such paths and they are
+separate code because they run in different worlds:
+`host_wpa_supplicant_config` for the installer, `install_wpa_config_from` in
+`setup-sys.sh` for the hand-written boot-partition file (busybox `ash` on a
+factory image, with no access to `deploy/lib`), and the deployer's `wpa_cli`
+script for later Wi-Fi management. The last one sets the country *before* it
+scans: in the world domain the upper band does not exist, so scanning first
+would offer the operator 2.4 GHz networks only and hide the 5 GHz access point
+they are standing next to.
 Fixed management actions cross the same privilege boundary as deployment and
 Wi-Fi: a non-root SSH account uses its bounded sudo-password channel, while a
 root session runs the fixed command directly. Neither account needs membership
@@ -435,8 +472,11 @@ CycloneDX inventory from `Cargo.lock` and the appliance's installed Alpine
 package database; the deployer publisher inventories its Cargo closure.
 
 The host is Alpine Linux 3.24 aarch64 in persistent sys mode on a Raspberry Pi
-5, Pi 4 Model B, Pi 3 Model A+/B/B+, or Zero 2 W. One `linux-rpi` kernel covers
-all four. The installer rejects other distributions, every other board, and
+5 or Pi 4 Model B. One `linux-rpi` kernel covers both. A dual-band radio is a
+support criterion: the appliance is 5 GHz only, because real-world testing
+showed 2.4 GHz packet loss makes OMT playback unusable, so a board that cannot
+leave 2.4 GHz cannot be a host. That is what removed the Pi Zero 2 W and the
+Pi 3 tier. The installer rejects other distributions, every other board, and
 RAM-backed diskless roots; `deploy/lib/board-profile.sh` and
 `crates/omt-deployer-core/src/ops.rs` hold the same table for the host-side and
 workstation-side gates. OpenRC supervises the filtered Avahi proxy and two inotify watchers;

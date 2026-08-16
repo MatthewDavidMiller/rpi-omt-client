@@ -1,27 +1,33 @@
 # Setup Guide
 
+> **Beta — not production ready.** Every `0.9.x` release is a beta: defaults,
+> the supported-board matrix, and on-disk state may change between them without
+> a migration path, and an upgrade may need the appliance re-provisioned rather
+> than migrated. Deploy only to boards you can physically reach with a keyboard
+> and monitor. **Version 1.0 will be the first production release.**
+
 ## Supported host
 
-- Raspberry Pi 5, Raspberry Pi 4 Model B, Raspberry Pi 3 Model A+/B/B+, or
-  Raspberry Pi Zero 2 W;
+- Raspberry Pi 5 or Raspberry Pi 4 Model B;
 - Alpine Linux 3.24 aarch64;
 - persistent `sys` mode on SD, eMMC, or USB storage;
 - connected DRM/KMS HDMI and ALSA HDMI playback devices;
 - network reachability to OMT senders.
 
 Each board has its own decode ceiling; see the video limit table in
-[CONFIGURATION.md](CONFIGURATION.md). The Pi 5 and Pi 4 have two HDMI outputs;
-the Pi 3 and Zero 2 W have one, so only `HDMI-A-1` resolves there.
+[CONFIGURATION.md](CONFIGURATION.md). Both boards have two HDMI outputs.
+
+Both boards also have a dual-band radio, and that is a support criterion. The
+appliance is 5 GHz only: real-world testing showed 2.4 GHz cannot carry an OMT
+stream, because its packet loss makes playback unusable however strong the
+signal is. A board whose radio cannot leave 2.4 GHz therefore cannot run this
+appliance, which is why the Pi Zero 2 W (BCM43436) and the Pi 3 tier — whose
+Model B (BCM43438) has no 5 GHz radio — are rejected.
 
 Diskless/data-mode Alpine is rejected because its RAM-backed root competes
 with video decoding. Raspberry Pi OS, other distributions, 32-bit userspace,
-the Pi 400/500, Compute Modules, and every earlier board are rejected before
-installer mutation.
-
-The Zero 2 W needs one step before the installer can run at all: Alpine's
-aarch64 `config.txt` ships sections for the Pi 3, 4, and 5 but none for the
-Zero 2 W, so add a `[pi02]` (or `[all]`) section mirroring the Pi 3 kernel and
-initramfs entries before first boot.
+the Pi 400/500, Compute Modules, the Pi 3 and Zero tiers, and every earlier
+board are rejected before installer mutation.
 
 Flash the official Alpine Raspberry Pi aarch64 image. The native deployer
 handles `setup-alpine` and the persistent `sys` install: connect as `root`
@@ -69,6 +75,13 @@ system is reachable, and keep the installed
 `/etc/wpa_supplicant/wpa_supplicant.conf` root-only. The appliance installer
 preserves the network block and adds the control settings needed for later
 Wi-Fi changes from the deployer.
+
+`country=` is what lets the radio use 5 GHz, so set it to where the appliance
+actually is. Leave it out and the appliance defaults to `US` rather than
+running without one: an unset country leaves the kernel in the world domain,
+which contains no channels 149-165 at all, and a dual-band Pi then silently
+associates on 2.4 GHz at a fraction of the throughput an OMT 1080p stream
+needs. A country you do declare is preserved everywhere and never overwritten.
 
 ### Bootstrapping bash and sudo
 

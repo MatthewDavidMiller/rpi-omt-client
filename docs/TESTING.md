@@ -166,9 +166,8 @@ prepared by hand hides exactly the bugs this tier exists to catch, so reflash
 or reset the card rather than reusing a previously deployed one.
 
 Before release, validate on a clean Alpine 3.24 aarch64 `sys` installation on
-**each supported board** — Pi 5, Pi 4 Model B, Pi 3, and Zero 2 W. The boards
-differ in HDMI count, ALSA card layout, RAM, and decode throughput, so a pass on
-one is not evidence for another:
+**each supported board** — Pi 5 and Pi 4 Model B. The boards differ in RAM and
+decode throughput, so a pass on one is not evidence for another:
 
 0. on a factory diskless image, confirm the Alpine view / `alpine-setup`
    command runs `deploy/host/setup-sys.sh`, installs persistent sys mode, and
@@ -185,15 +184,14 @@ one is not evidence for another:
 
 1. deploy through both CLI and native app and confirm unsupported boards fail
    before upload. Include a near miss if one is available: a Pi 400 or Pi 500
-   must be refused, since its model string starts with a supported prefix;
+   must be refused, since its model string starts with a supported prefix, and
+   so must a Pi 3 or Zero 2 W, which are refused for having no 5 GHz radio;
 2. reboot, then verify all four `omt-client*` OpenRC services and nftables;
 3. verify HDMI connectors, hotplug, EDID, video at the board's ceiling, and
-   HDMI audio. On the Pi 4 and Pi 5 verify both connectors; on the Pi 3 and
-   Zero 2 W verify that the single output works and that its unindexed
-   `vc4hdmi` ALSA card is the one opened. Include the multi-card fallback: the
-   unit suite drives it against a fake sysfs tree, but selecting the second
-   physical connector after the first card's attributes fail to read is not
-   reproducible off the board;
+   HDMI audio. Verify both connectors on each board. Include the multi-card
+   fallback: the unit suite drives it against a fake sysfs tree, but selecting
+   the second physical connector after the first card's attributes fail to read
+   is not reproducible off the board;
 4. verify zram, the 128 MiB memory limit, 64 PID limit, bounded Docker logs,
    and stable operation under memory pressure;
 5. verify discovery/direct playback, support bundle correlation/PCAP opt-in,
@@ -209,12 +207,10 @@ one is not evidence for another:
    repository's `tests/vectors/vmx` directory.
 
    The 3-worker row is the one that decides a tier, because the receiver gives
-   the decoder three of the four cores. The shipped ceilings in
-   `deploy/lib/board-profile.sh` are derived from core count and clock rather
-   than measured; if a board cannot sustain the frame interval its ceiling
-   promises, lower that board's profile rather than shipping a limit it cannot
-   hold. The Zero 2 W's 720p60 is the most optimistic entry and 720p30 may be
-   what it actually sustains. Then confirm that over-ceiling input reports
+   the decoder three of the four cores. Both shipped ceilings in
+   `deploy/lib/board-profile.sh` are measured; if a board stops sustaining the
+   frame interval its ceiling promises, lower that board's profile rather than
+   shipping a limit it cannot hold. Then confirm that over-ceiling input reports
    `unsupported-format` rather than stuttering;
 7. verify the resampled path on a display whose mode list does not carry the
    sender's format — a panel that stops at 720p fed 1080p is the case this was

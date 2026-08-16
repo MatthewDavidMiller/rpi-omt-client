@@ -125,8 +125,13 @@ done < <(awk '
 if grep -Eq '^apk add --no-cache[^|]*linux-firmware-brcm' "${SETUP_SYS}"; then
     fail "linux-firmware-brcm cannot be installed into the running factory image; use --root"
 fi
-require 'apk add --root /mnt/omt-newroot --no-cache wpa_supplicant iw linux-firmware-brcm' \
+require 'wpa_supplicant iw linux-firmware-brcm wireless-regdb' \
     "the new root must get the Wi-Fi firmware or a Wi-Fi-only board never comes back"
+# Without regulatory.db the kernel keeps the world domain, where channels
+# 149-165 are absent, so the board stays on 2.4 GHz however good the 5 GHz
+# access point is -- and 2.4 GHz cannot carry an OMT 1080p stream.
+require 'regulatory\.db\.p7s' \
+    "the persistent root needs the regulatory database, or 5 GHz stays unusable"
 
 # The discovery rule that made setup-disk a silent no-op: alpine-conf skips any
 # disk with a mounted partition, and a factory image boots with its own boot
@@ -274,6 +279,99 @@ for host_script in "${BOOTSTRAP}" "${INSTALL}"; do
         fail "$(basename "${host_script}") must not use HTTP apk mirrors"
     fi
 done
+
+# The country the preserved boot-partition config ends up with. This path takes
+# a hand-written wpa_supplicant.conf, and an operator who left `country=` out of
+# it would otherwise leave the radio in the world domain -- no channels 149-165,
+# so 5 GHz is never scanned. Run the embedded awk program rather than grepping
+# for it, because the ordering of the globals is what the file has to end up
+# with.
+SERVICE_INSTALL="${ROOT}/deploy/lib/service-install.sh"
+setup_freqs="$(
+    awk '
+        /^# BEGIN WIFI FREQ LIST$/ { grab = 1; next }
+        /^# END WIFI FREQ LIST$/ { grab = 0 }
+        grab && NF { print }
+    ' "${SETUP_SYS}" | sed -n 's/^WIFI_FREQ_LIST="\(.*\)"$/\1/p'
+)"
+[[ -n "${setup_freqs}" ]] || fail "setup-sys.sh declares no Wi-Fi frequency list"
+
+PRESERVE_AWK="$(mktemp)"
+# Extends the trap set above rather than replacing it: a bare `trap ... EXIT`
+# here would drop the earlier probes' cleanup on the floor.
+trap 'rm -f -- "${mounts_probe}" "${helper}" "${PRESERVE_AWK}"' EXIT
+sed -n '/^install_wpa_config_from()/,/^}/p' "${SETUP_SYS}" \
+    | sed -n "/^    awk .*'$/,/^    ' /p" \
+    | sed -e "1s/^    awk .*'$//" -e "\$s/^    ' .*$//" > "${PRESERVE_AWK}"
+grep -q 'ctrl_interface=/run/wpa_supplicant' "${PRESERVE_AWK}" || \
+    fail "could not extract the preserved Wi-Fi config program"
+preserved_country() {
+    awk -v freq_list="${setup_freqs}" -f "${PRESERVE_AWK}"
+}
+no_country="$(preserved_country <<'EOF'
+network={
+	ssid="site"
+}
+EOF
+)"
+grep -qx 'country=US' <<< "${no_country}" || \
+    fail "a preserved Wi-Fi config with no country must default to US"
+grep -qx '	ssid="site"' <<< "${no_country}" || \
+    fail "preserving a Wi-Fi config must keep its network block"
+[[ "$(sed -n 4p <<< "${no_country}")" == "country=US" ]] || \
+    fail "the country belongs with the other globals, ahead of the network blocks"
+
+declared_country="$(preserved_country <<'EOF'
+country=DE
+network={
+	ssid="site"
+}
+EOF
+)"
+grep -qx 'country=DE' <<< "${declared_country}" || \
+    fail "a country the image already declares must be preserved, not relabelled"
+[[ "$(grep -c '^country=' <<< "${declared_country}")" -eq 1 ]] || \
+    fail "the preserved config must declare exactly one country"
+
+# ─── The 5 GHz band policy ───────────────────────────────────────────────────
+
+# The appliance does not support 2.4 GHz: real-world testing showed its packet
+# loss makes OMT playback unusable. Three scripts write that policy and none of
+# them can share a definition -- one runs on a factory image with no bash, one
+# on the installed appliance, one on the operator's workstation -- so the only
+# thing keeping them honest is this comparison. A list that drifts would leave
+# one provisioning path quietly able to join 2.4 GHz.
+# Only 5 GHz channels, and nothing in the 2.4 GHz band.
+for freq in ${setup_freqs}; do
+    [[ "${freq}" =~ ^5[0-9]{3}$ ]] || \
+        fail "the Wi-Fi frequency list must be 5 GHz only, found ${freq}"
+done
+service_freqs="$(
+    sed -n 's/^HOST_WIFI_FREQ_LIST="\(.*\)"$/\1/p' "${SERVICE_INSTALL}"
+)"
+[[ "${service_freqs}" == "${setup_freqs}" ]] || \
+    fail "service-install.sh frequency list does not match setup-sys.sh"
+ops_freqs="$(
+    sed -n 's/^ *"\(5180 [0-9 ]*\)"$/\1/p' "${OPS_RS}"
+)"
+[[ "${ops_freqs}" == "${setup_freqs}" ]] || \
+    fail "ops.rs frequency list does not match setup-sys.sh"
+
+# Both writers in this script apply it, not just the one that creates a profile
+# from scratch.
+[[ "$(grep -c 'freq_list' "${SETUP_SYS}")" -ge 3 ]] || \
+    fail "every wpa_supplicant writer in setup-sys.sh must set freq_list"
+preserved_freqs="$(preserved_country <<'EOF'
+freq_list=2412 2437 2462
+network={
+	ssid="site"
+}
+EOF
+)"
+grep -qx "freq_list=${setup_freqs}" <<< "${preserved_freqs}" || \
+    fail "a preserved config must be re-banded to 5 GHz"
+[[ "$(grep -c '^freq_list=' <<< "${preserved_freqs}")" -eq 1 ]] || \
+    fail "the preserved config must declare exactly one frequency list"
 
 if ((failures > 0)); then
     echo "${failures} Alpine sys-setup contract test(s) failed" >&2

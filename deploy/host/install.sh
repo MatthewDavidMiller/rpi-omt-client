@@ -359,12 +359,17 @@ apk add --no-cache \
     alsa-utils avahi avahi-tools bash coreutils dbus docker docker-cli-compose \
     ethtool findutils inotify-tools iproute2 iw jq libdrm-tests linux-firmware-brcm \
     linux-rpi nftables nftables-rulesets procps raspberrypi-bootloader \
-    tcpdump util-linux util-linux-misc wpa_supplicant xdg-dbus-proxy zram-init
+    tcpdump util-linux util-linux-misc wireless-regdb wpa_supplicant xdg-dbus-proxy \
+    zram-init
 echo "Alpine packages are at the latest indexed versions."
 
 # The Windows deployer manages Wi-Fi through wpa_cli. Preserve every existing
-# network block while making the control socket and durable save operation an
-# explicit part of the Alpine appliance contract.
+# network block while making the control socket, the durable save operation,
+# and the regulatory country explicit parts of the Alpine appliance contract.
+# `wireless-regdb` above is what lets the kernel act on that country at all:
+# without /lib/firmware/regulatory.db the radio stays in the world domain and
+# 5 GHz is unusable, which on this appliance shows up as choppy video rather
+# than as a Wi-Fi error.
 WPA_SUPPLICANT_DIR=/etc/wpa_supplicant
 WPA_SUPPLICANT_CONFIG="${WPA_SUPPLICANT_DIR}/wpa_supplicant.conf"
 install -d -m 0700 "${WPA_SUPPLICANT_DIR}"
@@ -381,6 +386,54 @@ fi
 host_wpa_supplicant_config < "${WPA_CONFIG_INPUT}" > "${WPA_CONFIG_TMP}"
 host_publish_file "${WPA_SUPPLICANT_CONFIG}" 0600 root root < "${WPA_CONFIG_TMP}"
 rm -f -- "${WPA_CONFIG_TMP}"
+
+# Apply that country to the running radio too. The kernel resolves a domain
+# once, on the first regulatory request of the boot, so a supplicant that
+# already asked before regulatory.db existed keeps the world domain until
+# something asks again. Best effort: an upgrade must not fail over a radio the
+# board may not even have.
+WPA_COUNTRY="$(
+    awk -F= '$1 == "country" { print $2; exit }' "${WPA_SUPPLICANT_CONFIG}"
+)"
+if [[ "${WPA_COUNTRY}" =~ ^[A-Z]{2}$ ]] && command -v iw >/dev/null 2>&1; then
+    iw reg set "${WPA_COUNTRY}" 2>/dev/null || true
+fi
+
+# Warn, but do not act, when the board is on 2.4 GHz right now.
+#
+# The configuration written above is 5 GHz only, and it takes effect at the
+# next association. Forcing that association here is what must not happen: this
+# installer is very often running over the SSH session that 2.4 GHz link is
+# carrying, and if the SSID has no 5 GHz BSS the board would leave the network
+# mid-install and need a keyboard and monitor to get back. So the running link
+# is left alone and the operator is told plainly what changes at reboot, which
+# is a decision they can act on while they still have a session.
+WIFI_CURRENT_FREQ=""
+if command -v wpa_cli >/dev/null 2>&1; then
+    for wpa_socket in /run/wpa_supplicant/*; do
+        [[ -S "${wpa_socket}" ]] || continue
+        # Drains the status rather than exiting on the match: under
+        # `set -o pipefail` an early exit here turns wpa_cli's SIGPIPE into a
+        # script-killing 141 with no message.
+        WIFI_CURRENT_FREQ="$(
+            wpa_cli -i "${wpa_socket##*/}" status 2>/dev/null \
+                | awk -F= '$1 == "freq" && !seen { value = $2; seen = 1 }
+                           END { if (seen) print value }'
+        )"
+        [[ -n "${WIFI_CURRENT_FREQ}" ]] && break
+    done
+fi
+if [[ "${WIFI_CURRENT_FREQ}" =~ ^2[0-9]{3}$ ]]; then
+    echo
+    echo "WARNING: This board is associated on ${WIFI_CURRENT_FREQ} MHz (2.4 GHz)." >&2
+    echo "         The appliance does not support 2.4 GHz: real-world testing" >&2
+    echo "         showed its packet loss makes OMT playback unusable. Wi-Fi is" >&2
+    echo "         now restricted to 5 GHz, which takes effect at the next" >&2
+    echo "         association or reboot -- the running link was left connected" >&2
+    echo "         so this deployment could finish." >&2
+    echo "         Move this SSID to 5 GHz, or attach Ethernet, before rebooting." >&2
+    echo
+fi
 
 for command_name in apk docker rc-service rc-update inotifywait xdg-dbus-proxy; do
     command -v "${command_name}" >/dev/null 2>&1 || {

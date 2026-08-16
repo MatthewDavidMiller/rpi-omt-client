@@ -89,7 +89,7 @@ def _shell_ceilings() -> list[str]:
 
 def test_every_shipped_board_ceiling_is_covered_by_the_rust_web_tests():
     ceilings = _shell_ceilings()
-    assert len(ceilings) == 4, "board-profile.sh no longer defines four board tiers"
+    assert len(ceilings) == 2, "board-profile.sh no longer defines two board tiers"
     assert "parse_video_ceiling" in WEB_STATE.read_text(encoding="utf-8")
 
 
@@ -120,7 +120,7 @@ def test_the_supported_board_table_agrees_between_the_host_and_the_deployer():
     installer will then reject."""
     shell = BOARD_PROFILE.read_text(encoding="utf-8")
     rust_prefixes = re.search(
-        r"const SUPPORTED_BOARDS: \[&str; 4\] = \[(.*?)\];",
+        r"const SUPPORTED_BOARDS: \[&str; 2\] = \[(.*?)\];",
         DEPLOYER_OPS.read_text(encoding="utf-8"),
         re.DOTALL,
     )
@@ -133,6 +133,43 @@ def test_the_supported_board_table_agrees_between_the_host_and_the_deployer():
     deploy_script = (REPO_ROOT / "scripts" / "deploy.sh").read_text(encoding="utf-8")
     assert "board-profile.sh" in deploy_script
     assert "host_board_profile" in deploy_script
+
+
+def test_no_supported_board_has_a_2_4_ghz_only_radio():
+    """The appliance is 5 GHz only: real-world testing showed 2.4 GHz packet loss
+    makes OMT playback unusable. A board that cannot leave 2.4 GHz would install
+    and then fail in the field with no error the operator could act on, so the
+    band is a property of the supported table rather than a runtime check."""
+    shell = BOARD_PROFILE.read_text(encoding="utf-8")
+    deployer = DEPLOYER_OPS.read_text(encoding="utf-8")
+    supported = re.search(
+        r"host_supported_boards\(\) \{(.*?)\n\}",
+        shell,
+        re.DOTALL,
+    )
+    assert supported is not None, "board-profile.sh no longer lists the supported boards"
+    rust_prefixes = re.search(
+        r"const SUPPORTED_BOARDS: \[&str; \d+\] = \[(.*?)\];",
+        deployer,
+        re.DOTALL,
+    )
+    assert rust_prefixes is not None
+
+    # Every Pi Zero, and the Pi 3 tier whose Model B has no 5 GHz radio.
+    single_band = ("Zero", "Pi 3")
+    for source, text in (
+        ("host_supported_boards", supported.group(1)),
+        ("SUPPORTED_BOARDS", rust_prefixes.group(1)),
+    ):
+        for name in re.findall(r'"([^"]+)"', text):
+            for banned in single_band:
+                assert banned not in name, f"{source} names {name!r}, which has no 5 GHz radio"
+
+    # And the branch that would give such a board a profile at all.
+    for banned in single_band:
+        assert f'"Raspberry {banned}' not in shell, (
+            f"board-profile.sh still profiles a {banned} board"
+        )
 
 
 def test_docker_api_wait_agrees_between_the_installer_and_openrc():

@@ -47,6 +47,21 @@ require 'libdrm-tests' "DRM diagnostics must be installed"
 require 'docker-cli-compose' "Alpine Compose plugin must be installed"
 require 'zram-init' "compressed swap must be installed"
 require 'host_wpa_supplicant_config' "installer must apply the tested Wi-Fi configuration"
+# The Pi 5 radio is dual-band, but the kernel cannot leave the world domain
+# without this database, and the world domain has no channels 149-165 at all.
+# A board stuck on 2.4 GHz reports a healthy association while delivering a
+# fraction of the throughput an OMT 1080p stream needs.
+require 'wireless-regdb' "the regulatory database must be installed for 5 GHz"
+require 'iw reg set' "the declared country must reach the running radio"
+# 2.4 GHz is unsupported: its packet loss makes OMT playback unusable. The
+# restriction is written to the configuration and applies at the next
+# association -- it must not tear down the link this installer is running over,
+# because that link is often the deploy's own SSH session and the SSID may have
+# no 5 GHz BSS to move to. Warn, do not act.
+require 'WIFI_CURRENT_FREQ' "the installer must notice a 2.4 GHz association"
+require 'associated on .*2\.4 GHz' "a 2.4 GHz board must be told what changes at reboot"
+forbid 'wpa_cli .*(reassociate|reconfigure|disconnect)' \
+    "the installer must not reassociate the link it is running over"
 grep -Fq 'ctrl_interface=/run/wpa_supplicant' "${SERVICE_HELPERS}" || {
     echo "FAIL: Wi-Fi control socket must be enabled" >&2
     exit 1

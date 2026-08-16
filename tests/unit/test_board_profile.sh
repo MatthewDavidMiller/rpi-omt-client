@@ -2,8 +2,8 @@
 # Behavior tests for the supported-board table and its decode ceilings.
 #
 # The model string decides whether the appliance installs at all and what video
-# it will accept, and none of the four boards is on this workstation, so every
-# rule is exercised here rather than discovered on someone's desk.
+# it will accept, and neither board is on this workstation, so every rule is
+# exercised here rather than discovered on someone's desk.
 
 set -euo pipefail
 
@@ -42,23 +42,13 @@ expect_board() {
 
 expect_board "Raspberry Pi 5 Model B Rev 1.0" pi5 2 "1920x1080@60"
 expect_board "Raspberry Pi 4 Model B Rev 1.4" pi4 2 "1920x1080@30,1280x720@60"
-expect_board "Raspberry Pi 3 Model B Rev 1.2" pi3 1 "1280x720@60"
-# The B+ reports "Model B Plus", never "Model B+".
-expect_board "Raspberry Pi 3 Model B Plus Rev 1.3" pi3 1 "1280x720@60"
-expect_board "Raspberry Pi 3 Model A Plus Rev 1.0" pi3 1 "1280x720@60"
-expect_board "Raspberry Pi Zero 2 W Rev 1.0" pizero2w 1 "1280x720@60"
-# Early Zero 2 W boards were silkscreened "Zero 2" with no W and are the same
-# product, so the prefix must not require the W.
-expect_board "Raspberry Pi Zero 2 Rev 1.0" pizero2w 1 "1280x720@60"
 
 # Every profile's own ceiling has to satisfy the validator the operator
 # override is checked against; otherwise a board could ship a default that no
 # one is allowed to re-enter.
 for model in \
     "Raspberry Pi 5 Model B Rev 1.0" \
-    "Raspberry Pi 4 Model B Rev 1.4" \
-    "Raspberry Pi 3 Model B Rev 1.2" \
-    "Raspberry Pi Zero 2 W Rev 1.0"; do
+    "Raspberry Pi 4 Model B Rev 1.4"; do
     ceiling="$(host_board_field "${model}" VIDEO_CEILING)"
     host_validate_video_ceiling "${ceiling}" ||
         fail "profile ceiling is not a valid ceiling: ${model} -> ${ceiling}"
@@ -66,13 +56,25 @@ done
 
 # ─── Everything else is refused ──────────────────────────────────────────────
 
-# The 32-bit-only and unvalidated boards. A near miss matters most here: the
-# original Zero W must not be caught by the Zero 2 prefix, and the Pi 2 must
-# not be caught by a loosened Pi prefix.
+# The 32-bit-only, unvalidated, and 2.4 GHz-only boards.
+#
+# Every Zero and every Pi 3 belongs to that last group. The Zero 2 W (BCM43436)
+# and the Pi 3 Model B (BCM43438) have no 5 GHz radio at all, and the appliance
+# does not support 2.4 GHz: its packet loss makes OMT playback unusable. The
+# Pi 3 A+/B+ are dual-band but went with the tier rather than leaving a Pi 3
+# that installs beside a Pi 3 that does not.
+#
+# A near miss matters most here: the Pi 2 must not be caught by a loosened Pi
+# prefix, and "Model B Plus" must not be read as a supported Pi 3.
 for model in \
     "" \
     "Raspberry Pi Model B Plus Rev 1.2" \
     "Raspberry Pi 2 Model B Rev 1.1" \
+    "Raspberry Pi 3 Model B Rev 1.2" \
+    "Raspberry Pi 3 Model B Plus Rev 1.3" \
+    "Raspberry Pi 3 Model A Plus Rev 1.0" \
+    "Raspberry Pi Zero 2 W Rev 1.0" \
+    "Raspberry Pi Zero 2 Rev 1.0" \
     "Raspberry Pi Zero W Rev 1.1" \
     "Raspberry Pi Zero Rev 1.3" \
     "Raspberry Pi 400 Rev 1.0" \
@@ -130,15 +132,19 @@ done
 
 # ─── Field accessor ──────────────────────────────────────────────────────────
 
-expect_equal "board label is human readable" "Raspberry Pi Zero 2 W" \
-    "$(host_board_field "Raspberry Pi Zero 2 W Rev 1.0" BOARD_LABEL)"
+expect_equal "board label is human readable" "Raspberry Pi 4 Model B" \
+    "$(host_board_field "Raspberry Pi 4 Model B Rev 1.4" BOARD_LABEL)"
 if host_board_field "Raspberry Pi 2 Model B Rev 1.1" BOARD_ID >/dev/null 2>&1; then
     fail "the field accessor must fail for an unsupported board"
 fi
 
 # The installer and the deployment probe both quote this list to the operator.
-expect_equal "the supported list names four boards" "4" \
+expect_equal "the supported list names two boards" "2" \
     "$(host_supported_boards | wc -l | tr -d ' ')"
+# Nothing 2.4 GHz-only may reappear in it.
+if host_supported_boards | grep -Eq 'Zero|Pi 3'; then
+    fail "the supported list names a board with no 5 GHz radio"
+fi
 
 if ((failures > 0)); then
     echo "${failures} board profile test(s) failed" >&2

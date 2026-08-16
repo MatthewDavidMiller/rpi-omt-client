@@ -114,9 +114,75 @@ EOF
 [[ "$(grep -c '^ctrl_interface_group=wheel$' <<< "${wpa_config}")" -eq 1 ]]
 [[ "$(grep -c '^update_config=1$' <<< "${wpa_config}")" -eq 1 ]]
 grep -qx 'country=US' <<< "${wpa_config}"
+[[ "$(grep -c '^country=' <<< "${wpa_config}")" -eq 1 ]]
 grep -qx '    ssid=74657374' <<< "${wpa_config}"
 grep -qx '    psk=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef' \
     <<< "${wpa_config}"
+
+# The country an operator already declared is where the appliance is, so a
+# re-deploy must not relabel the radio.
+wpa_config="$(
+    host_wpa_supplicant_config CA <<'EOF'
+country=GB
+network={
+    ssid=74657374
+}
+EOF
+)"
+grep -qx 'country=GB' <<< "${wpa_config}"
+[[ "$(grep -c '^country=' <<< "${wpa_config}")" -eq 1 ]]
+
+# A configuration with no country at all is the case that mattered: without one
+# the kernel keeps the world domain, where channels 149-165 do not exist, so the
+# board silently stays on 2.4 GHz and OMT video has a sixth of the throughput it
+# needs. The default has to be written rather than left absent.
+wpa_config="$(
+    host_wpa_supplicant_config <<'EOF'
+network={
+    ssid=74657374
+}
+EOF
+)"
+grep -qx 'country=US' <<< "${wpa_config}"
+grep -qx '    ssid=74657374' <<< "${wpa_config}"
+[[ "$(host_wpa_supplicant_config CA < /dev/null | grep -c '^country=CA$')" -eq 1 ]]
+# The globals still lead the document, ahead of every preserved network block.
+[[ "$(host_wpa_supplicant_config <<< 'network={' | head -n 4 | tail -n 1)" == "country=US" ]]
+
+# The 5 GHz band policy. Unlike the country this is not a default: 2.4 GHz is
+# unsupported because its packet loss makes OMT playback unusable, so a scan
+# list already in the document is replaced rather than carried through.
+banded="$(
+    host_wpa_supplicant_config <<'EOF'
+freq_list=2412 2437 2462
+network={
+    ssid=74657374
+}
+EOF
+)"
+[[ "$(grep -c '^freq_list=' <<< "${banded}")" -eq 1 ]]
+grep -qx "freq_list=${HOST_WIFI_FREQ_LIST}" <<< "${banded}"
+grep -qv '2412' <<< "$(grep '^freq_list=' <<< "${banded}")"
+for host_freq in ${HOST_WIFI_FREQ_LIST}; do
+    [[ "${host_freq}" =~ ^5[0-9]{3}$ ]] || {
+        echo "FAIL: the band policy must be 5 GHz only, found ${host_freq}" >&2
+        exit 1
+    }
+done
+
+# A per-network freq_list is a legal key that wpa_supplicant writes indented
+# inside a profile. Only the global is band policy, so an indented one is
+# carried through untouched rather than swallowed by the global's strip.
+per_network="$(
+    host_wpa_supplicant_config <<'EOF'
+network={
+    ssid=74657374
+    freq_list=5180 5200
+}
+EOF
+)"
+grep -qx '    freq_list=5180 5200' <<< "${per_network}"
+[[ "$(grep -c 'freq_list' <<< "${per_network}")" -eq 2 ]]
 
 ipv4="$(
     host_primary_ipv4_from <<'EOF'
