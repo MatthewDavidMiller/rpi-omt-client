@@ -226,14 +226,35 @@ decode throughput, so a pass on one is not evidence for another:
    ALSA's one-frame default. The start threshold and ring size are set through
    the device and cannot be asserted off the board;
 9. induce a video TCP disconnect on a Pi 4 and a Pi 5 while a session is
-   playing — dropping the sender's socket, or an `nft` rule on the video port
-   is enough. The last picture and the audio must both survive the in-session
-   reconnect with no gap in sound and no black frame, and the playing detail
-   must then name a video reconnect. Leave the port blocked to spend the whole
-   budget: within about four seconds the detail must read
-   `in-session video reconnects did not hold`, discovery must re-resolve, and
-   DRM and audio must rebuild together. Restore the port and confirm the count
-   resets — a link that drops occasionally must never exhaust the budget;
+   playing. The two ways it can fail are not interchangeable, and each has its
+   own bound, so exercise both:
+
+   - **the socket closes.** Restart the sender, or reset the video connection
+     so this end observes it. The last picture and the audio must both survive
+     the in-session reconnect with no gap in sound and no black frame, and the
+     playing detail must then name a video reconnect. The window for that is
+     narrow, and knowing its size is the point of this step: a refused
+     connection fails as fast as the kernel answers, so the three attempts are
+     spent in the backoffs alone — measured at 831 ms on a Pi 4 — and only a
+     port that swallows the SYN takes the full four seconds. So a sender
+     restarted within roughly 350 ms is reconnected in-session, and one
+     restarted after a second is not: it must read `in-session video reconnects
+     did not hold`, re-resolve discovery, and rebuild DRM and audio together.
+     Both outcomes are correct. A *slow* restart landing in the first is the
+     regression to watch for, because it means the budget was widened, and the
+     whole cost of a wider budget is that every dead endpoint now holds a
+     frozen picture for longer. Restore the port and confirm the count resets —
+     a link that drops occasionally must never exhaust the budget;
+   - **the socket stays open and goes quiet.** An `nft` rule on the video port
+     does *not* close anything: the connection stays ESTABLISHED, every read
+     returns `WouldBlock`, and the reconnect budget is never armed, because it
+     is armed only by a channel that reports itself disconnected. This is the
+     shape a firewall, a NAT timeout, or an access point that forgets the
+     association produces. The detail must read `Waiting for video frames.`
+     while audio keeps playing, and then, within `MEDIA_STALL`, the session
+     must fail with `No video frames for 15 seconds on a connected socket.`
+     and rebuild. A session that sits in `Waiting for video frames.`
+     indefinitely is the regression this step exists to catch;
 10. confirm a held frame on damaged input. Nothing off the board proves that a
     skipped frame leaves the previous picture scanning out: the unit tests
     cover only which decoder faults are allowed to skip and how long a run is

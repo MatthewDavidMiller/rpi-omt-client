@@ -215,14 +215,38 @@ reconnect as fast as the kernel completes a handshake, which is a spin on a core
 and a flood of connections at the sender. So a session gets three consecutive
 attempts, the first immediate and the rest behind a 250 ms escalating backoff,
 each waiting one second rather than the three a session's first connect gets. A
-refused connection spends an attempt like any other failure, because a sender
-that is restarting has its port shut for a second or two and that is the blip
-this exists to ride out. Any frame that arrives clears the count, so a link that
-drops occasionally is carried indefinitely without audio ever breaking or the
-display going black. Exhausting the budget bounds
-the held picture to under four seconds and returns to the outer loop, which is
-the only place that backs off and asks discovery where the source is now — the
-case a reconnect to a remembered address can never fix.
+refused connection spends an attempt like any other failure. Any frame that
+arrives clears the count, so a link that drops occasionally is carried
+indefinitely without audio ever breaking or the display going black. Exhausting
+the budget returns to the outer loop, which is the only place that backs off and
+asks discovery where the source is now — the case a reconnect to a remembered
+address can never fix.
+
+How much time that budget actually buys depends on how the endpoint fails, and
+the two ends of the range are far apart. A closed port answers with a reset
+instead of timing out, so all three attempts cost nothing but their backoffs:
+measured on a Pi 4, a sender killed at t=0 reported the exhausted budget at
+t=831 ms. Only a blackholed SYN, where each attempt waits its full second,
+approaches the four-second ceiling. **A restarting sender therefore has about
+eight tenths of a second to get its listener back up**; one that takes longer
+gets a session rebuild rather than a reconnect. That is the intended trade, not
+a shortfall: the whole cost of a longer budget is a frozen frame held longer,
+and a rebuild is a blink. Widening the window to cover a slower sender restart
+would make every unrecoverable case hold a stale picture for seconds first.
+
+That budget covers only a socket this end can see close. A TCP connection can
+also stay ESTABLISHED with a peer that is gone — a firewall or NAT that drops
+the flow mid-stream, an access point that forgets the association, a sender
+whose reset never arrives — and then every read returns `WouldBlock`, the
+channel still calls itself connected, and the reconnect budget is never armed.
+So a session that goes fifteen seconds without a video frame on a socket that
+still claims to be connected fails and rebuilds, which is the only way back to
+discovery. Without that bound such a session waits on the dead socket forever
+while reporting `retrying`, which is the one outcome worse than a rebuild: the
+appliance looks like it is recovering and never does. The audio worker keeps
+the same bound, and needs it more — it publishes `running` only when a frame
+arrives, so a silent socket would otherwise leave the last healthy document
+standing over silence.
 
 TCP packet loss does not flip VMX bits; it stalls or resets the socket. That
 cuts both ways: a body the decoder rejects arrived intact, so it is a sender-side

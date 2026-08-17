@@ -167,12 +167,16 @@ receiver.
   frame started arriving and did not finish inside the receiver's budget, which
   on this appliance almost always means the link cannot carry the stream. The
   receiver first reconnects the video TCP session only, up to three times: the
-  last picture stays on screen and audio keeps playing throughout, for under
-  four seconds in the worst case. A playing detail that names video reconnects
-  means that recovery succeeded and the session never dropped. If the dashboard
-  goes to `retrying` with `in-session video reconnects did not hold`, the budget
-  was spent, discovery ran again, and video, audio, and the display rebuilt
-  together. Check the band first. A support bundle's **Wi-Fi bands, regulatory
+  last picture stays on screen and audio keeps playing throughout, for about
+  eight tenths of a second against a sender whose port is shut, and under four
+  seconds in the worst case, where each attempt waits out a link that answers
+  nothing at all. A playing detail that names video reconnects means that
+  recovery succeeded and the session never dropped. If the dashboard goes to
+  `retrying` with `in-session video reconnects did not hold`, the budget was
+  spent, discovery ran again, and video, audio, and the display rebuilt
+  together — expect that whenever a sender takes more than about a second to
+  start listening again, which is normal for a sender being restarted and is
+  not a fault on this end. Check the band first. A support bundle's **Wi-Fi bands, regulatory
   domain, and firmware** section answers that directly: a 2.4 GHz association at
   72 MBit/s has roughly a sixth of the throughput a 1080p OMT stream needs. If
   the phy reports no channels above 5 GHz, or `regulatory.db absent`, the radio

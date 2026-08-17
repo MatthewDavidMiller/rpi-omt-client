@@ -21,6 +21,25 @@ use std::time::{Duration, Instant};
 const AUDIO_STACK: usize = 128 * 1024;
 /// How long a session waits for its first frame before saying so.
 const MEDIA_GRACE: Duration = Duration::from_secs(5);
+/// How long a session tolerates a *connected* socket that delivers nothing
+/// before it rebuilds.
+///
+/// [`MEDIA_GRACE`] only decides when the operator is told frames are missing;
+/// it ends nothing. A TCP socket can stay ESTABLISHED indefinitely with a peer
+/// that is gone -- a firewall or NAT that drops the flow mid-stream, an access
+/// point that forgets the association, a sender whose reset never reaches this
+/// end -- and no read on it ever returns an error, so nothing here observes a
+/// close. The in-session reconnect budget cannot cover that case: it is armed
+/// only when the channel reports itself disconnected. Without this bound such a
+/// session waits forever on a socket that will never deliver again, reporting
+/// "retrying" while never reaching the outer loop, which is the only place that
+/// re-resolves discovery.
+///
+/// Three grace periods, because it has to mean the flow is gone rather than
+/// that the link is having a bad moment: at 30 fps this is some 450 missed
+/// frames, far past any burst gap a working link produces. The picture is
+/// already frozen by then, so waiting longer buys nothing.
+const MEDIA_STALL: Duration = Duration::from_secs(15);
 /// How often a running session re-checks the display for a hotplug.
 const CONNECTOR_POLL: Duration = Duration::from_millis(500);
 /// Per-receive slice, which is also the heartbeat cadence while idle.
@@ -33,18 +52,35 @@ const RESOLVE_TIMEOUT: Duration = Duration::from_millis(1500);
 /// audio unbroken across a blip, so it is worth a few tries. It is not worth
 /// more: a sender that keeps dropping the socket needs the outer loop, which is
 /// the only place that backs off and asks discovery where the source is now.
+///
+/// How much wall clock those tries buy depends entirely on how the endpoint
+/// fails, and the two ends of that range are far apart. See [`RECOVER_BACKOFF`]
+/// for the short end, which is the one that decides what this rides out.
 const RECOVER_ATTEMPTS: u32 = 3;
 /// Added before each attempt after the first. A peer that accepts and then
 /// immediately closes fails a reconnect as fast as the kernel can complete the
 /// handshake, and without this that is a spin on a core and a flood of
 /// connections at the sender.
+///
+/// This also sets the floor on the whole budget, and the floor is what a
+/// restarting sender actually meets. A closed port answers with a reset rather
+/// than timing out, so all [`RECOVER_ATTEMPTS`] attempts cost nothing but these
+/// backoffs: 0 + 250 + 500 ms. Measured on a Pi 4, a sender killed at t=0
+/// reported the exhausted budget at t=831 ms. So the picture is held for
+/// roughly eight-tenths of a second against a sender whose port is shut, and a
+/// sender that takes longer than that to start listening again gets a session
+/// rebuild instead of a reconnect -- deliberately, because holding longer means
+/// holding a frozen frame longer, which is the cost this budget exists to cap.
+/// Raising it is not a free improvement; it trades a blink for a freeze.
 const RECOVER_BACKOFF: Duration = Duration::from_millis(250);
 /// How long one in-session reconnect waits, against [`CONNECT_TIMEOUT`] for the
 /// first connect of a session.
 ///
 /// This one races a frozen picture: the endpoint was reachable moments ago, so
-/// a handshake that has not completed in this long is a link problem, and the
-/// budget above bounds the whole recovery to under four seconds of held frame.
+/// a handshake that has not completed in this long is a link problem. It sets
+/// the *ceiling* on the budget rather than the typical cost, and only a
+/// blackholed SYN reaches it: three attempts that each wait the full timeout,
+/// plus the backoffs, is under four seconds of held frame.
 const RECOVER_TIMEOUT: Duration = Duration::from_secs(1);
 
 pub struct Options {
@@ -150,6 +186,7 @@ fn session(
     // A fresh connection gets the same grace as one that has been delivering,
     // so "starting" stays visible while the sender ramps up.
     let mut last_frame = Instant::now() + MEDIA_GRACE;
+    let mut stalled = Instant::now() + MEDIA_STALL;
     let mut next_connector_check = Instant::now();
     let mut failure = None;
     let mut reconnects = 0_u64;
@@ -207,9 +244,13 @@ fn session(
                     attempts += 1;
                     if let Err(error) = recover_video(&mut video, &endpoint) {
                         // A refused connection spends an attempt like any other
-                        // failure: a sender that is restarting has its port shut
-                        // for a second or two, which is the blip this exists to
-                        // ride out, not a reason to drop audio and the picture.
+                        // failure, and spends it immediately: a reset comes back
+                        // as fast as the kernel can answer, so a shut port walks
+                        // the whole budget in the backoffs alone -- about eight
+                        // tenths of a second. That is the window a restarting
+                        // sender has to get its listener back up in; past it the
+                        // outer loop rebuilds. See RECOVER_BACKOFF for why the
+                        // window is deliberately that short.
                         if attempts >= RECOVER_ATTEMPTS {
                             failure = Some(format!(
                                 "{error}; {attempts} in-session video reconnects did not hold."
@@ -220,7 +261,18 @@ fn session(
                     }
                     reconnects = reconnects.saturating_add(1);
                     last_frame = Instant::now() + MEDIA_GRACE;
+                    stalled = Instant::now() + MEDIA_STALL;
                     continue;
+                }
+                // A socket that still calls itself connected but has stopped
+                // delivering is the one failure the reconnect budget above
+                // never sees, so it is bounded here instead.
+                if Instant::now() >= stalled {
+                    failure = Some(format!(
+                        "No video frames for {} seconds on a connected socket.",
+                        MEDIA_STALL.as_secs()
+                    ));
+                    break;
                 }
                 if Instant::now() >= last_frame {
                     note_status(
@@ -236,6 +288,7 @@ fn session(
             }
         };
         last_frame = Instant::now() + MEDIA_GRACE;
+        stalled = Instant::now() + MEDIA_STALL;
         let interlaced = frame.video.as_ref().is_some_and(|v| v.flags & 1 != 0);
         match output.present(frame) {
             // A held frame is still a running session: the picture on screen is
@@ -460,6 +513,12 @@ fn audio_loop(context: &AudioContext) {
                 // life rather than one per audio frame.
                 let mut detail = describe_audio(0);
                 let mut reported = 0_u64;
+                // The same bound the video session keeps, for the same reason.
+                // Audio is worse off without it: the worker publishes `Running`
+                // only when a frame arrives, so a socket that goes quiet
+                // without closing leaves the last `Running` document standing
+                // and the dashboard reports healthy audio over silence.
+                let mut stalled = Instant::now() + MEDIA_STALL;
                 while context.wanted() {
                     // The same slice the video loop reads on. An audio frame
                     // is a fraction of a video frame's size, but a read that
@@ -472,6 +531,7 @@ fn audio_loop(context: &AudioContext) {
                     let deadline = Instant::now() + RECEIVE_SLICE;
                     match channel.receive(deadline) {
                         Ok(frame) if frame.header.frame_type == FrameType::Audio => {
+                            stalled = Instant::now() + MEDIA_STALL;
                             let frame = channel.frame();
                             if let Err(error) = output.write(frame, &context.device) {
                                 failure = error;
@@ -492,6 +552,13 @@ fn audio_loop(context: &AudioContext) {
                         Err(error) => {
                             if !channel.connected() {
                                 failure = error.to_string();
+                                break;
+                            }
+                            if Instant::now() >= stalled {
+                                failure = format!(
+                                    "no audio frames for {} seconds on a connected socket",
+                                    MEDIA_STALL.as_secs()
+                                );
                                 break;
                             }
                         }
@@ -558,8 +625,9 @@ fn note_status(logged: &mut bool, result: std::io::Result<bool>) {
 #[cfg(test)]
 mod tests {
     use super::{
-        CONNECT_TIMEOUT, RECOVER_ATTEMPTS, RECOVER_BACKOFF, RECOVER_TIMEOUT, RunningDetail,
-        describe_audio, describe_running, note_status, recover_video,
+        CONNECT_TIMEOUT, MEDIA_GRACE, MEDIA_STALL, RECEIVE_SLICE, RECOVER_ATTEMPTS,
+        RECOVER_BACKOFF, RECOVER_TIMEOUT, RunningDetail, describe_audio, describe_running,
+        note_status, recover_video,
     };
     use crate::channel::{Channel, Endpoint};
     use omt_protocol::FrameType;
@@ -758,6 +826,32 @@ mod tests {
         );
     }
 
+    /// A socket that stays ESTABLISHED while its peer is gone delivers no
+    /// frames and never errors, so it is the reconnect budget's blind spot: the
+    /// budget is armed only by a channel that reports itself disconnected. The
+    /// stall bound is what ends that session instead of waiting on it forever.
+    #[test]
+    fn a_stalled_session_is_bounded_and_reported_before_it_is_rebuilt() {
+        assert!(
+            MEDIA_STALL > MEDIA_GRACE,
+            "the operator must be told frames are missing before the rebuild"
+        );
+        // The reconnect path owns a socket that closes; the stall bound must
+        // not fire first and turn that into a session rebuild.
+        let worst_case: Duration = (0..RECOVER_ATTEMPTS)
+            .map(|attempt| RECOVER_TIMEOUT + RECOVER_BACKOFF * attempt)
+            .sum();
+        assert!(
+            MEDIA_STALL > worst_case,
+            "a closed socket belongs to the reconnect budget: {MEDIA_STALL:?} vs {worst_case:?}"
+        );
+        // Checked once per receive slice, so the bound has to be a great deal
+        // more than one slice for the deadline to mean what it says.
+        assert!(MEDIA_STALL > RECEIVE_SLICE * 10);
+        // Still prompt: the picture is already frozen for this whole window.
+        assert!(MEDIA_STALL <= Duration::from_secs(30));
+    }
+
     /// The whole point of recovering in-session is that the picture and audio
     /// survive it, so the wait before giving up has to stay short enough that
     /// a frozen frame is not what the operator is left looking at.
@@ -773,6 +867,22 @@ mod tests {
         assert!(
             RECOVER_TIMEOUT < CONNECT_TIMEOUT,
             "a reconnect races a frozen picture; the first connect of a session does not"
+        );
+
+        // The floor, which is what a restarting sender actually meets: a shut
+        // port answers with a reset rather than timing out, so the attempts
+        // cost nothing but their backoffs. This is the number the docs quote
+        // (831 ms measured on a Pi 4, this plus publish overhead), and it is
+        // deliberately sub-second. Widening it is not a free improvement --
+        // every endpoint that never comes back would hold a frozen picture for
+        // however long this becomes -- so it is pinned rather than left to
+        // drift upward one plausible-looking change at a time.
+        let refused: Duration = (0..RECOVER_ATTEMPTS)
+            .map(|attempt| RECOVER_BACKOFF * attempt)
+            .sum();
+        assert!(
+            refused < Duration::from_secs(1),
+            "a refused reconnect must spend the budget in under a second: {refused:?}"
         );
     }
 }

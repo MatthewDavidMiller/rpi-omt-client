@@ -13,7 +13,7 @@ desktop = ["dep:eframe", "dep:egui", "dep:rfd"]
 eframe = { workspace = true, optional = true }
 egui = { workspace = true, optional = true }
 rfd = { workspace = true, optional = true }
-omt-deployer-core = { version = "0.9.58", path = "../omt-deployer-core" }
+omt-deployer-core = { version = "0.9.59", path = "../omt-deployer-core" }
 zeroize.workspace = true
 
 [lints]

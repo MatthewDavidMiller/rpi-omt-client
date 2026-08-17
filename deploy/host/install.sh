@@ -294,6 +294,68 @@ if [[ "${OMT_VIDEO_CEILING}" != "${BOARD_VIDEO_CEILING}" ]]; then
     echo "NOTE: Video ceiling ${OMT_VIDEO_CEILING} overrides the ${BOARD_LABEL} default of ${BOARD_VIDEO_CEILING}."
 fi
 
+# Print the active Raspberry Pi boot partition, or fail.
+host_find_boot_root() {
+    local candidate
+    for candidate in /media/mmcblk0p1 /boot /media/*; do
+        if [[ -d "${candidate}" && ! -L "${candidate}" && \
+              ( -f "${candidate}/config.txt" || -f "${candidate}/usercfg.txt" ) ]]; then
+            printf '%s\n' "${candidate}"
+            return 0
+        fi
+    done
+    return 1
+}
+
+# Print the active kernel command line file under boot partition $1, or fail.
+host_find_cmdline_file() {
+    local root="$1" candidate
+    for candidate in "${root}/cmdline.txt" "${root}/cmdline-rpi.txt" \
+        "${root}/cmdline-rpi2.txt"; do
+        if [[ -f "${candidate}" && ! -L "${candidate}" ]]; then
+            printf '%s\n' "${candidate}"
+            return 0
+        fi
+    done
+    return 1
+}
+
+# The product's `video=` token for the saved and the requested mode.
+PREVIOUS_HDMI_TOKEN=""
+[[ "${SAVED_HDMI_VIDEO_MODE}" == auto ]] || PREVIOUS_HDMI_TOKEN="video=${SAVED_HDMI_VIDEO_MODE}D"
+DESIRED_HDMI_TOKEN=""
+DESIRED_HDMI_CONNECTOR=""
+if [[ "${HDMI_VIDEO_MODE}" != auto ]]; then
+    DESIRED_HDMI_TOKEN="video=${HDMI_VIDEO_MODE}D"
+    DESIRED_HDMI_CONNECTOR="${HDMI_VIDEO_MODE%%:*}"
+fi
+
+# Reject an unmanaged connector mode here, before anything is stopped.
+#
+# This guard used to run only with the rest of the boot-partition work, six
+# hundred lines below -- after the appliance and every OpenRC service had been
+# stopped and the new image loaded. A cmdline.txt edited by hand is precisely
+# what it exists to catch, so the check that protects the operator's boot
+# arguments was also the one that left the appliance down when it fired. It
+# reads two files and decides; nothing about it needs the install to have
+# started. The boot partition and the cmdline file are not required to exist
+# yet -- the block below owns those errors and words them for the work it is
+# about to do -- so a host without them falls through to be diagnosed there.
+if PREFLIGHT_BOOT_ROOT="$(host_find_boot_root)" && \
+    PREFLIGHT_CMDLINE_FILE="$(host_find_cmdline_file "${PREFLIGHT_BOOT_ROOT}")"; then
+    mapfile -t preflight_cmdline_lines < "${PREFLIGHT_CMDLINE_FILE}"
+    if [[ "${#preflight_cmdline_lines[@]}" -eq 1 && -n "${preflight_cmdline_lines[0]}" ]]; then
+        host_hdmi_cmdline_line "${preflight_cmdline_lines[0]}" "${PREVIOUS_HDMI_TOKEN}" \
+            "${DESIRED_HDMI_TOKEN}" "${DESIRED_HDMI_CONNECTOR}" >/dev/null || {
+            echo "ERROR: ${PREFLIGHT_CMDLINE_FILE} contains an unmanaged connector mode." >&2
+            echo "Nothing has been changed and the appliance is still running. Remove the" >&2
+            echo "video= setting this product did not write, or re-run with --hdmi-video" >&2
+            echo "naming that connector so the installer owns it." >&2
+            exit 1
+        }
+    fi
+fi
+
 echo "Updating Alpine packages and installing the appliance dependencies..."
 # Reputable US HTTPS Alpine mirrors. Keep this list identical in
 # setup-sys.sh and bootstrap.sh; tests/unit/test_setup_sys.sh compares them.
@@ -854,15 +916,7 @@ export OMT_REBOOT_ACTION=${HOST_REBOOT_INSTALLED_SCRIPT}
 EOF
 
 echo "Configuring Alpine Pi KMS and HDMI audio..."
-BOOT_ROOT=""
-for candidate in /media/mmcblk0p1 /boot /media/*; do
-    if [[ -d "${candidate}" && ! -L "${candidate}" && \
-          ( -f "${candidate}/config.txt" || -f "${candidate}/usercfg.txt" ) ]]; then
-        BOOT_ROOT="${candidate}"
-        break
-    fi
-done
-[[ -n "${BOOT_ROOT}" ]] || {
+BOOT_ROOT="$(host_find_boot_root)" || {
     echo "ERROR: Could not locate the active Alpine Raspberry Pi boot partition." >&2
     exit 1
 }
@@ -884,25 +938,13 @@ else
 fi
 mv -fT "${HDMI_TMP}" "${USERCFG_FILE}"
 
-CMDLINE_FILE=""
-for candidate in "${BOOT_ROOT}/cmdline.txt" "${BOOT_ROOT}/cmdline-rpi.txt" "${BOOT_ROOT}/cmdline-rpi2.txt"; do
-    if [[ -f "${candidate}" && ! -L "${candidate}" ]]; then
-        CMDLINE_FILE="${candidate}"
-        break
-    fi
-done
-[[ -n "${CMDLINE_FILE}" ]] || {
+CMDLINE_FILE="$(host_find_cmdline_file "${BOOT_ROOT}")" || {
     echo "ERROR: An active regular boot cmdline file is required to enable the memory cgroup." >&2
     exit 1
 }
-PREVIOUS_HDMI_TOKEN=""
-[[ "${SAVED_HDMI_VIDEO_MODE}" == auto ]] || PREVIOUS_HDMI_TOKEN="video=${SAVED_HDMI_VIDEO_MODE}D"
-DESIRED_HDMI_TOKEN=""
-DESIRED_HDMI_CONNECTOR=""
-if [[ "${HDMI_VIDEO_MODE}" != auto ]]; then
-    DESIRED_HDMI_TOKEN="video=${HDMI_VIDEO_MODE}D"
-    DESIRED_HDMI_CONNECTOR="${HDMI_VIDEO_MODE%%:*}"
-fi
+# PREVIOUS_HDMI_TOKEN, DESIRED_HDMI_TOKEN, and DESIRED_HDMI_CONNECTOR are
+# computed in the preflight, which rejects an unmanaged connector mode before
+# the appliance is stopped. Reaching here means that check passed.
 mapfile -t cmdline_lines < "${CMDLINE_FILE}"
 [[ "${#cmdline_lines[@]}" -eq 1 && -n "${cmdline_lines[0]}" ]] || {
     echo "ERROR: ${CMDLINE_FILE} must contain one non-empty line." >&2

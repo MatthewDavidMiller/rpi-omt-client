@@ -6,7 +6,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-omt-protocol = { version = "0.9.58", path = "../omt-protocol" }
+omt-protocol = { version = "0.9.59", path = "../omt-protocol" }
 serde.workspace = true
 serde_json.workspace = true
 

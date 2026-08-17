@@ -168,4 +168,31 @@ require 'install -d -m 2770 -o root -g "\$\{OMT_GID\}" "\$\{AVAHI_STATE_DIR\}"' 
 forbid 'install -d -m 0750 -o root -g "\$\{OMT_GID\}" "\$\{AVAHI_STATE_DIR\}"' \
     "a non-group-writable Avahi socket directory stops the proxy from binding"
 
+# The unmanaged-connector guard has to fire before the install touches
+# anything. It used to run with the boot-partition work, after the appliance
+# and every OpenRC service had been stopped and the new image loaded, so the
+# check that protects a hand-edited cmdline.txt was also what left the Pi down
+# when it fired. Assert the order rather than the presence: this only regresses
+# by the block moving.
+first_line_of() {
+    grep -nE -- "$1" "${INSTALL}" | head -1 | cut -d: -f1
+}
+GUARD_LINE="$(first_line_of 'contains an unmanaged connector mode')"
+STOP_LINE="$(first_line_of 'Stopping the appliance before updating Alpine packages')"
+LOAD_LINE="$(first_line_of '^docker load')"
+[[ -n "${GUARD_LINE}" && -n "${STOP_LINE}" && -n "${LOAD_LINE}" ]] || {
+    echo "FAIL: could not locate the connector guard, the stop, and the image load" >&2
+    exit 1
+}
+(( GUARD_LINE < STOP_LINE )) || {
+    echo "FAIL: the unmanaged connector guard must run before the appliance is stopped" >&2
+    exit 1
+}
+(( GUARD_LINE < LOAD_LINE )) || {
+    echo "FAIL: the unmanaged connector guard must run before the image is loaded" >&2
+    exit 1
+}
+require 'Nothing has been changed and the appliance is still running' \
+    "a rejected connector mode must say the appliance was left alone"
+
 echo "Alpine OMT installer contract tests passed"
