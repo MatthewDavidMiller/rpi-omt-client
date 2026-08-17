@@ -6,6 +6,12 @@ PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${PROJECT_ROOT}"
 TARGET=x86_64-pc-windows-gnu
 rustup target list --installed 2>/dev/null | grep -Fxq "${TARGET}" || { echo "ERROR: Rust target ${TARGET} is required. Run: make install" >&2; exit 1; }
+# The .exe carries the appliance image inside it, so the image has to exist
+# before the cross build starts.
+[[ -f "${PROJECT_ROOT}/omt-client-arm64.tar.gz" ]] || {
+    echo "ERROR: omt-client-arm64.tar.gz is missing. The deployer embeds it. Run: make build-arm64" >&2
+    exit 1
+}
 VERSION="${RPI_OMT_CLIENT_VERSION:-$("${PROJECT_ROOT}/scripts/detect-version.sh" "${PROJECT_ROOT}")}"
 RPI_OMT_CLIENT_VERSION="${VERSION}" cargo build --locked --release --target "${TARGET}" -p rpi-omt-deploy -p rpi-omt-deployer --features rpi-omt-deployer/desktop
 STAGE="${PROJECT_ROOT}/.build/deployer-publish-windows.stage"

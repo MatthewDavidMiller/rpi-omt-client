@@ -6,6 +6,13 @@ MODE="${1:-}"
 if [[ $# -gt 1 || ( -n "${MODE}" && "${MODE}" != "--publish" ) ]]; then echo "Usage: $0 [--publish]" >&2; exit 2; fi
 cd "${PROJECT_ROOT}"
 command -v cargo >/dev/null 2>&1 || { echo "ERROR: cargo is required. Run: make install" >&2; exit 1; }
+# The deployer embeds the appliance image, so the image is a build input rather
+# than a separate artifact shipped beside it. Said here as well as in the build
+# script so the ordering is a one-line failure instead of a cargo build error.
+[[ -f "${PROJECT_ROOT}/omt-client-arm64.tar.gz" ]] || {
+    echo "ERROR: omt-client-arm64.tar.gz is missing. The deployer embeds it. Run: make build-arm64" >&2
+    exit 1
+}
 VERSION="${RPI_OMT_CLIENT_VERSION:-$("${PROJECT_ROOT}/scripts/detect-version.sh" "${PROJECT_ROOT}")}"
 # The desktop feature is on for the test build too: without it the egui
 # application is not compiled at all, so `cargo test -p rpi-omt-deployer` would

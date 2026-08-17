@@ -146,11 +146,36 @@ Python 3, and Docker Desktop's Linux engine on `PATH`. Either path emits the
 CLI and egui executables; the appliance build itself
 still runs entirely in the pinned Linux containers.
 
-### Workstation prerequisites
+### What the deployer carries
 
-Deployment builds the ARM64 appliance image on the machine running the
-deployer, so that machine needs a container engine and a POSIX shell of its
-own. The Setup view checks for them and names what is missing:
+The deployer *is* the appliance. `crates/omt-deployer-core/build.rs` compiles
+every member of `deploy/manifest-v3.txt` into the executable, the ARM64 image
+archive included, so an operator receives one file and needs no checkout, no
+archive copied in beside it, and no build tooling of any kind. The deployer
+version and the capsule version cannot disagree, because they are the same
+artifact.
+
+Both applications report what they carry: the GUI on its Deploy and About
+views, and the CLI without a connection at all.
+
+```bash
+rpi-omt-deploy check
+rpi-omt-deploy prerequisites
+```
+
+`check` prints the member count, the archive's size, and its SHA-256 -- the
+same digest the Pi's own `sha256sum` is held to during the deployment.
+`prerequisites` has one satisfied row for an embedded deployment, because
+there is nothing on the workstation for it to need.
+
+### Rebuilding from a working tree
+
+`--project <checkout>` is the developer override: it takes the whole capsule
+from that tree instead of the embedded one, and `--rebuild-image` additionally
+rebuilds the ARM64 archive there first. It is all-or-nothing on purpose --
+mixing this binary's host scripts with a working tree's image would deploy a
+combination nobody built. Only this path needs local tooling, and only then
+does the Setup report list any:
 
 | Entry | Needed for | Windows |
 |---|---|---|
@@ -159,35 +184,7 @@ own. The Setup view checks for them and names what is missing:
 | GNU Make | the documented entry point on Linux | not used; the shell is called directly |
 | Python 3 | generating deployer SBOMs and repository gates | required for a release package |
 | Project source tree | the manifest-v3 capsule that is uploaded | the checkout of this repository |
-| Appliance image archive | the image the Pi loads | built by Deploy, or copied in |
-
-On Windows, **Install missing prerequisites** installs the entries that have a
-package through `winget`; Windows raises an approval prompt for each. Git for
-Windows is found where it installs even when it is not yet on the `PATH` of the
-running deployer, so no restart is needed between installing it and deploying.
-A `bash.exe` under `System32` is deliberately ignored: that is the WSL
-launcher, which runs in a file system where the project path does not exist.
-
-**Set up ARM64 emulation** makes the engine able to execute `linux/arm64`,
-which the appliance build needs because the image installs packages during its
-own build. It runs a small pinned container to check, and on Windows registers
-the emulator from a pinned `binfmt` image first and checks again. Both images
-are downloaded the first time.
-
-Docker Desktop does not arrive with the ARM64 `binfmt_misc` handler registered,
-and the registration lives in its Linux VM, so it is lost whenever that VM
-restarts. Nothing on Windows makes it permanent, and
-`make setup-arm64-emulation` is a Linux systemd install that does not run
-there. A deployment therefore registers it again before it builds, so an
-operator never has to remember it; the button exists to prove the machine is
-ready before a deployment is attempted. If it still fails after registering,
-Docker Desktop is in Windows-container mode or its Linux engine is not running.
-
-On Linux the handler belongs in the host's own kernel, where
-`make setup-arm64-emulation` installs it persistently and verifies it as root.
-That is what the button reports on, and what it tells you to run.
-
-The same report is available without a display:
+| Appliance image archive | the image the Pi loads | built by `--rebuild-image`, or copied in |
 
 ```bash
 rpi-omt-deploy --project . prerequisites
@@ -195,15 +192,24 @@ rpi-omt-deploy --project . prerequisites --install --check-emulation
 rpi-omt-deploy setup-emulation
 ```
 
-It exits 1 when a required entry is missing, naming each one.
+It exits 1 when a required entry is missing, naming each one. On Windows,
+`--install` installs the entries that have a package through `winget`; Windows
+raises an approval prompt for each. Git for Windows is found where it installs
+even when it is not yet on the `PATH` of the running deployer. A `bash.exe`
+under `System32` is deliberately ignored: that is the WSL launcher, which runs
+in a file system where the project path does not exist.
 
-A workstation with no build tooling at all can still deploy an archive built
-elsewhere: clear **Build the appliance image** on the Deploy view (or pass
-`--no-build` to the CLI) and put `omt-client-arm64.tar.gz` in the project root.
+`setup-emulation` makes the engine able to execute `linux/arm64`, which the
+appliance build needs because the image installs packages during its own
+build. Docker Desktop does not arrive with the ARM64 `binfmt_misc` handler
+registered, and the registration lives in its Linux VM, so it is lost whenever
+that VM restarts; a `--rebuild-image` deployment registers it again first. On
+Linux the handler belongs in the host's own kernel, where
+`make setup-arm64-emulation` installs it persistently and verifies it as root.
 
 Run `.build/deployer-publish/bin/rpi-omt-deployer` (or the `.exe` produced on
-Windows) with Docker, a Pi key already trusted in `~/.ssh/known_hosts`,
-administrator SSH/sudo credentials, and this source tree. The Connection view
+Windows) with a Pi key already trusted in `~/.ssh/known_hosts` and
+administrator SSH/sudo credentials. Nothing else: the capsule is inside it. The Connection view
 accepts an optional sudo password and an optional alternate `known_hosts` path,
 each with a Browse button; the CLI equivalents are the `sudo_password` field in
 `--secrets-stdin` and `--known-hosts <path>`. Factory Alpine images accept `root`
@@ -215,8 +221,9 @@ The Alpine view runs `setup-alpine` equivalent configuration and a persistent
 `sys` install: hostname, optional Wi-Fi (a blank SSID keeps an existing
 boot-partition association), DHCP for IPv4, user `pi` in `wheel`,
 root and `pi` passwords, and US HTTPS apk mirrors. It erases the boot disk and
-reboots. Deploy builds, verifies, uploads, and installs the capsule; its Project root
-has a Browse button and its build step can be cleared. Web GUI password
+reboots. Deploy uploads, verifies, and installs the embedded capsule, naming
+the archive it carries before it sends it; the only field is the remote
+directory. Web GUI password
 rotation is off by default; enable **Rotate the Web GUI password after deploy**
 on that view to replace the generated credential as part of the same job.
 Manage reads
@@ -244,9 +251,8 @@ still carry the files as well, for anyone reading the package rather than
 running it.
 
 The application does not otherwise rely on the working directory it happens to
-inherit from a shell or a desktop shortcut. Project root is preselected by
-searching upward from the working directory and then from the executable for
-the tree holding `deploy/manifest-v3.txt`.
+inherit from a shell or a desktop shortcut, and it reads no file beside itself:
+the capsule it deploys is compiled in the same way those legal texts are.
 
 ### Display scaling and window size
 
@@ -306,7 +312,7 @@ client, and it rejects that as a missing credential:
 
 ```bash
 printf '%s\n' '{"password":"","root_password":"...","pi_password":"..."}' | \
-rpi-omt-deploy --project . --host 10.1.20.210 --username root --secrets-stdin \
+rpi-omt-deploy --host 10.1.20.210 --username root --secrets-stdin \
     alpine-setup --hostname omt-client --ssid studio
 ```
 
@@ -318,9 +324,11 @@ power cycling returns a factory image to its original state.
 
 `deploy/manifest-v3.txt` is the authoritative capsule. It includes the image,
 Compose definition, host scripts, OpenRC definitions, shared validation rules,
-transaction helper, and legal files. The deployment clients hash every local
-snapshot, verify every remote SHA-256, and promote the complete set through the
-durable v3 transaction journal.
+transaction helper, and legal files. It is also the list the deployer's build
+script embeds, so the file remains the single definition of the set whether the
+bytes come from this binary or from a `--project` tree. The deployment clients
+hash every member, verify every remote SHA-256, and promote the complete set
+through the durable v3 transaction journal.
 
 Its nested-path boundary is:
 

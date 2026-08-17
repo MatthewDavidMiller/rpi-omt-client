@@ -98,6 +98,7 @@ are POST and CSRF protected.
 | HDMI boot-configuration rules | `deploy/lib/hdmi-config.sh` |
 | Supported boards and decode ceilings | `deploy/lib/board-profile.sh` |
 | Deployment contract | `deploy/manifest-v3.txt`, `deploy/transaction.sh` |
+| Capsule embedded into the deployer, and the build step that compiles it in | `crates/omt-deployer-core/src/capsule.rs`, `crates/omt-deployer-core/build.rs` |
 | CLI deployment | `scripts/deploy.sh` |
 | Deployer validation, fixed actions, SSH/SFTP, deploy, Alpine sys setup, and Wi-Fi | `crates/omt-deployer-core/src/lib.rs`, `crates/omt-deployer-core/src/ssh.rs`, `crates/omt-deployer-core/src/ops.rs` |
 | Workstation tooling: executable discovery, prerequisites, winget installs, ARM64 emulation, and the image-build plan | `crates/omt-deployer-core/src/tools.rs` |
@@ -113,9 +114,11 @@ as opposed to `ops.rs`, which is about the Pi. Every rule in it is a pure
 function over probed values -- which `PATHEXT` suffixes to try, where Git for
 Windows installs, whether a `bash.exe` is really the WSL launcher, which
 program the image build should be spawned as -- because a Linux publisher is
-the only host this project's gates ever run on. `Prerequisite` rows are shared
-verbatim by the GUI's Setup view and the CLI's `prerequisites` subcommand, so
-the two cannot describe the same workstation differently.
+the only host this project's gates ever run on. Nothing in it applies to an
+operator any more: `build.rs` compiles the whole manifest-v3 capsule, image
+archive included, into both executables, so a deployment reads no local file
+and builds nothing. The rows describe the embedded capsule unless `--project`
+names a checkout, which is the developer path `--rebuild-image` extends.
 
 The native deployers default to the user's OpenSSH `known_hosts` file and can
 select an alternate verified file when deployment automation keeps host keys

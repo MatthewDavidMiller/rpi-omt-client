@@ -2,11 +2,11 @@
 
 use clap::{Args, Parser, Subcommand};
 use omt_deployer_core::{
-    AlpineSetupSettings, AuthMethod, Connection, DeployOptions, ManagementAction, ON_WINDOWS,
-    Prerequisite, Secret, WifiSettings, alpine_setup, apply_wifi, change_web_password, deploy,
-    ensure_arm64_emulation, install_packages, load_manifest, manage, missing_packages,
-    prerequisites, validate_alpine_setup, validate_connection, validate_options,
-    validate_web_password, validate_wifi,
+    AlpineSetupSettings, AuthMethod, Connection, DeployOptions, IMAGE_MEMBER, ManagementAction,
+    ON_WINDOWS, Prerequisite, Secret, WifiSettings, alpine_setup, apply_wifi, change_web_password,
+    deploy, embedded_image, embedded_members, ensure_arm64_emulation, install_packages,
+    load_manifest, manage, missing_packages, prerequisites, sha256_bytes, validate_alpine_setup,
+    validate_connection, validate_options, validate_web_password, validate_wifi,
 };
 use serde::{Deserialize, Serialize};
 use std::io::{self, Read};
@@ -33,6 +33,9 @@ struct Cli {
     key: Option<PathBuf>,
     #[arg(long, global = true)]
     known_hosts: Option<PathBuf>,
+    /// Take the deployment capsule from this checkout instead of the copy
+    /// compiled into this program. The developer override: an operator's
+    /// deployment needs no source tree at all.
     #[arg(long, global = true)]
     project: Option<PathBuf>,
     #[arg(long, global = true)]
@@ -75,8 +78,6 @@ struct PrerequisiteArgs {
     /// the emulator first on Windows, where the engine needs that done for it.
     #[arg(long)]
     check_emulation: bool,
-    #[arg(long, default_value = "omt-client-arm64.tar.gz")]
-    tarball_name: String,
 }
 #[derive(Args)]
 struct AlpineSetupArgs {
@@ -89,10 +90,10 @@ struct AlpineSetupArgs {
 struct DeployArgs {
     #[arg(long, default_value = "/opt/omt-client")]
     remote_directory: String,
-    #[arg(long, default_value = "omt-client-arm64.tar.gz")]
-    tarball_name: String,
-    #[arg(long)]
-    no_build: bool,
+    /// Rebuild the ARM64 appliance image from --project before uploading it.
+    /// Needs the container engine and ARM64 emulation `prerequisites` reports.
+    #[arg(long, requires = "project")]
+    rebuild_image: bool,
 }
 #[derive(Args)]
 struct WifiArgs {
@@ -214,6 +215,22 @@ fn needs_connection(command: &Command) -> bool {
     )
 }
 
+/// What this program would upload with no `--project` given.
+///
+/// The digest is the point: a single-file deployer is otherwise opaque about
+/// which appliance build it carries, and this is the same value the Pi's own
+/// `sha256sum` is held to during the deployment.
+fn embedded_capsule_report() -> Result<String, (i32, String)> {
+    let image = embedded_image()
+        .ok_or_else(|| (1, format!("this deployer was built without {IMAGE_MEMBER}")))?;
+    Ok(format!(
+        "Embedded capsule: {} members, {IMAGE_MEMBER} {} MiB, sha256 {}.",
+        embedded_members().len(),
+        image.bytes.len() / (1024 * 1024),
+        sha256_bytes(image.bytes)
+    ))
+}
+
 /// One prerequisite as a line an operator or a wrapping script can read.
 fn prerequisite_line(row: &Prerequisite) -> String {
     let mark = if row.satisfied {
@@ -263,33 +280,34 @@ fn run(cli: Cli) -> Result<(), (i32, String)> {
     };
     let cancellation = Arc::new(AtomicBool::new(false));
     match &cli.command {
+        // Without --project this validates the capsule compiled into this
+        // program, which is what an operator's deployment will upload.
         Command::Check => {
-            let root = cli
-                .project
-                .as_ref()
-                .ok_or_else(|| (2, "--project is required".into()))?;
-            load_manifest(&root.join("deploy/manifest-v3.txt")).map_err(|e| (1, e.to_string()))?;
-            emit(
-                cli.json,
-                "result",
-                "Project capsule passed local validation.",
-                Some(true),
-            );
+            let message = match cli.project.as_ref() {
+                Some(root) => {
+                    let members = load_manifest(&root.join("deploy/manifest-v3.txt"))
+                        .map_err(|e| (1, e.to_string()))?;
+                    format!(
+                        "Project capsule passed local validation: {} members in {}.",
+                        members.len(),
+                        root.display()
+                    )
+                }
+                None => embedded_capsule_report()?,
+            };
+            emit(cli.json, "result", &message, Some(true));
         }
         Command::Prerequisites(args) => {
-            let root = cli
-                .project
-                .clone()
-                .ok_or_else(|| (2, "--project is required".into()))?;
+            let root = cli.project.clone();
             let mut progress = progress_emitter(cli.json);
             if args.install {
-                let rows = prerequisites(&root, &args.tarball_name, &cancellation);
+                let rows = prerequisites(root.as_deref(), &cancellation);
                 install_packages(&missing_packages(&rows), &cancellation, &mut progress)
                     .map_err(|e| (1, e.to_string()))?;
             }
             // Probed after any installation, so the report describes the
             // machine as it now is rather than as it was.
-            let rows = prerequisites(&root, &args.tarball_name, &cancellation);
+            let rows = prerequisites(root.as_deref(), &cancellation);
             for row in &rows {
                 emit(cli.json, "progress", &prerequisite_line(row), None);
             }
@@ -314,7 +332,11 @@ fn run(cli: Cli) -> Result<(), (i32, String)> {
             emit(
                 cli.json,
                 "result",
-                "This workstation can build and deploy the appliance.",
+                if root.is_some() {
+                    "This workstation can build and deploy the appliance."
+                } else {
+                    "This deployer can deploy the appliance it carries."
+                },
                 Some(true),
             );
         }
@@ -396,16 +418,12 @@ fn run(cli: Cli) -> Result<(), (i32, String)> {
                 pi_password: Secret::new(pi_value).map_err(|e| (2, e.to_string()))?,
             };
             validate_alpine_setup(&settings).map_err(|e| (2, e.to_string()))?;
-            let project = cli
-                .project
-                .clone()
-                .ok_or_else(|| (2, "--project is required".into()))?;
             let connection = connection.ok_or_else(|| (2, "connection required".into()))?;
             let mut progress = progress_emitter(cli.json);
             alpine_setup(
                 &connection,
                 &settings,
-                &project,
+                cli.project.as_deref(),
                 &cancellation,
                 &mut progress,
             )
@@ -419,15 +437,11 @@ fn run(cli: Cli) -> Result<(), (i32, String)> {
         }
         Command::Deploy(args) => {
             let options = DeployOptions {
-                project_root: cli
-                    .project
-                    .clone()
-                    .ok_or_else(|| (2, "--project is required".into()))?,
+                project_root: cli.project.clone(),
                 remote_directory: args.remote_directory.clone(),
-                tarball_name: args.tarball_name.clone(),
-                build_image: !args.no_build,
+                rebuild_image: args.rebuild_image,
             };
-            validate_options(&options, true).map_err(|e| (2, e.to_string()))?;
+            validate_options(&options).map_err(|e| (2, e.to_string()))?;
             let connection = connection.ok_or_else(|| (2, "connection required".into()))?;
             let mut progress = progress_emitter(cli.json);
             deploy(&connection, &options, &cancellation, &mut progress)

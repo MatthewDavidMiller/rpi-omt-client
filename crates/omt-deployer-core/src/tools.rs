@@ -1,16 +1,19 @@
-//! What the operator's own workstation must provide before a deployment.
+//! What a workstation must provide before it can *rebuild* the appliance.
 //!
-//! The deployer builds the appliance image on the machine it runs on, which
-//! needs local tooling the operator may not have. That gap is sharpest on
-//! Windows, where a stock install has neither a POSIX shell nor a container
-//! engine, and where the old code assumed `make` and reported nothing but
-//! "program not found" when it was absent.
+//! An operator's deployment needs none of this: the capsule is compiled into
+//! the binary, so nothing here is probed unless a project root is named. What
+//! remains is the developer path, where the image is built on the machine the
+//! deployer runs on. That gap is sharpest on Windows, where a stock install has
+//! neither a POSIX shell nor a container engine, and where the old code assumed
+//! `make` and reported nothing but "program not found" when it was absent.
 //!
 //! Every rule here is a pure function over probed values, so the Windows
 //! answers can be tested on a Linux workstation -- the only machine this
 //! project's gates run on. The probes themselves are the thin part.
 
-use crate::{ProcessResult, run_process};
+use crate::{
+    IMAGE_MEMBER, ProcessResult, embedded_image, embedded_members, run_process, sha256_bytes,
+};
 use std::env;
 use std::ffi::OsString;
 use std::fs;
@@ -68,7 +71,7 @@ pub const PYTHON: Package = Package {
 /// One thing the workstation must provide, as probed.
 #[derive(Clone, Debug)]
 pub struct Prerequisite {
-    /// What it is called in the Setup view.
+    /// What the report calls it.
     pub name: &'static str,
     /// Why a deployment needs it.
     pub purpose: &'static str,
@@ -275,20 +278,19 @@ pub fn find_container_engine() -> Option<(PathBuf, &'static str)> {
 fn plan_from(
     make: Option<PathBuf>,
     bash: Option<PathBuf>,
-    tarball_name: &str,
     windows: bool,
 ) -> Result<BuildPlan, String> {
     let through_bash = |bash: PathBuf| BuildPlan {
         program: bash,
         args: vec!["scripts/build-arm64.sh".to_owned()],
-        env: vec![("ARM64_TARBALL".to_owned(), tarball_name.to_owned())],
+        env: vec![("ARM64_TARBALL".to_owned(), IMAGE_MEMBER.to_owned())],
     };
     if windows {
         return bash.map(through_bash).ok_or_else(|| {
             format!(
-                "no POSIX shell was found, so the ARM64 appliance image cannot be built on this \
-                 Windows machine. Install {} from the Setup view, or clear \"Build the appliance \
-                 image\" on the Deploy view and deploy a {tarball_name} built elsewhere.",
+                "no POSIX shell was found, so the ARM64 appliance image cannot be rebuilt on this \
+                 Windows machine. Install {}, or deploy without a project root: the archive \
+                 embedded in this deployer needs no build tooling.",
                 GIT_FOR_WINDOWS.name
             )
         });
@@ -298,28 +300,23 @@ fn plan_from(
             program: make,
             args: vec![
                 "build-arm64".to_owned(),
-                format!("ARM64_TARBALL={tarball_name}"),
+                format!("ARM64_TARBALL={IMAGE_MEMBER}"),
             ],
             env: Vec::new(),
         });
     }
     bash.map(through_bash).ok_or_else(|| {
-        "neither GNU Make nor bash is on PATH, so the ARM64 appliance image cannot be built. \
-         Install them with `make install`, or clear \"Build the appliance image\" and deploy an \
-         archive built elsewhere."
+        "neither GNU Make nor bash is on PATH, so the ARM64 appliance image cannot be rebuilt. \
+         Install them with `make install`, or deploy without a project root: the archive \
+         embedded in this deployer needs no build tooling."
             .to_owned()
     })
 }
 
-/// How this workstation would build the appliance image.
-pub fn image_build_plan(tarball_name: &str) -> io::Result<BuildPlan> {
-    plan_from(
-        find_executable("make"),
-        find_bash(),
-        tarball_name,
-        ON_WINDOWS,
-    )
-    .map_err(|message| io::Error::new(io::ErrorKind::NotFound, message))
+/// How this workstation would rebuild the appliance image.
+pub fn image_build_plan() -> io::Result<BuildPlan> {
+    plan_from(find_executable("make"), find_bash(), ON_WINDOWS)
+        .map_err(|message| io::Error::new(io::ErrorKind::NotFound, message))
 }
 
 fn present(
@@ -467,7 +464,7 @@ fn python_row() -> Prerequisite {
     }
 }
 
-fn project_rows(project_root: &Path, tarball_name: &str) -> Vec<Prerequisite> {
+fn project_rows(project_root: &Path) -> Vec<Prerequisite> {
     let manifest = project_root.join("deploy/manifest-v3.txt");
     let source = if manifest.is_file() {
         present(
@@ -482,12 +479,14 @@ fn project_rows(project_root: &Path, tarball_name: &str) -> Vec<Prerequisite> {
             "supplies the manifest-v3 capsule that is uploaded",
             true,
             &format!("{} is not there", manifest.display()),
-            "Point Project root at the checkout of this repository.".to_owned(),
+            "Point --project at the checkout of this repository, or drop it and deploy \
+             the capsule embedded in this deployer."
+                .to_owned(),
             None,
         )
     };
 
-    let archive = project_root.join(tarball_name);
+    let archive = project_root.join(IMAGE_MEMBER);
     let bytes = fs::metadata(&archive)
         .ok()
         .filter(fs::Metadata::is_file)
@@ -497,15 +496,15 @@ fn project_rows(project_root: &Path, tarball_name: &str) -> Vec<Prerequisite> {
             "Appliance image archive",
             "the ARM64 image the Pi loads",
             false,
-            format!("{tarball_name}, {} MiB", bytes / (1024 * 1024)),
+            format!("{IMAGE_MEMBER}, {} MiB", bytes / (1024 * 1024)),
         ),
         None => missing(
             "Appliance image archive",
             "the ARM64 image the Pi loads",
             false,
-            &format!("{tarball_name} has not been built yet"),
-            "Leave \"Build the appliance image\" set on the Deploy view, or copy an archive \
-             built elsewhere into the project root."
+            &format!("{IMAGE_MEMBER} has not been built in this tree yet"),
+            "Run `make build-arm64`, or deploy without --project to upload the archive \
+             embedded in this deployer."
                 .to_owned(),
             None,
         ),
@@ -513,17 +512,51 @@ fn project_rows(project_root: &Path, tarball_name: &str) -> Vec<Prerequisite> {
     vec![source, image]
 }
 
+/// What the capsule compiled into this binary contains.
+///
+/// The only row an operator's deployment has, and it is satisfied by
+/// construction: `build.rs` will not produce a deployer without it. It is
+/// reported rather than assumed because the archive's size and digest are the
+/// only description of the appliance a single-file deployer can offer.
+fn embedded_rows() -> Vec<Prerequisite> {
+    let detail = match embedded_image() {
+        Some(image) => format!(
+            "{} files, {IMAGE_MEMBER} {} MiB, sha256 {}",
+            embedded_members().len(),
+            image.bytes.len() / (1024 * 1024),
+            &sha256_bytes(image.bytes)[..12]
+        ),
+        None => format!("{IMAGE_MEMBER} is not embedded"),
+    };
+    vec![Prerequisite {
+        name: "Embedded appliance capsule",
+        purpose: "everything the Raspberry Pi receives",
+        required: true,
+        satisfied: embedded_image().is_some(),
+        detail,
+        remedy: String::new(),
+        package: None,
+    }]
+}
+
 /// Probe everything a deployment needs from this workstation.
 ///
+/// Without a project root that is nothing: the capsule is compiled in, so an
+/// operator's deployment uses no container engine, no shell, and no checkout,
+/// and the rows describe the embedded capsule instead. With one -- the
+/// developer override -- these are the tools that tree's image build needs.
+///
 /// Tools only: nothing here reaches the network or pulls an image, so the
-/// Setup view answers immediately. ARM64 emulation is the one prerequisite
+/// report answers immediately. ARM64 emulation is the one prerequisite
 /// that cannot be established without running a container, and it has its own
 /// entry point for that reason.
 pub fn prerequisites(
-    project_root: &Path,
-    tarball_name: &str,
+    project_root: Option<&Path>,
     cancellation: &Arc<AtomicBool>,
 ) -> Vec<Prerequisite> {
+    let Some(project_root) = project_root else {
+        return embedded_rows();
+    };
     let mut rows = vec![engine_row(cancellation), shell_row()];
     if !ON_WINDOWS {
         rows.push(match find_executable("make") {
@@ -544,7 +577,7 @@ pub fn prerequisites(
         });
     }
     rows.push(python_row());
-    rows.extend(project_rows(project_root, tarball_name));
+    rows.extend(project_rows(project_root));
     rows
 }
 
@@ -828,12 +861,7 @@ mod tests {
     use super::*;
 
     fn plan(make: Option<&str>, bash: Option<&str>, windows: bool) -> Result<BuildPlan, String> {
-        plan_from(
-            make.map(PathBuf::from),
-            bash.map(PathBuf::from),
-            "omt-client-arm64.tar.gz",
-            windows,
-        )
+        plan_from(make.map(PathBuf::from), bash.map(PathBuf::from), windows)
     }
 
     /// The reported failure: a Windows workstation with no `make`, where the
@@ -862,7 +890,7 @@ mod tests {
         let make_only = plan(Some("C:\\make.exe"), None, true);
         let message = make_only.err().unwrap_or_default();
         assert!(message.contains("Git for Windows"), "{message}");
-        assert!(message.contains("Build the appliance image"), "{message}");
+        assert!(message.contains("embedded in this deployer"), "{message}");
         assert_eq!(
             plan(Some("C:\\make.exe"), Some("C:\\Git\\bin\\bash.exe"), true)
                 .map(|value| value.program),
@@ -887,22 +915,23 @@ mod tests {
         assert!(plan(None, None, false).is_err());
     }
 
-    /// The archive name is an option, so a plan that ignored it would build
-    /// one file and upload another.
+    /// A rebuild replaces the archive this deployer embeds, so both spellings
+    /// of the build command have to name that same file. A plan that built
+    /// something else would leave the old archive to be uploaded.
     #[test]
-    fn the_plan_carries_the_requested_archive_name() {
-        let named = plan_from(Some("/usr/bin/make".into()), None, "custom.tar.gz", false)
+    fn the_plan_builds_the_archive_the_capsule_embeds() {
+        let named = plan_from(Some("/usr/bin/make".into()), None, false)
             .unwrap_or_else(|error| panic!("{error}"));
         assert!(
             named
                 .args
-                .contains(&"ARM64_TARBALL=custom.tar.gz".to_owned())
+                .contains(&format!("ARM64_TARBALL={IMAGE_MEMBER}"))
         );
-        let scripted = plan_from(None, Some("/bin/bash".into()), "custom.tar.gz", false)
+        let scripted = plan_from(None, Some("/bin/bash".into()), false)
             .unwrap_or_else(|error| panic!("{error}"));
         assert_eq!(
             scripted.env,
-            [("ARM64_TARBALL".to_owned(), "custom.tar.gz".to_owned())]
+            [("ARM64_TARBALL".to_owned(), IMAGE_MEMBER.to_owned())]
         );
     }
 
@@ -1057,7 +1086,7 @@ mod tests {
         assert!(lines.iter().any(|line| line.contains("already installed")));
     }
 
-    /// The Setup view reads these rows on a workstation, so the probe has to
+    /// A developer reads these rows on a real workstation, so the probe has to
     /// terminate and describe this one rather than panicking on it.
     #[test]
     fn probing_this_workstation_reports_the_project_it_was_given() {
@@ -1066,7 +1095,7 @@ mod tests {
             .parent()
             .and_then(Path::parent)
             .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
-        let rows = prerequisites(&root, "omt-client-arm64.tar.gz", &cancellation);
+        let rows = prerequisites(Some(&root), &cancellation);
         let source = rows
             .iter()
             .find(|row| row.name == "Project source tree")
@@ -1075,16 +1104,29 @@ mod tests {
         assert!(rows.iter().any(|row| row.name == "Container engine"));
         assert!(rows.iter().any(|row| row.name == "POSIX shell"));
 
-        let elsewhere = prerequisites(
-            Path::new("/nonexistent-omt-project"),
-            "omt-client-arm64.tar.gz",
-            &cancellation,
-        );
+        let elsewhere = prerequisites(Some(Path::new("/nonexistent-omt-project")), &cancellation);
         assert!(
             elsewhere
                 .iter()
                 .any(|row| row.name == "Project source tree" && row.blocking())
         );
+    }
+
+    /// The operator's case: a deployer with the capsule inside it needs
+    /// nothing from the machine it runs on, so nothing may be reported as
+    /// missing -- and least of all a container engine it will never call.
+    #[test]
+    fn an_embedded_deployment_needs_nothing_from_this_workstation() {
+        let cancellation = Arc::new(AtomicBool::new(false));
+        let rows = prerequisites(None, &cancellation);
+        assert!(!rows.is_empty(), "the embedded capsule is not described");
+        assert!(
+            rows.iter().all(|row| row.satisfied),
+            "an embedded deployment reported a missing prerequisite"
+        );
+        assert!(!rows.iter().any(|row| row.name == "Container engine"));
+        assert!(!rows.iter().any(|row| row.name == "Project source tree"));
+        assert!(missing_packages(&rows).is_empty());
     }
 
     /// Automatic installation is a Windows affordance. On this project's own

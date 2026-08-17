@@ -1,9 +1,11 @@
 #![forbid(unsafe_code)]
 
+mod capsule;
 mod ops;
 mod ssh;
 mod tools;
 
+pub use capsule::{CapsuleMember, IMAGE_MEMBER, embedded_image, embedded_member, embedded_members};
 pub use ops::{
     alpine_setup, apply_wifi, change_web_password, connect, deploy, manage, test_connection,
 };
@@ -109,12 +111,20 @@ pub struct Connection {
     /// Once sudo exists, privileged operations use `sudo_password` instead.
     pub bootstrap_root_password: Option<Secret>,
 }
-#[derive(Clone, Debug)]
+/// What a deployment uploads, and where.
+///
+/// The capsule is embedded in this binary, so a deployment needs nothing from
+/// the machine it runs on. `project_root` is the developer override: a working
+/// tree to take the whole capsule from instead, which is the only way the
+/// files that are uploaded and the archive that is built can be guaranteed to
+/// come from the same source.
+#[derive(Clone, Debug, Default)]
 pub struct DeployOptions {
-    pub project_root: PathBuf,
+    /// A checkout to read the capsule from, or `None` for the embedded one.
+    pub project_root: Option<PathBuf>,
     pub remote_directory: String,
-    pub tarball_name: String,
-    pub build_image: bool,
+    /// Rebuild the ARM64 image from `project_root` before uploading it.
+    pub rebuild_image: bool,
 }
 pub struct WifiSettings {
     pub ssid: String,
@@ -221,20 +231,22 @@ pub fn validate_connection(value: &Connection) -> Result<(), ValidationError> {
     }
     Ok(())
 }
-pub fn validate_options(
-    value: &DeployOptions,
-    require_project: bool,
-) -> Result<(), ValidationError> {
-    if require_project && !value.project_root.is_dir() {
-        return Err(ValidationError("Project root does not exist."));
+pub fn validate_options(value: &DeployOptions) -> Result<(), ValidationError> {
+    match value.project_root.as_deref() {
+        Some(root) if !root.is_dir() => {
+            return Err(ValidationError("Project root does not exist."));
+        }
+        None if value.rebuild_image => {
+            return Err(ValidationError(
+                "Rebuilding the appliance image needs a project root to build it from.",
+            ));
+        }
+        _ => {}
     }
     if !valid_remote_directory(&value.remote_directory) {
         return Err(ValidationError(
             "Remote install directory is not a normalized safe absolute path.",
         ));
-    }
-    if !ascii_token(&value.tarball_name, "._-") {
-        return Err(ValidationError("Archive name contains unsafe characters."));
     }
     Ok(())
 }
@@ -343,7 +355,15 @@ pub fn load_manifest(path: &Path) -> io::Result<Vec<String>> {
             "manifest is not a bounded regular file",
         ));
     }
-    let text = fs::read_to_string(path)?;
+    parse_manifest(&fs::read_to_string(path)?)
+}
+
+/// The manifest's members, in order, from the text of one.
+///
+/// Split out from [`load_manifest`] because the embedded capsule carries its
+/// manifest as bytes rather than as a path, and both copies have to be read by
+/// the same rule for the set the Pi promotes to be the set that was uploaded.
+pub fn parse_manifest(text: &str) -> io::Result<Vec<String>> {
     let mut lines = text.lines();
     if lines.next() != Some("version=3") {
         return Err(io::Error::new(
@@ -372,18 +392,6 @@ pub fn load_manifest(path: &Path) -> io::Result<Vec<String>> {
     }
     Ok(result)
 }
-pub fn discover_project_root(starts: &[PathBuf]) -> Option<PathBuf> {
-    starts.iter().find_map(|start| {
-        let mut current = start.as_path();
-        for _ in 0..=8 {
-            if current.join("deploy/manifest-v3.txt").is_file() {
-                return Some(current.to_path_buf());
-            }
-            current = current.parent()?;
-        }
-        None
-    })
-}
 pub fn secure_relative(root: &Path, member: &str) -> io::Result<PathBuf> {
     if !valid_manifest_name(member)
         || Path::new(member)
@@ -404,6 +412,9 @@ pub fn random_token(bytes: usize) -> io::Result<String> {
     let mut value = vec![0_u8; bytes];
     getrandom::fill(&mut value).map_err(|error| io::Error::other(error.to_string()))?;
     Ok(hex_encode(&value))
+}
+pub fn sha256_bytes(data: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(data))
 }
 pub fn sha256_file(path: &Path) -> io::Result<String> {
     let mut file = File::open(path)?;

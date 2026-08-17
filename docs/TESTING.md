@@ -78,7 +78,13 @@ job before returning the error.
 
 `make test-deployer` builds the Rust core, CLI, and GUI and tests validation,
 quoting, SHA-256, secure tokens, Wi-Fi PSK vectors, bounded processes, and
-manifest-v3 path safety. The egui application is built with its `desktop`
+manifest-v3 path safety. It also holds the embedded capsule to the manifest it
+ships: that the compiled-in member list is exactly `deploy/manifest-v3.txt`,
+that every embedded name passes the real `valid_manifest_name` rule rather than
+the copy of it in `build.rs`, and that the appliance archive is present, over a
+mebibyte, and gzip. Because the capsule is a build input, this suite needs
+`omt-client-arm64.tar.gz` in the project root; `make build-arm64` produces it
+and both deployer build scripts stop with that instruction when it is absent. The egui application is built with its `desktop`
 feature for the test run as well as the publish build, so the view is compiled
 and linted rather than skipped, and the rules that enable its buttons are
 tested against the same core validators the buttons' actions use. The same run
@@ -93,8 +99,10 @@ tenth, saturates at its bounds, and returns to exactly 100%. None of that
 needs a display attached.
 
 `tests/native/test_deployer_cli.sh` then runs the built CLI: capsule
-validation, the exit-2 usage contract for missing arguments and rejected
-connections, the bounded `--secrets-stdin` channel, Alpine sys-setup argument
+validation with and without a project root -- including that an embedded
+deployment reports no workstation prerequisite at all and that `--rebuild-image`
+is refused without a tree to build from -- the exit-2 usage contract for missing
+arguments and rejected connections, the bounded `--secrets-stdin` channel, Alpine sys-setup argument
 checks, and the one-object-per-line
 `--json` surface. Nothing in it reaches the network -- every invocation is
 local or refused before a connection is opened. The SSH adapter rejects missing

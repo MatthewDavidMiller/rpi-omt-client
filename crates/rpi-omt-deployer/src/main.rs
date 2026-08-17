@@ -22,7 +22,6 @@ mod gates {
         pub host: &'a str,
         pub user: &'a str,
         pub password: &'a str,
-        pub project_root: &'a str,
         pub hostname: &'a str,
         pub os_root_password: &'a str,
         pub os_root_password_confirmation: &'a str,
@@ -48,10 +47,10 @@ mod gates {
                 && Secret::new(self.password.to_owned()).is_ok()
         }
 
+        /// A deployment needs no local files, so the connection is all there
+        /// is to check: the capsule it uploads is part of this program.
         pub fn can_deploy(&self) -> bool {
-            self.can_connect()
-                && !self.project_root.is_empty()
-                && (!self.rotate_web_password || self.web_password_is_ready())
+            self.can_connect() && (!self.rotate_web_password || self.web_password_is_ready())
         }
 
         pub fn can_install_alpine(&self) -> bool {
@@ -118,7 +117,6 @@ mod gates {
                 host: "pi.local",
                 user: "root",
                 password: "secret",
-                project_root: "/src/rpi-omt-client",
                 hostname: "omt-client",
                 os_root_password: "rootpass1",
                 os_root_password_confirmation: "rootpass1",
@@ -164,9 +162,20 @@ mod gates {
                 }
                 .can_connect()
             );
+        }
+
+        /// The capsule is compiled in, so a deployment asks for nothing on
+        /// this machine. Anything else gating Deploy would be a local
+        /// requirement the operator cannot satisfy and does not need.
+        #[test]
+        fn deploying_needs_only_a_connection() {
+            let connected = form("", "");
+            assert!(connected.can_deploy());
             assert!(
                 !Form {
-                    project_root: "",
+                    rotate_web_password: true,
+                    web_password: "short",
+                    web_password_confirmation: "short",
                     ..form("", "")
                 }
                 .can_deploy()
@@ -717,10 +726,9 @@ mod desktop {
     use crate::layout;
     use eframe::egui;
     use omt_deployer_core::{
-        AlpineSetupSettings, AuthMethod, Connection, DeployOptions, ManagementAction, ON_WINDOWS,
-        Prerequisite, Secret, WifiSettings, alpine_setup, apply_wifi, change_web_password, deploy,
-        discover_project_root, ensure_arm64_emulation, install_packages, manage, missing_packages,
-        prerequisites, test_connection, validate_web_password, validate_wifi,
+        AlpineSetupSettings, AuthMethod, Connection, DeployOptions, IMAGE_MEMBER, ManagementAction,
+        Secret, WifiSettings, alpine_setup, apply_wifi, change_web_password, deploy,
+        embedded_image, manage, test_connection, validate_web_password, validate_wifi,
     };
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
@@ -736,14 +744,8 @@ mod desktop {
         None => env!("CARGO_PKG_VERSION"),
     };
 
-    /// The appliance archive this application builds and uploads. Named once:
-    /// the Deploy job, the Setup view's archive row, and the build plan all
-    /// have to be talking about the same file.
-    const TARBALL_NAME: &str = "omt-client-arm64.tar.gz";
-
     #[derive(Clone, Copy, PartialEq)]
     enum View {
-        Setup,
         Connection,
         Alpine,
         Deploy,
@@ -755,11 +757,16 @@ mod desktop {
 
     enum WorkerEvent {
         Line(String),
-        /// The Setup view's rows, replacing whatever the last scan found.
-        Probed(Vec<Prerequisite>),
         Finished(Result<(), String>),
     }
 
+    /// Every job this application runs, all of which talk to the Raspberry Pi.
+    ///
+    /// There is no local job left: the workstation probe, the winget installs,
+    /// and the ARM64 emulation setup all existed to prepare a machine to
+    /// *build* the appliance image, and this application no longer builds
+    /// anything. It carries the image instead. `rpi-omt-deploy prerequisites`
+    /// and `setup-emulation` still serve a developer rebuilding from a tree.
     enum Job {
         Test,
         Alpine,
@@ -767,32 +774,11 @@ mod desktop {
         Manage(ManagementAction),
         WebPassword,
         Wifi,
-        /// Probe this workstation's own tooling. Local: no Pi is contacted, so
-        /// it runs before any connection details have been typed.
-        Probe,
-        /// Install the missing prerequisites this workstation has a package
-        /// for, then report what the machine looks like afterwards.
-        Install,
-        /// Prove the container engine can run ARM64, registering the
-        /// emulator first where the engine needs that done for it.
-        Emulation,
-    }
-
-    impl Job {
-        /// Whether this job talks to the Raspberry Pi.
-        ///
-        /// The Setup jobs do not, and requiring a validated connection for them
-        /// would put the fix for an unusable workstation behind credentials for
-        /// a Pi the operator cannot deploy to yet.
-        const fn needs_connection(&self) -> bool {
-            !matches!(self, Self::Probe | Self::Install | Self::Emulation)
-        }
     }
 
     /// Which field an open file dialog is filling in.
     #[derive(Clone, Copy, PartialEq)]
     enum Picking {
-        ProjectRoot,
         KnownHosts,
     }
 
@@ -816,14 +802,11 @@ mod desktop {
         web_password_confirmation: Zeroizing<String>,
         wifi_connect: bool,
         wifi_preserve_existing_profiles: bool,
-        project_root: String,
         remote_directory: String,
-        build_image: bool,
         reveal: bool,
         activity: Log,
         cancel: Arc<AtomicBool>,
         events: Option<Receiver<WorkerEvent>>,
-        prerequisites: Vec<Prerequisite>,
         picker: Option<(Picking, Receiver<Option<PathBuf>>)>,
         fit: Fit,
         pending_confirmation: Option<ManagementAction>,
@@ -852,16 +835,6 @@ mod desktop {
 
     impl Default for App {
         fn default() -> Self {
-            let starts = [
-                std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
-                std::env::current_exe()
-                    .ok()
-                    .and_then(|path| path.parent().map(PathBuf::from))
-                    .unwrap_or_else(|| PathBuf::from(".")),
-            ];
-            let project = discover_project_root(&starts)
-                .map(|path| path.display().to_string())
-                .unwrap_or_default();
             Self {
                 view: View::Connection,
                 host: "raspberrypi.local".into(),
@@ -881,14 +854,11 @@ mod desktop {
                 web_password_confirmation: Zeroizing::new(String::new()),
                 wifi_connect: true,
                 wifi_preserve_existing_profiles: true,
-                project_root: project,
                 remote_directory: "/opt/omt-client".into(),
-                build_image: true,
                 reveal: false,
                 activity: Log::default(),
                 cancel: Arc::new(AtomicBool::new(false)),
                 events: None,
-                prerequisites: Vec::new(),
                 picker: None,
                 fit: Fit::Pending {
                     started: None,
@@ -911,24 +881,34 @@ mod desktop {
             self.events.is_some()
         }
 
-        /// Whether this workstation has been probed since the project root was
-        /// last changed. The row set is never empty once it has been.
-        fn probed(&self) -> bool {
-            !self.prerequisites.is_empty()
-        }
-
         /// The deployment as the form describes it.
         ///
-        /// One owner for these four values: the Deploy job, the Setup probe,
-        /// and the archive row all read them from here, so the view cannot
-        /// report on one project root while a deployment uses another.
+        /// The capsule is compiled into this application, so the only thing
+        /// the form decides is where it lands. Building an image and pointing
+        /// at a checkout are developer operations, and they live on the CLI.
         fn deploy_options(&self) -> DeployOptions {
             DeployOptions {
-                project_root: PathBuf::from(&self.project_root),
+                project_root: None,
                 remote_directory: self.remote_directory.clone(),
-                tarball_name: TARBALL_NAME.to_owned(),
-                build_image: self.build_image,
+                rebuild_image: false,
             }
+        }
+
+        /// The appliance this copy of the deployer carries.
+        ///
+        /// Shown on Deploy and About because a single-file deployer is
+        /// otherwise silent about which build it would install, and the
+        /// operator has no archive on disk to look at.
+        fn capsule_line() -> String {
+            embedded_image().map_or_else(
+                || format!("This deployer was built without {IMAGE_MEMBER}."),
+                |image| {
+                    format!(
+                        "Carrying {IMAGE_MEMBER}, {} MiB, built into this application.",
+                        image.bytes.len() / (1024 * 1024)
+                    )
+                },
+            )
         }
 
         /// The form as typed, for the gating rules the core owns.
@@ -937,7 +917,6 @@ mod desktop {
                 host: &self.host,
                 user: &self.user,
                 password: &self.password,
-                project_root: &self.project_root,
                 hostname: &self.hostname,
                 os_root_password: &self.os_root_password,
                 os_root_password_confirmation: &self.os_root_password_confirmation,
@@ -1000,21 +979,14 @@ mod desktop {
             if self.running() {
                 return;
             }
-            let connection = if job.needs_connection() {
-                match self.connection() {
-                    Ok(value) => Some(value),
-                    Err(error) => {
-                        self.activity.push(error);
-                        self.view = View::Activity;
-                        return;
-                    }
+            let connection = match self.connection() {
+                Ok(value) => Some(value),
+                Err(error) => {
+                    self.activity.push(error);
+                    self.view = View::Activity;
+                    return;
                 }
-            } else {
-                None
             };
-            // Setup jobs report into their own view, which is where their
-            // result is read; everything else narrates into Activity.
-            let reports_here = !job.needs_connection();
             let changes_web_password = matches!(job, Job::WebPassword)
                 || (matches!(job, Job::Deploy) && self.rotate_web_password);
             self.apply_alpine_login = matches!(job, Job::Alpine);
@@ -1040,9 +1012,7 @@ mod desktop {
             self.cancel.store(false, Ordering::Relaxed);
             let cancel = Arc::clone(&self.cancel);
             self.events = Some(rx);
-            if !reports_here {
-                self.view = View::Activity;
-            }
+            self.view = View::Activity;
             self.activity.push(match request.job {
                 Job::Test => "Testing connection...".into(),
                 Job::Alpine => "Starting Alpine sys-mode install...".into(),
@@ -1055,9 +1025,6 @@ mod desktop {
                 }
                 Job::WebPassword => "Changing Web GUI password...".into(),
                 Job::Wifi => "Applying Wi-Fi settings...".into(),
-                Job::Probe => "Checking this workstation...".into(),
-                Job::Install => "Installing prerequisites...".into(),
-                Job::Emulation => "Setting up ARM64 emulation...".into(),
             });
             thread::spawn(move || {
                 let result = run_job(request, &cancel, &tx);
@@ -1075,7 +1042,6 @@ mod desktop {
                 return;
             }
             let start = match target {
-                Picking::ProjectRoot => self.project_root.clone(),
                 Picking::KnownHosts => self.known_hosts.clone(),
             };
             let (tx, rx) = mpsc::channel();
@@ -1097,9 +1063,6 @@ mod desktop {
                     dialog = dialog.set_directory(opening);
                 }
                 let picked = match target {
-                    Picking::ProjectRoot => dialog
-                        .set_title("Select the rpi-omt-client project folder")
-                        .pick_folder(),
                     Picking::KnownHosts => dialog
                         .set_title("Select an OpenSSH known_hosts file")
                         .pick_file(),
@@ -1120,12 +1083,6 @@ mod desktop {
                     if let Some(path) = picked {
                         let chosen = path.display().to_string();
                         match target {
-                            Picking::ProjectRoot => {
-                                self.project_root = chosen;
-                                // The rows describe a project root, so they are
-                                // stale the moment a different one is chosen.
-                                self.prerequisites.clear();
-                            }
                             Picking::KnownHosts => self.known_hosts = chosen,
                         }
                     }
@@ -1144,16 +1101,11 @@ mod desktop {
                 return;
             };
             let mut finished = None;
-            let mut probed = None;
             while let Ok(event) = events.try_recv() {
                 match event {
                     WorkerEvent::Line(line) => self.activity.push(line),
-                    WorkerEvent::Probed(rows) => probed = Some(rows),
                     WorkerEvent::Finished(result) => finished = Some(result),
                 }
-            }
-            if let Some(rows) = probed {
-                self.prerequisites = rows;
             }
             if let Some(result) = finished {
                 match result {
@@ -1283,100 +1235,6 @@ mod desktop {
             } else if steps != 0 {
                 context.set_zoom_factor(layout::step_zoom(context.zoom_factor(), steps));
             }
-        }
-
-        /// The Setup view: what this workstation provides, and how to fix what
-        /// it does not. Returns the job the operator asked for, if any, so the
-        /// borrow of `self` ends before the job is started.
-        fn setup_view(&mut self, ui: &mut egui::Ui) -> Option<Job> {
-            let mut start = None;
-            ui.heading("Workstation setup");
-            ui.label(
-                "Deployment builds the ARM64 appliance image on this machine before it uploads \
-                 anything. These are the local tools that build needs.",
-            );
-            ui.add_space(ui.spacing().item_spacing.y);
-
-            if !self.probed() {
-                ui.label(if self.running() {
-                    "Checking..."
-                } else {
-                    "This workstation has not been checked yet."
-                });
-            }
-            for row in &self.prerequisites {
-                let (mark, colour) = if row.satisfied {
-                    ("OK", egui::Color32::from_rgb(0x2e, 0x7d, 0x32))
-                } else if row.required {
-                    ("MISSING", egui::Color32::from_rgb(0xc6, 0x28, 0x28))
-                } else {
-                    ("optional", ui.visuals().weak_text_color())
-                };
-                ui.horizontal_wrapped(|ui| {
-                    ui.colored_label(colour, mark);
-                    ui.strong(row.name);
-                    ui.label(format!("-- {}", row.purpose));
-                });
-                ui.indent(row.name, |ui| {
-                    ui.label(&row.detail);
-                    if !row.satisfied && !row.remedy.is_empty() {
-                        ui.label(egui::RichText::new(&row.remedy).italics());
-                    }
-                });
-                ui.add_space(ui.spacing().item_spacing.y);
-            }
-
-            ui.separator();
-            let idle = !self.running();
-            ui.horizontal_wrapped(|ui| {
-                if ui
-                    .add_enabled(idle, egui::Button::new("Check this workstation"))
-                    .clicked()
-                {
-                    start = Some(Job::Probe);
-                }
-                let installable = !missing_packages(&self.prerequisites).is_empty();
-                if ui
-                    .add_enabled(
-                        idle && ON_WINDOWS && installable,
-                        egui::Button::new("Install missing prerequisites"),
-                    )
-                    .on_hover_text("Installs them with winget. Windows will ask to approve each.")
-                    .on_disabled_hover_text(if ON_WINDOWS {
-                        "Nothing here has a winget package to install."
-                    } else {
-                        "Automatic installation is Windows-only. On this system run `make install`."
-                    })
-                    .clicked()
-                {
-                    start = Some(Job::Install);
-                }
-                if ui
-                    .add_enabled(idle, egui::Button::new("Set up ARM64 emulation"))
-                    .on_hover_text(if ON_WINDOWS {
-                        "Registers ARM64 emulation in Docker's Linux VM and runs a small pinned \
-                         container to prove it works. Downloads both the first time. A \
-                         deployment does this again before it builds, because Docker forgets it \
-                         when it restarts."
-                    } else {
-                        "Runs a small pinned container to prove ARM64 emulation is registered. \
-                         Downloads it the first time. Register it with `make \
-                         setup-arm64-emulation`."
-                    })
-                    .clicked()
-                {
-                    start = Some(Job::Emulation);
-                }
-            });
-            if self.probed() && self.prerequisites.iter().any(Prerequisite::blocking) {
-                ui.add_space(ui.spacing().item_spacing.y);
-                ui.label(
-                    "A deployment cannot build the image until the missing entries above are \
-                     resolved. An archive built on another machine can still be deployed: clear \
-                     \"Build the appliance image\" on the Deploy view.",
-                );
-            }
-            start
         }
 
         /// The bar that reports what the deployer made of the display, and
@@ -1569,7 +1427,7 @@ mod desktop {
                 alpine_setup(
                     remote()?,
                     &settings,
-                    &request.options.project_root,
+                    request.options.project_root.as_deref(),
                     cancel,
                     &mut progress,
                 )
@@ -1609,34 +1467,7 @@ mod desktop {
                 apply_wifi(remote()?, &settings, cancel, &mut progress)
                     .map_err(|error| error.to_string())
             }
-            Job::Probe => {
-                probe(&request.options, cancel, tx);
-                Ok(())
-            }
-            Job::Install => {
-                let rows = prerequisites(
-                    &request.options.project_root,
-                    &request.options.tarball_name,
-                    cancel,
-                );
-                let outcome = install_packages(&missing_packages(&rows), cancel, &mut progress)
-                    .map_err(|error| error.to_string());
-                // Re-probed either way: a partly successful run still changed
-                // what this machine has, and the view must not keep claiming
-                // otherwise.
-                probe(&request.options, cancel, tx);
-                outcome
-            }
-            Job::Emulation => {
-                ensure_arm64_emulation(cancel, &mut progress).map_err(|error| error.to_string())
-            }
         }
-    }
-
-    /// Probe the workstation and publish the rows the Setup view draws.
-    fn probe(options: &DeployOptions, cancel: &Arc<AtomicBool>, tx: &Sender<WorkerEvent>) {
-        let rows = prerequisites(&options.project_root, &options.tarball_name, cancel);
-        let _ = tx.send(WorkerEvent::Probed(rows));
     }
 
     impl eframe::App for App {
@@ -1648,7 +1479,6 @@ mod desktop {
             egui::TopBottomPanel::top("navigation").show(context, |ui| {
                 ui.horizontal_wrapped(|ui| {
                     for (name, view) in [
-                        ("Setup", View::Setup),
                         ("Connection", View::Connection),
                         ("Alpine", View::Alpine),
                         ("Deploy", View::Deploy),
@@ -1665,13 +1495,6 @@ mod desktop {
             });
             egui::TopBottomPanel::bottom("status").show(context, |ui| self.status_bar(ui));
             egui::CentralPanel::default().show(context, |ui| match self.view {
-                View::Setup => {
-                    let mut start = None;
-                    column(ui, |ui| start = self.setup_view(ui));
-                    if let Some(job) = start {
-                        self.start_job(job);
-                    }
-                }
                 View::Connection => {
                     let mut browse = false;
                     let mut test = false;
@@ -1790,37 +1613,18 @@ mod desktop {
                     }
                 }
                 View::Deploy => {
-                    let mut browse = false;
                     let mut deploy = false;
                     column(ui, |ui| {
                         ui.heading("Deploy");
                         ui.label(
-                            "Build, verify, upload, recover, and promote the manifest-v3 capsule.",
+                            "Upload, verify, recover, and promote the manifest-v3 capsule this \
+                             deployer carries.",
                         );
+                        ui.label(egui::RichText::new(Self::capsule_line()).italics());
                         ui.add_space(ui.spacing().item_spacing.y);
-                        let idle = !self.running() && self.picker.is_none();
-                        field(ui, "Project root", |ui| {
-                            browse = path_field(ui, &mut self.project_root, idle);
-                        });
                         field(ui, "Remote directory", |ui| {
                             text_field(ui, &mut self.remote_directory, false);
                         });
-                        ui.checkbox(
-                            &mut self.build_image,
-                            format!("Build the appliance image ({TARBALL_NAME}) first"),
-                        )
-                        .on_hover_text(
-                            "Clear this to upload an archive already in the project root, which \
-                             needs no build tooling on this machine.",
-                        );
-                        if !self.build_image {
-                            ui.label(
-                                egui::RichText::new(format!(
-                                    "{TARBALL_NAME} must already be in the project root."
-                                ))
-                                .italics(),
-                            );
-                        }
                         ui.checkbox(
                             &mut self.rotate_web_password,
                             "Rotate the Web GUI password after deploy",
@@ -1849,9 +1653,6 @@ mod desktop {
                             )
                             .clicked();
                     });
-                    if browse {
-                        self.start_picker(Picking::ProjectRoot);
-                    }
                     if deploy {
                         self.start_job(Job::Deploy);
                     }
@@ -1992,6 +1793,7 @@ mod desktop {
                 View::About => {
                     ui.heading("Raspberry Pi OMT Deployer");
                     ui.label(VERSION);
+                    ui.label(Self::capsule_line());
                     egui::ScrollArea::vertical()
                         .auto_shrink([false; 2])
                         .show(ui, |ui| {
@@ -2120,74 +1922,43 @@ mod desktop {
             );
         }
 
-        /// The Setup jobs exist for a workstation that cannot deploy yet, so
-        /// putting them behind a validated Pi connection would make the fix
-        /// unreachable from the state it fixes.
+        /// `running` used to be a field kept beside the channel it described,
+        /// which is one state with two ways to be wrong. It is derived now.
         #[test]
-        fn setup_jobs_run_without_a_pi() {
-            for local in [Job::Probe, Job::Install, Job::Emulation] {
-                assert!(!local.needs_connection());
-            }
-            for remote in [
-                Job::Test,
-                Job::Alpine,
-                Job::Deploy,
-                Job::Wifi,
-                Job::WebPassword,
-                Job::Manage(ManagementAction::Status),
-                Job::Manage(ManagementAction::Reboot),
-            ] {
-                assert!(remote.needs_connection());
-            }
-        }
-
-        /// Both flags used to be fields kept beside the state they described.
-        /// They are derived now, so this pins that they still answer for it.
-        #[test]
-        fn busy_and_probed_follow_the_state_they_describe() {
+        fn busy_follows_the_state_it_describes() {
             let mut app = App::default();
             assert!(!app.running());
-            assert!(!app.probed());
 
             let (_tx, rx) = mpsc::channel();
             app.events = Some(rx);
             assert!(app.running());
             app.events = None;
             assert!(!app.running());
-
-            app.prerequisites = vec![Prerequisite {
-                name: "Container engine",
-                purpose: "builds the image",
-                required: true,
-                satisfied: false,
-                detail: String::new(),
-                remedy: String::new(),
-                package: None,
-            }];
-            assert!(app.probed());
-            assert!(app.prerequisites.iter().any(Prerequisite::blocking));
         }
 
-        /// A deployment that builds nothing needs no build tooling, which is
-        /// the escape hatch offered to a workstation that has none. The switch
-        /// therefore has to reach `DeployOptions` rather than being decorative,
-        /// and the archive it names has to be the one the Setup view reports on.
+        /// The deployment this application performs is the capsule compiled
+        /// into it: no project root to point at, and nothing to build. A
+        /// `project_root` reaching the core from here would mean the GUI had
+        /// grown a source-tree dependency again.
         #[test]
-        fn the_build_switch_reaches_the_deployment_options() {
-            let defaults = App::default().deploy_options();
-            assert!(defaults.build_image, "building is the default");
-            assert_eq!(defaults.tarball_name, TARBALL_NAME);
-            assert_eq!(defaults.remote_directory, "/opt/omt-client");
+        fn the_gui_deploys_only_the_embedded_capsule() {
+            let options = App::default().deploy_options();
+            assert!(options.project_root.is_none());
+            assert!(!options.rebuild_image);
+            assert_eq!(options.remote_directory, "/opt/omt-client");
+        }
 
-            let skipped = App {
-                build_image: false,
-                project_root: "/src/rpi-omt-client".into(),
-                ..App::default()
-            }
-            .deploy_options();
-            assert!(!skipped.build_image);
-            assert_eq!(skipped.project_root, PathBuf::from("/src/rpi-omt-client"));
-            assert_eq!(skipped.tarball_name, TARBALL_NAME);
+        /// The archive is the appliance, and a deployer built without one
+        /// could not deploy at all. `build.rs` refuses to produce that, and
+        /// this is the same claim checked against the linked binary.
+        #[test]
+        fn the_appliance_image_is_inside_this_binary() {
+            let image = embedded_image().unwrap_or_else(|| panic!("no embedded image"));
+            assert_eq!(image.name, IMAGE_MEMBER);
+            assert!(image.bytes.len() > 1024 * 1024);
+            let line = App::capsule_line();
+            assert!(line.contains(IMAGE_MEMBER), "{line}");
+            assert!(line.contains("MiB"), "{line}");
         }
 
         #[test]

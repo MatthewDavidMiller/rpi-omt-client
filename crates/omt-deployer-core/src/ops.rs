@@ -2,11 +2,11 @@
 
 use crate::ssh::{RemoteResult, SshSession};
 use crate::{
-    AlpineSetupSettings, Connection, DeployOptions, ManagementAction, ON_WINDOWS, Secret,
-    WifiSettings, derive_wpa_psk, ensure_arm64_emulation, hex_encode, image_build_plan,
-    load_manifest, random_token, run_process, secure_relative, sha256_file, shell_quote,
-    validate_alpine_setup, validate_connection, validate_options, validate_web_password,
-    validate_wifi,
+    AlpineSetupSettings, Connection, DeployOptions, IMAGE_MEMBER, ManagementAction, ON_WINDOWS,
+    Secret, WifiSettings, derive_wpa_psk, embedded_member, embedded_members,
+    ensure_arm64_emulation, hex_encode, image_build_plan, load_manifest, random_token, run_process,
+    secure_relative, sha256_bytes, sha256_file, shell_quote, validate_alpine_setup,
+    validate_connection, validate_options, validate_web_password, validate_wifi,
 };
 use std::fs;
 use std::io;
@@ -145,10 +145,23 @@ const WIFI_SCRIPT: &str = concat!(
     "command -v iw >/dev/null 2>&1 && iw dev \"$iface\" set power_save off || true\n"
 );
 
-#[derive(Clone, Debug)]
-struct ArtifactIdentity {
+/// Where one capsule member's bytes come from.
+enum Payload {
+    /// Compiled into this binary by `build.rs`. Nothing can change them
+    /// between the digest and the upload, so the embedded path needs no
+    /// re-check afterwards.
+    Embedded(&'static [u8]),
+    /// A file in a developer's working tree, which can change under a
+    /// deployment and is therefore re-verified once its upload completes.
+    Tree { path: PathBuf, fingerprint: String },
+}
+
+/// One capsule member as this deployment will send it.
+struct Artifact {
+    name: String,
+    /// What the Pi's own `sha256sum` is held to after the upload.
     digest: String,
-    fingerprint: String,
+    payload: Payload,
 }
 
 fn map_validation(error: crate::ValidationError) -> io::Error {
@@ -305,7 +318,7 @@ fn needs_su_bootstrap(tooling: &HostTooling, connection: &Connection) -> bool {
 fn ensure_host_bootstrapped(
     session: &mut SshSession,
     connection: &Connection,
-    project_root: &Path,
+    project_root: Option<&Path>,
     cancellation: &AtomicBool,
     progress: &mut dyn FnMut(&str),
 ) -> io::Result<()> {
@@ -317,10 +330,10 @@ fn ensure_host_bootstrapped(
     }
 
     progress("Bootstrapping bash and sudo on the Raspberry Pi...");
-    let local = secure_relative(project_root, "deploy/host/bootstrap.sh")?;
+    let payload = capsule_member(project_root, "deploy/host/bootstrap.sh")?;
     let remote = format!("/tmp/omt-bootstrap-{}.sh", random_token(8)?);
     let remote_q = shell_quote(&remote);
-    session.upload(&local, &remote, cancellation)?;
+    upload_payload(session, &payload, &remote, cancellation)?;
 
     // /bin/sh explicitly: this is the one script that must run before bash does.
     let result = if needs_su_bootstrap(&tooling, connection) {
@@ -475,15 +488,127 @@ fn file_fingerprint(path: &Path) -> io::Result<String> {
     }
 }
 
-fn capture_identity(path: &Path) -> io::Result<ArtifactIdentity> {
-    Ok(ArtifactIdentity {
-        fingerprint: file_fingerprint(path)?,
-        digest: sha256_file(path)?,
+/// One member read from a working tree, with the identity it had when read.
+fn tree_payload(root: &Path, name: &str) -> io::Result<Payload> {
+    let path = secure_relative(root, name)?;
+    Ok(Payload::Tree {
+        fingerprint: file_fingerprint(&path)?,
+        path,
     })
 }
 
-fn identity_unchanged(path: &Path, identity: &ArtifactIdentity) -> io::Result<bool> {
-    Ok(file_fingerprint(path)? == identity.fingerprint && sha256_file(path)? == identity.digest)
+/// A single member, for the two scripts that are uploaded outside a staged
+/// deployment: the Alpine bootstrap and the sys-mode installer.
+fn capsule_member(root: Option<&Path>, name: &str) -> io::Result<Payload> {
+    match root {
+        None => embedded_member(name)
+            .map(|member| Payload::Embedded(member.bytes))
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("{name} is not part of the embedded capsule"),
+                )
+            }),
+        Some(root) => tree_payload(root, name),
+    }
+}
+
+/// Every member this deployment will upload, in the order it will send them.
+///
+/// Embedded by default. A project root replaces the whole capsule rather than
+/// any part of it: mixing this binary's host scripts with a working tree's
+/// image, or the reverse, would deploy a combination nobody built.
+fn capsule_artifacts(options: &DeployOptions) -> io::Result<Vec<Artifact>> {
+    let Some(root) = options.project_root.as_deref() else {
+        return Ok(embedded_members()
+            .iter()
+            .map(|member| Artifact {
+                name: member.name.to_owned(),
+                digest: sha256_bytes(member.bytes),
+                payload: Payload::Embedded(member.bytes),
+            })
+            .collect());
+    };
+    let members = load_manifest(&root.join("deploy/manifest-v3.txt"))?;
+    if !members.iter().any(|name| name == IMAGE_MEMBER) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("deployment artifact manifest does not include {IMAGE_MEMBER}"),
+        ));
+    }
+    let mut artifacts = Vec::with_capacity(members.len());
+    for name in members {
+        let payload = tree_payload(root, &name)?;
+        let Payload::Tree { path, .. } = &payload else {
+            return Err(io::Error::other("a working tree member has no path"));
+        };
+        artifacts.push(Artifact {
+            digest: sha256_file(path)?,
+            name,
+            payload,
+        });
+    }
+    Ok(artifacts)
+}
+
+/// What this deployment is about to send, named before it sends any of it.
+///
+/// The archive's digest is in the line because it is the one member an
+/// operator cannot inspect: it is the appliance, and where it came from is
+/// otherwise invisible once the deployer is a single file.
+fn capsule_summary(artifacts: &[Artifact], options: &DeployOptions) -> String {
+    let origin = match options.project_root.as_deref() {
+        None => "embedded in this deployer".to_owned(),
+        Some(root) => format!("from {}", root.display()),
+    };
+    let image = artifacts
+        .iter()
+        .find(|artifact| artifact.name == IMAGE_MEMBER)
+        .map_or_else(
+            || format!("no {IMAGE_MEMBER}"),
+            |artifact| {
+                let bytes = match &artifact.payload {
+                    Payload::Embedded(bytes) => u64::try_from(bytes.len()).unwrap_or(u64::MAX),
+                    Payload::Tree { path, .. } => {
+                        fs::metadata(path).map_or(0, |metadata| metadata.len())
+                    }
+                };
+                format!(
+                    "{IMAGE_MEMBER} {} MiB, sha256 {}",
+                    bytes / (1024 * 1024),
+                    &artifact.digest[..12]
+                )
+            },
+        );
+    format!(
+        "Deploying the manifest-v3 capsule {origin}: {} files, {image}.",
+        artifacts.len()
+    )
+}
+
+fn upload_payload(
+    session: &mut SshSession,
+    payload: &Payload,
+    remote: &str,
+    cancellation: &AtomicBool,
+) -> io::Result<()> {
+    match payload {
+        Payload::Embedded(bytes) => session.upload_bytes(bytes, remote, cancellation),
+        Payload::Tree { path, .. } => session.upload(path, remote, cancellation),
+    }
+}
+
+/// Whether an artifact is still what it was when its digest was taken.
+///
+/// Always true for the embedded capsule: those bytes are part of the running
+/// program. Only a working tree can be edited mid-deployment.
+fn artifact_unchanged(artifact: &Artifact) -> io::Result<bool> {
+    match &artifact.payload {
+        Payload::Embedded(_) => Ok(true),
+        Payload::Tree { path, fingerprint } => {
+            Ok(file_fingerprint(path)? == *fingerprint && sha256_file(path)? == artifact.digest)
+        }
+    }
 }
 
 fn parse_sha256_line(output: &str) -> Option<String> {
@@ -568,29 +693,28 @@ fn installer_summary(output: &str) -> Option<&str> {
         .filter(|summary| !summary.is_empty())
 }
 
+/// Rebuild the ARM64 image in a developer's working tree.
+///
+/// Only reachable with a project root: an operator's deployment uploads the
+/// archive compiled into this binary and needs no build tooling at all.
 fn build_image(
     options: &DeployOptions,
     cancellation: &Arc<AtomicBool>,
     progress: &mut dyn FnMut(&str),
 ) -> io::Result<()> {
-    if !options.build_image {
-        let tarball = options.project_root.join(&options.tarball_name);
-        if !tarball.is_file() {
-            return Err(io::Error::new(
-                io::ErrorKind::NotFound,
-                format!(
-                    "{} not found; build the appliance image or copy an archive built \
-                     elsewhere into the project root",
-                    tarball.display()
-                ),
-            ));
-        }
+    if !options.rebuild_image {
         return Ok(());
     }
+    let Some(project_root) = options.project_root.as_deref() else {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "rebuilding the appliance image needs a project root to build it from",
+        ));
+    };
     progress("Building the ARM64 appliance image...");
     // Windows engines forget their binfmt registration whenever the VM
-    // restarts, so a Setup view that was green an hour ago proves nothing
-    // about now. Re-establishing it here costs one small container and spares
+    // restarts, so a `prerequisites` report that was green an hour ago proves
+    // nothing about now. Re-establishing it here costs one small container and spares
     // the operator a build that fails minutes in with "exec format error".
     // Linux hosts register it persistently through
     // `scripts/install-arm64-emulation.sh`, and `scripts/build-arm64.sh`
@@ -601,12 +725,12 @@ fn build_image(
     // Resolved before the spawn, so a workstation without the build tooling is
     // told which tool is missing and how to get it. The spawn's own error is
     // "program not found", which named neither.
-    let plan = image_build_plan(&options.tarball_name)?;
+    let plan = image_build_plan()?;
     progress(&format!("Running {}", plan.summary()));
     let result = run_process(
         &plan.program,
         &plan.args,
-        &options.project_root,
+        project_root,
         &plan.env,
         Arc::clone(cancellation),
     )?;
@@ -669,10 +793,13 @@ fn password_connection(
 
 /// Configure a factory Alpine image: hostname, IPv4 DHCP, optional Wi-Fi, user
 /// `pi`, root/pi passwords, US HTTPS apk mirrors, and persistent sys mode.
+///
+/// `project_root` is the developer override described on [`DeployOptions`];
+/// `None` uses the sys-setup script embedded in this binary.
 pub fn alpine_setup(
     connection: &Connection,
     settings: &AlpineSetupSettings,
-    project_root: &Path,
+    project_root: Option<&Path>,
     cancellation: &Arc<AtomicBool>,
     progress: &mut dyn FnMut(&str),
 ) -> io::Result<()> {
@@ -689,11 +816,11 @@ pub fn alpine_setup(
         progress(&format!("Installing Alpine sys mode on {board}."));
     }
 
-    let local = secure_relative(project_root, SETUP_SYS_MEMBER)?;
+    let payload = capsule_member(project_root, SETUP_SYS_MEMBER)?;
     let remote = format!("/tmp/omt-setup-sys-{}.sh", random_token(8)?);
     let remote_q = shell_quote(&remote);
     progress("Uploading the Alpine sys-setup script...");
-    session.upload(&local, &remote, cancellation)?;
+    upload_payload(&mut session, &payload, &remote, cancellation)?;
 
     let ssid_hex = settings
         .wifi
@@ -968,13 +1095,14 @@ fn remove_stage(session: &mut SshSession, stage_q: &str) {
 /// promotes the set. The caller removes the staging directory if this fails.
 fn stage_and_promote(
     session: &mut SshSession,
-    identities: &[(String, PathBuf, ArtifactIdentity)],
+    artifacts: &[Artifact],
     staging: &Staging<'_>,
     cancellation: &AtomicBool,
     progress: &mut dyn FnMut(&str),
 ) -> io::Result<()> {
     let stage = staging.stage;
-    for (name, local, identity) in identities {
+    for artifact in artifacts {
+        let name = &artifact.name;
         cancelled(cancellation)?;
         if let Some(parent) = Path::new(name)
             .parent()
@@ -990,8 +1118,8 @@ fn stage_and_promote(
 
         progress(&format!("Uploading {name}..."));
         let remote_path = format!("{stage}/{name}");
-        session.upload(local, &remote_path, cancellation)?;
-        if !identity_unchanged(local, identity)? {
+        upload_payload(session, &artifact.payload, &remote_path, cancellation)?;
+        if !artifact_unchanged(artifact)? {
             return Err(io::Error::other(format!(
                 "local deployment artifact changed during upload: {name}"
             )));
@@ -1002,7 +1130,7 @@ fn stage_and_promote(
             cancellation,
         )?;
         require_success(&checksum, "Remote checksum")?;
-        if parse_sha256_line(&checksum.stdout).as_ref() != Some(&identity.digest) {
+        if parse_sha256_line(&checksum.stdout).as_ref() != Some(&artifact.digest) {
             return Err(io::Error::other(format!(
                 "SHA-256 mismatch after uploading {name}"
             )));
@@ -1031,29 +1159,14 @@ pub fn deploy(
     progress: &mut dyn FnMut(&str),
 ) -> io::Result<()> {
     validate_connection(connection).map_err(map_validation)?;
-    validate_options(options, true).map_err(map_validation)?;
+    validate_options(options).map_err(map_validation)?;
     cancelled(cancellation)?;
-
-    let manifest_path = options.project_root.join("deploy/manifest-v3.txt");
-    let members = load_manifest(&manifest_path)?;
-    if !members.iter().any(|name| name == &options.tarball_name) {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!(
-                "deployment artifact manifest does not include {}",
-                options.tarball_name
-            ),
-        ));
-    }
 
     build_image(options, cancellation, progress)?;
     cancelled(cancellation)?;
 
-    let mut identities = Vec::with_capacity(members.len());
-    for name in &members {
-        let local = secure_relative(&options.project_root, name)?;
-        identities.push((name.clone(), local.clone(), capture_identity(&local)?));
-    }
+    let artifacts = capsule_artifacts(options)?;
+    progress(&capsule_summary(&artifacts, options));
 
     progress("Connecting and checking the Raspberry Pi...");
     let mut session = connect(connection)?;
@@ -1067,7 +1180,7 @@ pub fn deploy(
     ensure_host_bootstrapped(
         &mut session,
         connection,
-        &options.project_root,
+        options.project_root.as_deref(),
         cancellation,
         progress,
     )?;
@@ -1116,7 +1229,7 @@ pub fn deploy(
     // per-step cleanup this replaced could not see.
     let staged = stage_and_promote(
         &mut session,
-        &identities,
+        &artifacts,
         &Staging {
             stage: &stage,
             token: &token,

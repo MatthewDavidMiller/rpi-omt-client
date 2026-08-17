@@ -49,23 +49,47 @@ version="$(${deployer} --version)"
 [ -n "${version}" ] || fail "--version printed nothing"
 
 # `check` is the only command that needs no remote, so it is where the capsule
-# contract is exercised end to end.
+# contract is exercised end to end. With no --project it validates the capsule
+# compiled into the binary, which is what an operator's deployment uploads.
+expect_status 0 "check validates the embedded capsule with no project at all" \
+    "${deployer}" check
 expect_status 0 "check accepts this project's capsule" \
     "${deployer}" --project "${project}" check
+
+# The embedded report names the archive and its digest: a single-file deployer
+# has nothing on disk for an operator to inspect instead.
+embedded="$(${deployer} check)"
+case "${embedded}" in
+    *'omt-client-arm64.tar.gz'*'MiB'*'sha256 '*) ;;
+    *) fail "check does not describe the embedded appliance image: ${embedded}" ;;
+esac
 
 empty="$(mktemp -d "${TMPDIR:-/tmp}/omt-deployer-cli.XXXXXX")"
 trap 'rm -rf "${empty}"' EXIT INT TERM
 expect_status 1 "check reports a directory with no manifest as a failed run" \
     "${deployer}" --project "${empty}" check
 
-# `prerequisites` describes the workstation, so it needs no remote either. It
-# reports a directory that is not a project as a failed run rather than a usage
-# error: the command ran, and what it found is the failure.
+# `prerequisites` describes the workstation, so it needs no remote either. With
+# no --project there is nothing for it to require: the deployment builds
+# nothing and reads nothing from this machine.
+expect_status 0 "prerequisites is satisfied by the embedded capsule alone" \
+    "${deployer}" prerequisites
+case "$(${deployer} prerequisites)" in
+    *'[ok] Embedded appliance capsule'*) ;;
+    *) fail "prerequisites does not report the embedded capsule" ;;
+esac
+case "$(${deployer} prerequisites)" in
+    *'Container engine'*) fail "an embedded deployment asked for a container engine" ;;
+    *) ;;
+esac
+
+# A project root is the developer override, and then the build tooling is
+# reported again. A directory that is not a project is a failed run rather than
+# a usage error: the command ran, and what it found is the failure.
 expect_status 0 "prerequisites accepts this workstation" \
     "${deployer}" --project "${project}" prerequisites
 expect_status 1 "prerequisites reports a directory with no capsule as a failed run" \
     "${deployer}" --project "${empty}" prerequisites
-expect_status 2 "prerequisites without a project" "${deployer}" prerequisites
 
 # Every row is a line, and the failure names what is missing rather than only
 # that something is.
@@ -80,8 +104,11 @@ case "$(${deployer} --project "${project}" prerequisites)" in
 esac
 
 # Missing required arguments leave the command unrun.
-expect_status 2 "check without a project" "${deployer}" check
-expect_status 2 "deploy without a project" "${deployer}" deploy
+expect_status 2 "deploy without a host" "${deployer}" deploy
+# Rebuilding is the one deployment that still needs a source tree, and clap
+# refuses it before anything is opened rather than failing mid-deployment.
+expect_status 2 "deploy --rebuild-image without a project" \
+    "${deployer}" --host pi.local --username root deploy --rebuild-image
 expect_status 2 "an unknown subcommand" "${deployer}" --project "${project}" frobnicate
 expect_status 2 "an unknown option" "${deployer}" --project "${project}" --colour red check
 
@@ -127,19 +154,20 @@ expect_status_stdin 2 "web-password rejects a short password" \
     '{"password":"pw","web_password":"too-short"}' \
     "${deployer}" --host pi.local --username root --secrets-stdin web-password
 
-# Alpine sys setup is local-validated before any SSH session is opened.
-expect_status 2 "alpine-setup without a project" \
+# Alpine sys setup is local-validated before any SSH session is opened. Its
+# script is embedded too, so it needs no project root either.
+expect_status 2 "alpine-setup with no secret source" \
     "${deployer}" --host pi.local --username root alpine-setup --hostname omt-client
 expect_status_stdin 2 "alpine-setup without host passwords" '{"password":""}' \
-    "${deployer}" --host pi.local --username root --project "${project}" \
+    "${deployer}" --host pi.local --username root \
     --secrets-stdin alpine-setup --hostname omt-client
 expect_status_stdin 2 "alpine-setup rejects a short root password" \
     '{"password":"","root_password":"short","pi_password":"longenough"}' \
-    "${deployer}" --host pi.local --username root --project "${project}" \
+    "${deployer}" --host pi.local --username root \
     --secrets-stdin alpine-setup --hostname omt-client
 expect_status_stdin 2 "alpine-setup rejects an invalid hostname" \
     '{"password":"","root_password":"rootpass1","pi_password":"pipassword"}' \
-    "${deployer}" --host pi.local --username root --project "${project}" \
+    "${deployer}" --host pi.local --username root \
     --secrets-stdin alpine-setup --hostname '-bad'
 
 # The JSON surface is one object per line, which is what a wrapper parses.

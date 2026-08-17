@@ -484,13 +484,28 @@ The explicit root credential takes priority over an ambiguous `doas` probe:
 stock Alpine can describe its inert rule set as authorization-capable and then
 refuse the actual non-PTY command.
 
-Deployment builds the appliance image on the operator's own machine, so what
-that machine provides is part of the deployment contract rather than an
-assumption. `omt-deployer-core`'s `tools` module owns it: executable discovery
-that follows `PATHEXT`, the Windows shell locations Git for Windows installs
-into, the winget packages that supply a missing prerequisite, and the plan for
-invoking the image build. The Setup view and the CLI's `prerequisites`
-subcommand are two renderings of the same probe.
+The deployer carries the appliance instead of pointing at it.
+`crates/omt-deployer-core/build.rs` reads `deploy/manifest-v3.txt` and emits one
+`include_bytes!` per member, the ARM64 image archive included, so the operator's
+executable holds every byte the Raspberry Pi receives. That makes the image a
+build input of the deployer -- `make build-arm64` before `make build-deployer`,
+which both build scripts stop and say -- and it makes a deployer of one release
+paired with host scripts of another impossible to assemble. Embedded members are
+uploaded straight from the binary's read-only data: there is no file to open, so
+the mid-upload re-verification that a working tree needs does not apply to them,
+while the Pi's own `sha256sum` is still checked against a digest taken before the
+first byte was sent.
+
+A deployment therefore asks nothing of the machine it runs on, and the GUI has
+no workstation setup at all. The exception is the `--project` developer
+override, which sources the whole capsule from a checkout and, with
+`--rebuild-image`, builds that tree's archive first. Only then does what the
+machine provides become part of the contract, and `omt-deployer-core`'s `tools`
+module owns it: executable discovery that follows `PATHEXT`, the Windows shell
+locations Git for Windows installs into, the winget packages that supply a
+missing prerequisite, and the plan for invoking the image build. The CLI's
+`prerequisites` subcommand renders that probe; with no project root it reports
+the embedded capsule instead, which is satisfied by construction.
 
 Windows reaches `scripts/build-arm64.sh` through that shell directly rather
 than through GNU Make. The Makefile recipe is a call to the script, so make

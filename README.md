@@ -41,9 +41,11 @@ make build-deployer
 make build-windows-deployer
 ```
 
-The ARM64 build creates `omt-client-arm64.tar.gz`. The deployer build stages a
-host-native egui application, CLI, and CycloneDX SBOM in
-`.build/deployer-publish/`. On Linux, `make build-windows-deployer`
+The ARM64 build creates `omt-client-arm64.tar.gz`, and the deployer build
+embeds it: run `make build-arm64` first, or the deployer build stops and says
+so. The deployer build stages a host-native egui application, CLI, and
+CycloneDX SBOM in `.build/deployer-publish/`. Each executable carries the whole
+manifest-v3 capsule, so an operator needs that one file and no checkout. On Linux, `make build-windows-deployer`
 cross-compiles the same application for Windows x86-64 with mingw-w64 into
 `.build/deployer-publish-windows/`. Linux and Windows hosts build the same
 ARM64 appliance through the hermetic Dockerfile; `make install` provisions the

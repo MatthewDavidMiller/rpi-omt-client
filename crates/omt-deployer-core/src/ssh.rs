@@ -12,7 +12,7 @@ use russh_sftp::client::SftpSession;
 use russh_sftp::protocol::OpenFlags;
 use std::borrow::Cow;
 use std::fs::File;
-use std::io::{self, Read};
+use std::io::{self, Read, Seek};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -221,8 +221,25 @@ impl SshSession {
         remote: &str,
         cancellation: &AtomicBool,
     ) -> io::Result<()> {
+        let mut file = File::open(local)?;
         self.runtime
-            .block_on(upload_file(&self.handle, local, remote, cancellation))
+            .block_on(upload(&self.handle, &mut file, remote, cancellation))
+    }
+
+    /// Upload bytes this binary already holds.
+    ///
+    /// The capsule is compiled in, so most of what a deployment sends has no
+    /// file to open and no path that could be swapped underneath it between
+    /// the digest and the write.
+    pub fn upload_bytes(
+        &mut self,
+        data: &[u8],
+        remote: &str,
+        cancellation: &AtomicBool,
+    ) -> io::Result<()> {
+        let mut source = io::Cursor::new(data);
+        self.runtime
+            .block_on(upload(&self.handle, &mut source, remote, cancellation))
     }
 }
 
@@ -501,26 +518,38 @@ fn append_bounded(target: &mut Vec<u8>, data: &[u8]) -> io::Result<()> {
     Ok(())
 }
 
-async fn upload_file(
+/// A rewindable source of bytes to upload.
+///
+/// Rewindable because the SFTP attempt can fail after consuming part of it,
+/// and the shell fallback then has to send the whole thing again. A file and
+/// the capsule's compiled-in bytes are both read through this, so neither
+/// transport needs to know which one it is sending.
+trait Source: Read + Seek {}
+impl<T: Read + Seek> Source for T {}
+
+async fn upload(
     handle: &client::Handle<StrictHostKey>,
-    local: &Path,
+    source: &mut dyn Source,
     remote: &str,
     cancellation: &AtomicBool,
 ) -> io::Result<()> {
-    match upload_via_sftp(handle, local, remote, cancellation).await {
+    match upload_via_sftp(handle, source, remote, cancellation).await {
         Ok(()) => Ok(()),
-        Err(sftp_error) => match upload_via_shell(handle, local, remote, cancellation).await {
-            Ok(()) => Ok(()),
-            Err(shell_error) => Err(io::Error::other(format!(
-                "SFTP upload failed ({sftp_error}); shell fallback failed ({shell_error})"
-            ))),
-        },
+        Err(sftp_error) => {
+            source.rewind()?;
+            match upload_via_shell(handle, source, remote, cancellation).await {
+                Ok(()) => Ok(()),
+                Err(shell_error) => Err(io::Error::other(format!(
+                    "SFTP upload failed ({sftp_error}); shell fallback failed ({shell_error})"
+                ))),
+            }
+        }
     }
 }
 
 async fn upload_via_sftp(
     handle: &client::Handle<StrictHostKey>,
-    local: &Path,
+    source: &mut dyn Source,
     remote: &str,
     cancellation: &AtomicBool,
 ) -> io::Result<()> {
@@ -541,7 +570,6 @@ async fn upload_via_sftp(
     let sftp = SftpSession::new(channel.into_stream())
         .await
         .map_err(map_err)?;
-    let mut file = File::open(local)?;
     let mut remote_file = timeout(
         UPLOAD_TIMEOUT,
         sftp.open_with_flags(
@@ -563,7 +591,7 @@ async fn upload_via_sftp(
                 "operation cancelled",
             ));
         }
-        let count = file.read(&mut buffer)?;
+        let count = source.read(&mut buffer)?;
         if count == 0 {
             break;
         }
@@ -581,7 +609,7 @@ async fn upload_via_sftp(
 /// no SFTP subsystem. Stream the file through `cat` on a normal exec channel.
 async fn upload_via_shell(
     handle: &client::Handle<StrictHostKey>,
-    local: &Path,
+    source: &mut dyn Source,
     remote: &str,
     cancellation: &AtomicBool,
 ) -> io::Result<()> {
@@ -591,7 +619,6 @@ async fn upload_via_shell(
             "operation cancelled",
         ));
     }
-    let mut file = File::open(local)?;
     let mut channel = handle.channel_open_session().await.map_err(map_err)?;
     channel
         .exec(true, shell_upload_command(remote))
@@ -615,7 +642,7 @@ async fn upload_via_shell(
                 "shell upload timed out",
             ));
         }
-        let count = file.read(&mut buffer)?;
+        let count = source.read(&mut buffer)?;
         if count == 0 {
             break;
         }

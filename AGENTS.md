@@ -50,7 +50,7 @@ Use these as the primary map of the system. Then pull in task-specific docs as n
 make install
 
 # Build
-make build-arm64
+make build-arm64              # the deployer embeds this archive, so build it first
 make build-amd64
 make build-deployer
 make build-windows-deployer   # mingw-w64 cross build, Linux host

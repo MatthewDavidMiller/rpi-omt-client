@@ -21,6 +21,7 @@ help:
 	@echo "  build         Alias for build-arm64"
 	@echo "  build-deployer Test and publish the native deployer for this host"
 	@echo "  build-windows-deployer  Cross-compile the Windows x86-64 deployer (Linux host)"
+	@echo "                 Both embed $(ARM64_TARBALL), so run build-arm64 first"
 	@echo "  build-omt-sender  Build the first-party Rust OMT A/V sender"
 	@echo ""
 	@echo "Deploy targets:"
@@ -79,6 +80,11 @@ build-amd64:
 
 build: build-arm64
 
+# The deployer embeds the manifest-v3 capsule, appliance image included, so the
+# image is one of its build inputs: run build-arm64 first. Not a make
+# prerequisite on purpose -- an emulated ARM64 image build takes tens of
+# minutes, and starting one from a target named "build the deployer" would be a
+# surprise rather than a convenience. Both build scripts say so and stop.
 build-deployer:
 	RPI_OMT_CLIENT_VERSION="$(RPI_OMT_CLIENT_VERSION)" ./scripts/check-deployer.sh --publish
 
