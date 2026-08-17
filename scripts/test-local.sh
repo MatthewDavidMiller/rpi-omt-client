@@ -94,6 +94,7 @@ run_test "Deployment Transactions" "${PROJECT_ROOT}/tests/unit/test_deployment_t
 run_test "Compose Config" "${PROJECT_ROOT}/tests/unit/test_compose_config.sh"
 run_test "Alpine Bootstrap" "${PROJECT_ROOT}/tests/unit/test_bootstrap.sh"
 run_test "Alpine Sys Setup" "${PROJECT_ROOT}/tests/unit/test_setup_sys.sh"
+run_test "Appliance Rename" "${PROJECT_ROOT}/tests/unit/test_set_hostname.sh"
 run_test "Firewall Reachability" "${PROJECT_ROOT}/tests/unit/test_firewall_reachability.sh"
 run_test "Install Script" "${PROJECT_ROOT}/tests/unit/test_install.sh"
 run_test "OpenRC Services" "${PROJECT_ROOT}/tests/unit/test_openrc_services.sh"

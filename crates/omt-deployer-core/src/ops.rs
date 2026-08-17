@@ -21,6 +21,8 @@ const PLATFORM_PROBE: &str = "uname -m && . /etc/os-release && printf '%s\\n' \"
 const BOOTSTRAP_PASSWORD_READY: &str = "omt-bootstrap-password-ready";
 const SETUP_SYS_MEMBER: &str = "deploy/host/setup-sys.sh";
 const SETUP_SYS_COMPLETE: &str = "=== Alpine sys install complete ===";
+const SET_HOSTNAME_MEMBER: &str = "deploy/host/set-hostname.sh";
+const SET_HOSTNAME_COMPLETE: &str = "=== Appliance hostname set ===";
 const WEB_PASSWORD_COMMAND: &str = "sh -eu -c 'docker exec -i omt-client /usr/local/bin/omt-web set-password && rc-service omt-client restart'";
 
 /// The appliance's 5 GHz band policy, as `wpa_supplicant`'s `freq_list`.
@@ -943,6 +945,99 @@ pub fn manage(
     Ok(output)
 }
 
+/// Rename an installed appliance.
+///
+/// The name the Web GUI shows is the host's, so this is a host operation and
+/// not a container one: `deploy/host/set-hostname.sh` applies it to the running
+/// kernel, `/etc/hostname`, `/etc/hosts`, the DHCP client identity, and Avahi,
+/// and then recreates the container, because Docker fixes a host-network
+/// container's `/etc/hostname` when the container is created and never again.
+///
+/// The script is uploaded here rather than run from the install directory, so
+/// renaming works against an appliance deployed before this action existed.
+///
+/// `project_root` is the developer override described on [`DeployOptions`];
+/// `None` uses the script embedded in this binary.
+pub fn set_hostname(
+    connection: &Connection,
+    hostname: &str,
+    project_root: Option<&Path>,
+    cancellation: &AtomicBool,
+    progress: &mut dyn FnMut(&str),
+) -> io::Result<()> {
+    validate_connection(connection).map_err(map_validation)?;
+    if !crate::valid_appliance_hostname(hostname) {
+        return Err(map_validation(crate::ValidationError(
+            "Hostname must be 1-63 characters: letters, digits, and inner hyphens.",
+        )));
+    }
+    cancelled(cancellation)?;
+
+    progress("Connecting and uploading the hostname script...");
+    let mut session = connect(connection)?;
+    let payload = capsule_member(project_root, SET_HOSTNAME_MEMBER)?;
+    let remote = format!("/tmp/omt-set-hostname-{}.sh", random_token(8)?);
+    let remote_q = shell_quote(&remote);
+    upload_payload(&mut session, &payload, &remote, cancellation)?;
+
+    progress(&format!("Renaming the appliance to {hostname}..."));
+    // One privileged process, as with the Wi-Fi and Web-password channels:
+    // sudo consumes the first stdin line and the script reads the name from
+    // what remains, so the name never appears in a command line or a process
+    // listing on the Pi.
+    let inner = format!("/bin/sh {remote_q}; rc=$?; rm -f -- {remote_q}; exit $rc");
+    let command = privileged_stdin_command(connection, &format!("sh -c {}", shell_quote(&inner)));
+    let mut stdin = sudo_input(connection);
+    stdin.push_str(hostname);
+    stdin.push('\n');
+    let result = session.run(&command, &stdin, cancellation)?;
+    let secrets = [
+        connection
+            .password
+            .as_ref()
+            .map(Secret::expose)
+            .unwrap_or_default(),
+        connection
+            .key_passphrase
+            .as_ref()
+            .map(Secret::expose)
+            .unwrap_or_default(),
+        connection
+            .sudo_password
+            .as_ref()
+            .map(Secret::expose)
+            .unwrap_or_default(),
+    ];
+    if !result.is_success() {
+        let detail = redact(&result.combined(), &secrets);
+        return Err(io::Error::other(format!(
+            "Hostname change failed{}",
+            if detail.trim().is_empty() {
+                String::new()
+            } else {
+                format!(":\n{detail}")
+            }
+        )));
+    }
+    // The script's summary is on stdout. Compose narrates the container's
+    // recreation on stderr, and reading the combined streams appended that
+    // transcript to what is meant to be four closing lines.
+    let summary = redact(&result.stdout, &secrets);
+    if !summary.contains(SET_HOSTNAME_COMPLETE) {
+        return Err(io::Error::other(
+            "Hostname change finished without the completion marker",
+        ));
+    }
+    if let Some(tail) = summary.split(SET_HOSTNAME_COMPLETE).nth(1) {
+        let tail = tail.trim();
+        if !tail.is_empty() {
+            progress(tail);
+        }
+    }
+    progress(&format!("Appliance hostname is now {hostname}."));
+    Ok(())
+}
+
 /// Replace the appliance Web credential over stdin and restart the service.
 ///
 /// The password is never interpolated into a command or emitted as progress.
@@ -1246,6 +1341,7 @@ pub fn deploy(
     let executable_paths = [
         "deploy/host/bootstrap.sh",
         "deploy/host/setup-sys.sh",
+        "deploy/host/set-hostname.sh",
         "deploy/host/install.sh",
         "deploy/host/uninstall.sh",
         "deploy/host/host-diagnostics.sh",
@@ -1539,6 +1635,41 @@ mod tests {
         );
         assert!(!WEB_PASSWORD_COMMAND.contains("$1"));
         assert!(!WEB_PASSWORD_COMMAND.contains("printf"));
+    }
+
+    /// The rename is an upload-and-run, so the only thing on the command line
+    /// is the uploaded path. The name itself travels on stdin; a version that
+    /// interpolated it would put an operator's chosen hostname in the Pi's
+    /// process listing and, worse, in a shell's parsing.
+    #[test]
+    fn the_rename_command_names_only_the_uploaded_script() {
+        let remote = "/tmp/omt-set-hostname-0123456789ab.sh";
+        let remote_q = shell_quote(remote);
+        let inner = format!("/bin/sh {remote_q}; rc=$?; rm -f -- {remote_q}; exit $rc");
+        assert!(inner.contains(remote));
+        assert!(!inner.contains("studio-pi-2"));
+        // The script removes itself whether it succeeded or not, and the
+        // status the caller sees is the script's rather than the cleanup's.
+        assert!(inner.contains("rm -f --"));
+        assert!(inner.ends_with("exit $rc"));
+    }
+
+    /// The deployer waits for a marker the script prints, and uploads a member
+    /// the capsule has to contain. Both are checked against the embedded
+    /// bytes, which are the ones a deployment actually sends.
+    #[test]
+    fn the_embedded_rename_script_is_the_one_this_module_drives() {
+        let member = embedded_member(SET_HOSTNAME_MEMBER)
+            .unwrap_or_else(|| panic!("{SET_HOSTNAME_MEMBER} is not in the capsule"));
+        let script = std::str::from_utf8(member.bytes).unwrap_or_else(|error| panic!("{error}"));
+        assert!(
+            script.contains(SET_HOSTNAME_COMPLETE),
+            "the embedded rename script never prints the marker ops.rs waits for"
+        );
+        assert!(
+            script.contains("rc-service omt-client restart"),
+            "the embedded rename script does not recreate the appliance container"
+        );
     }
 
     #[test]

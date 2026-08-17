@@ -5,8 +5,9 @@ use omt_deployer_core::{
     AlpineSetupSettings, AuthMethod, Connection, DeployOptions, IMAGE_MEMBER, ManagementAction,
     ON_WINDOWS, Prerequisite, Secret, WifiSettings, alpine_setup, apply_wifi, change_web_password,
     deploy, embedded_image, embedded_members, ensure_arm64_emulation, install_packages,
-    load_manifest, manage, missing_packages, prerequisites, sha256_bytes, validate_alpine_setup,
-    validate_connection, validate_options, validate_web_password, validate_wifi,
+    load_manifest, manage, missing_packages, prerequisites, set_hostname, sha256_bytes,
+    valid_appliance_hostname, validate_alpine_setup, validate_connection, validate_options,
+    validate_web_password, validate_wifi,
 };
 use serde::{Deserialize, Serialize};
 use std::io::{self, Read};
@@ -66,6 +67,8 @@ enum Command {
     Reboot,
     /// Change the Web GUI password and revoke every existing Web session.
     WebPassword,
+    /// Rename an installed appliance, in the host and in the Web GUI.
+    Hostname(HostnameArgs),
     Wifi(WifiArgs),
 }
 #[derive(Args)]
@@ -94,6 +97,12 @@ struct DeployArgs {
     /// Needs the container engine and ARM64 emulation `prerequisites` reports.
     #[arg(long, requires = "project")]
     rebuild_image: bool,
+}
+#[derive(Args)]
+struct HostnameArgs {
+    /// The appliance's new name: one DNS label, 1-63 characters.
+    #[arg(long)]
+    name: String,
 }
 #[derive(Args)]
 struct WifiArgs {
@@ -508,6 +517,34 @@ fn run(cli: Cli) -> Result<(), (i32, String)> {
             change_web_password(&connection, &password, &cancellation, &mut progress)
                 .map_err(|e| (1, e.to_string()))?;
             emit(cli.json, "result", "Web GUI password changed.", Some(true));
+        }
+        Command::Hostname(args) => {
+            // Rejected here as a usage error rather than reaching the Pi as a
+            // failed operation: exit 2 is what every other bad argument gives.
+            if !valid_appliance_hostname(&args.name) {
+                return Err((
+                    2,
+                    "--name must be one DNS label of 1-63 characters: letters, digits, \
+                     and inner hyphens"
+                        .into(),
+                ));
+            }
+            let connection = connection.ok_or_else(|| (2, "connection required".into()))?;
+            let mut progress = progress_emitter(cli.json);
+            set_hostname(
+                &connection,
+                &args.name,
+                cli.project.as_deref(),
+                &cancellation,
+                &mut progress,
+            )
+            .map_err(|e| (1, e.to_string()))?;
+            emit(
+                cli.json,
+                "result",
+                &format!("Appliance hostname changed to {}.", args.name),
+                Some(true),
+            );
         }
         Command::Status | Command::Logs | Command::Restart | Command::Reboot => {
             let action = match cli.command {

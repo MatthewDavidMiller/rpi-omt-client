@@ -754,6 +754,40 @@ done
 
 echo "Loading OMT Client image..."
 docker load < "${TARBALL}"
+OMT_IMAGE_LABEL='org.opencontainers.image.title=Raspberry Pi OMT Client'
+NEW_IMAGE_ID="$(docker image inspect --format '{{.Id}}' omt-client)"
+
+# Reclaim the appliance images this one replaced.
+#
+# `docker load` moves the omt-client tag onto the new image and leaves the
+# previous one untagged but on disk, so every update added around 90 MB to an
+# SD card that nothing ever swept. The appliance is already stopped -- its stop
+# is `compose down`, which removes the container -- so nothing holds those
+# images by the time this runs.
+#
+# Each candidate is confirmed to carry this product's image title, to have no
+# repository tag left, and not to be the image just loaded. Docker's own
+# `dangling=true` filter is not trusted to do that: on Alpine's engine,
+# combining it with a label filter returns the *tagged* image as well, and
+# acting on that list would delete the appliance the installer is installing.
+SUPERSEDED_IMAGE_LIST="$(mktemp)"
+docker image ls -a --filter "label=${OMT_IMAGE_LABEL}" --format '{{.ID}}' \
+    | sort -u > "${SUPERSEDED_IMAGE_LIST}"
+SUPERSEDED_IMAGE_COUNT=0
+while read -r CANDIDATE_IMAGE; do
+    [[ -n "${CANDIDATE_IMAGE}" ]] || continue
+    CANDIDATE_IMAGE_ID="$(docker image inspect --format '{{.Id}}' "${CANDIDATE_IMAGE}" 2>/dev/null || true)"
+    [[ -n "${CANDIDATE_IMAGE_ID}" && "${CANDIDATE_IMAGE_ID}" != "${NEW_IMAGE_ID}" ]] || continue
+    CANDIDATE_IMAGE_TAGS="$(docker image inspect --format '{{len .RepoTags}}' "${CANDIDATE_IMAGE}" 2>/dev/null || echo 1)"
+    [[ "${CANDIDATE_IMAGE_TAGS}" == "0" ]] || continue
+    if docker image rm "${CANDIDATE_IMAGE_ID}" >/dev/null 2>&1; then
+        SUPERSEDED_IMAGE_COUNT=$((SUPERSEDED_IMAGE_COUNT + 1))
+    fi
+done < "${SUPERSEDED_IMAGE_LIST}"
+rm -f -- "${SUPERSEDED_IMAGE_LIST}"
+(( SUPERSEDED_IMAGE_COUNT == 0 )) || \
+    echo "Reclaimed ${SUPERSEDED_IMAGE_COUNT} superseded appliance image(s)."
+
 OMT_UID="$(docker run --rm --user 0:0 --entrypoint /usr/bin/id omt-client -u omt 2>/dev/null || true)"
 OMT_GID="$(docker run --rm --user 0:0 --entrypoint /usr/bin/id omt-client -g omt 2>/dev/null || true)"
 [[ "${OMT_UID}" =~ ^[1-9][0-9]*$ && "${OMT_GID}" =~ ^[1-9][0-9]*$ ]] || {

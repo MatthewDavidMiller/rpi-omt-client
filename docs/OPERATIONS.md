@@ -128,6 +128,33 @@ For root SSH, omit `sudo_password`. Prefer the desktop prompt or a protected
 input source in automation; the literal JSON is only a field-layout example.
 The operation refuses an active `OMT_WEB_PASSWORD` emergency override.
 
+### Rename the appliance
+
+The name in the Web GUI header and in the `<name>.local` mDNS record is the
+Raspberry Pi's own hostname. Change it from the desktop deployer's **Manage**
+view under **Appliance hostname**, or from the CLI:
+
+```bash
+printf '%s\n' '{"password":"SSH_PASSWORD","sudo_password":"SUDO_PASSWORD"}' \
+  | rpi-omt-deploy --host pi.example --username pi --secrets-stdin \
+      hostname --name studio-pi-2
+```
+
+The name is one DNS label of 1-63 characters: letters, digits, and inner
+hyphens. It is applied to the running kernel, `/etc/hostname`, the loopback
+entry in `/etc/hosts`, and the DHCP client identity in
+`/etc/network/interfaces`, and Avahi is restarted so `<name>.local` resolves
+straight away. DHCP-registered DNS picks the name up at the next lease renewal
+or reboot; no lease is renewed here, because this operation usually runs over
+the SSH session that lease is carrying.
+
+Playback stops for a few seconds: the appliance container is recreated, which
+is the only way the Web GUI's name changes. Docker writes a host-network
+container's `/etc/hostname` when the container is created and never revisits
+it, so a container that keeps running keeps the old name no matter how often
+the process inside it restarts. An appliance that is deliberately stopped is
+left stopped and takes the new name when it next starts.
+
 Host security and low-memory state:
 
 ```bash

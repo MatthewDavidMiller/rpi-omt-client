@@ -154,6 +154,25 @@ expect_status_stdin 2 "web-password rejects a short password" \
     '{"password":"pw","web_password":"too-short"}' \
     "${deployer}" --host pi.local --username root --secrets-stdin web-password
 
+# Renaming an installed appliance takes the same DNS label Alpine setup does,
+# and is rejected as a usage error here rather than reaching the Pi and failing
+# there. `--name=` rather than `--name `: a leading hyphen is one of the values
+# under test, and the parser would read it as a flag.
+expect_status 2 "hostname requires a name" \
+    "${deployer}" --host pi.local --username root hostname
+expect_status 2 "hostname rejects a leading hyphen" \
+    "${deployer}" --host pi.local --username root hostname --name=-bad
+expect_status 2 "hostname rejects a trailing hyphen" \
+    "${deployer}" --host pi.local --username root hostname --name=bad-
+expect_status 2 "hostname rejects a dotted name" \
+    "${deployer}" --host pi.local --username root hostname --name=pi.local
+expect_status 2 "hostname rejects whitespace" \
+    "${deployer}" --host pi.local --username root hostname --name='two words'
+# 64 characters, one past the DNS label limit.
+expect_status 2 "hostname rejects a label over 63 characters" \
+    "${deployer}" --host pi.local --username root hostname \
+    --name=nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn
+
 # Alpine sys setup is local-validated before any SSH session is opened. Its
 # script is embedded too, so it needs no project root either.
 expect_status 2 "alpine-setup with no secret source" \

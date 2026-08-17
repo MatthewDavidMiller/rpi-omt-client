@@ -7,7 +7,8 @@ mod tools;
 
 pub use capsule::{CapsuleMember, IMAGE_MEMBER, embedded_image, embedded_member, embedded_members};
 pub use ops::{
-    alpine_setup, apply_wifi, change_web_password, connect, deploy, manage, test_connection,
+    alpine_setup, apply_wifi, change_web_password, connect, deploy, manage, set_hostname,
+    test_connection,
 };
 pub use ssh::{RemoteResult, SshSession};
 pub use tools::{

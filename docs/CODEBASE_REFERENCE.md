@@ -94,6 +94,7 @@ are POST and CSRF protected.
 |---|---|
 | Installer/uninstaller | `deploy/host/install.sh`, `deploy/host/uninstall.sh` |
 | Factory Alpine sys-mode setup | `deploy/host/setup-sys.sh` |
+| Post-install rename | `deploy/host/set-hostname.sh` |
 | Host diagnostics | `deploy/host/host-diagnostics.sh` |
 | Reboot validator | `deploy/host/host-reboot.sh`, `deploy/lib/reboot-request.sh` |
 | Shared host helpers | `deploy/lib/host-validation.sh`, `deploy/lib/publication.sh`, `deploy/lib/service-install.sh` |
@@ -102,7 +103,7 @@ are POST and CSRF protected.
 | Deployment contract | `deploy/manifest-v3.txt`, `deploy/transaction.sh` |
 | Capsule embedded into the deployer, and the build step that compiles it in | `crates/omt-deployer-core/src/capsule.rs`, `crates/omt-deployer-core/build.rs` |
 | CLI deployment | `scripts/deploy.sh` |
-| Deployer validation, fixed actions, SSH/SFTP, deploy, Alpine sys setup, and Wi-Fi | `crates/omt-deployer-core/src/lib.rs`, `crates/omt-deployer-core/src/ssh.rs`, `crates/omt-deployer-core/src/ops.rs` |
+| Deployer validation, fixed actions, SSH/SFTP, deploy, Alpine sys setup, rename, and Wi-Fi | `crates/omt-deployer-core/src/lib.rs`, `crates/omt-deployer-core/src/ssh.rs`, `crates/omt-deployer-core/src/ops.rs` |
 | Workstation tooling: executable discovery, prerequisites, winget installs, ARM64 emulation, and the image-build plan | `crates/omt-deployer-core/src/tools.rs` |
 | Secure command-line deployer | `crates/rpi-omt-deploy/src/main.rs` |
 | Deployer CLI contract | `tests/native/test_deployer_cli.sh` |
@@ -156,6 +157,18 @@ The desktop Deploy view leaves the generated credential in place unless
 The fixed action invokes `omt-web set-password` inside the unprivileged
 container and restarts OpenRC; Rust validates the value and atomically writes
 only a PBKDF2-SHA256 hash.
+Renaming an installed appliance (`set_hostname`, the desktop **Manage** view,
+and CLI `hostname`) uploads `deploy/host/set-hostname.sh` the same way Alpine
+setup uploads its own script, so a board deployed before the action existed can
+still be renamed. The name is the *host's*: the Web GUI reads `/etc/hostname`,
+and Docker fills a host-network container's copy of that file once, at creation
+time, so the script recreates the container rather than restarting the process
+inside it.
+`install.sh` removes the appliance images its `docker load` supersedes, matching
+on this product's OCI image title and confirming each candidate is untagged and
+is not the image just loaded. Docker's `dangling=true` filter is not used: on
+Alpine's engine, combining it with a label filter also returns the tagged
+image.
 
 ## Legal and release
 

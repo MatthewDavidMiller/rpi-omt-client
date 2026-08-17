@@ -233,7 +233,7 @@ freshly installed appliance whose container has not been created yet.
 Manage also offers a confirmed operating-system reboot. A successful Deploy
 already reboots to apply kernel, firmware, and KMS settings, so that reboot
 does not need a separate SSH session. The same view can change the Web GUI
-password later without redeploying.
+password or rename the appliance later without redeploying.
 Wi-Fi updates the running
 `wpa_supplicant` through its control socket and stores a derived WPA PSK rather
 than sending the plaintext passphrase to a command line. Existing profiles are
@@ -336,6 +336,7 @@ Its nested-path boundary is:
 deploy/compose.yml
 deploy/host/bootstrap.sh
 deploy/host/setup-sys.sh
+deploy/host/set-hostname.sh
 deploy/host/install.sh
 deploy/host/uninstall.sh
 deploy/host/host-diagnostics.sh
@@ -436,11 +437,45 @@ persisted. The CLI `deploy` command does not rotate the credential; use
 Select a discovered source or save a direct target such as
 `omt://192.168.1.60:6400`.
 
+## Renaming an installed appliance
+
+The name in the Web GUI header, in every page title, and in the `<name>.local`
+mDNS record is the host's own hostname. Alpine setup writes it when the board
+is first installed; **Manage -> Appliance hostname** changes it afterwards, as
+does the CLI:
+
+```bash
+printf '%s\n' '{"password":"...","sudo_password":"..."}' | \
+rpi-omt-deploy --host 10.1.20.223 --username pi --secrets-stdin \
+    hostname --name studio-pi-2
+```
+
+The name is one DNS label of 1-63 characters: letters, digits, and inner
+hyphens, the same rule Alpine setup applies. It is written to `/etc/hostname`,
+the running kernel, the loopback entry in `/etc/hosts`, and the DHCP client
+identity in `/etc/network/interfaces`, and Avahi is restarted so
+`<name>.local` resolves immediately.
+
+The appliance container is then recreated, which stops playback for a few
+seconds. That recreation is not optional: Docker writes a host-network
+container's `/etc/hostname` once, when the container is created, so a running
+container keeps the name the host had at that moment however many times the
+process inside it is restarted. An appliance that is deliberately stopped --
+between a first install and its reboot, for instance -- is left stopped and
+picks the name up when it starts.
+
+The new name reaches DHCP-registered DNS at the next lease renewal or reboot;
+nothing here renews a lease, because this operation usually runs over the SSH
+session that lease is carrying.
+
 ## Upgrade and uninstall
 
 Deploy a complete newer manifest-v3 capsule to the same directory. Persistent
 credentials, sessions, TLS material, and source state remain in
-`omt-config-v3`.
+`omt-config-v3`. Installer state kept outside the capsule is preserved too: the
+saved HDMI mode and video ceiling, the Web credential hash, and the appliance's
+hostname. The appliance images an update replaces are removed once the new one
+is loaded, so repeated updates do not accumulate on the SD card.
 
 Run `sudo ./deploy/host/uninstall.sh` to remove owned OpenRC services, host
 state, firewall rules, image, and optionally the volume/install directory. The

@@ -23,6 +23,11 @@ mod gates {
         pub user: &'a str,
         pub password: &'a str,
         pub hostname: &'a str,
+        /// The rename typed on Manage. Separate from `hostname`, which names a
+        /// factory image Alpine setup is about to install: an operator who
+        /// filled that in weeks ago must not be able to rename a live
+        /// appliance by pressing a button on a different view.
+        pub manage_hostname: &'a str,
         pub os_root_password: &'a str,
         pub os_root_password_confirmation: &'a str,
         pub os_pi_password: &'a str,
@@ -77,6 +82,10 @@ mod gates {
             self.can_connect() && self.web_password_is_ready()
         }
 
+        pub fn can_set_hostname(&self) -> bool {
+            self.can_connect() && valid_appliance_hostname(self.manage_hostname)
+        }
+
         fn web_password_is_ready(&self) -> bool {
             self.web_password == self.web_password_confirmation
                 && Secret::new(self.web_password.to_owned())
@@ -118,6 +127,7 @@ mod gates {
                 user: "root",
                 password: "secret",
                 hostname: "omt-client",
+                manage_hostname: "studio-pi-2",
                 os_root_password: "rootpass1",
                 os_root_password_confirmation: "rootpass1",
                 os_pi_password: "pipassword",
@@ -154,6 +164,7 @@ mod gates {
                 assert!(!incomplete.can_install_alpine());
                 assert!(!incomplete.can_apply_wifi());
                 assert!(!incomplete.can_change_web_password());
+                assert!(!incomplete.can_set_hostname());
             }
             assert!(
                 Form {
@@ -244,6 +255,32 @@ mod gates {
                     ..form("", "")
                 }
                 .can_change_web_password()
+            );
+        }
+
+        /// Renaming reads its own field. Alpine setup's hostname is for a
+        /// factory image that has not been installed yet, and a rename that
+        /// took its value would quietly apply whatever was left in that box.
+        #[test]
+        fn the_rename_button_reads_the_manage_field_only() {
+            assert!(form("", "").can_set_hostname());
+            for rejected in ["", "-bad", "bad-", "has space", "has.dot", &"n".repeat(64)] {
+                assert!(
+                    !Form {
+                        manage_hostname: rejected,
+                        ..form("", "")
+                    }
+                    .can_set_hostname(),
+                    "accepted an invalid appliance hostname: {rejected}"
+                );
+            }
+            assert!(
+                !Form {
+                    manage_hostname: "",
+                    hostname: "still-valid",
+                    ..form("", "")
+                }
+                .can_set_hostname()
             );
         }
 
@@ -728,7 +765,8 @@ mod desktop {
     use omt_deployer_core::{
         AlpineSetupSettings, AuthMethod, Connection, DeployOptions, IMAGE_MEMBER, ManagementAction,
         Secret, WifiSettings, alpine_setup, apply_wifi, change_web_password, deploy,
-        embedded_image, manage, test_connection, validate_web_password, validate_wifi,
+        embedded_image, manage, set_hostname, test_connection, validate_web_password,
+        validate_wifi,
     };
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
@@ -773,6 +811,7 @@ mod desktop {
         Deploy,
         Manage(ManagementAction),
         WebPassword,
+        Hostname,
         Wifi,
     }
 
@@ -791,6 +830,9 @@ mod desktop {
         sudo_password: Zeroizing<String>,
         known_hosts: String,
         hostname: String,
+        /// The rename typed on Manage, kept apart from `hostname` so the
+        /// Alpine view's factory-image name can never drive a live rename.
+        manage_hostname: String,
         os_root_password: Zeroizing<String>,
         os_root_password_confirmation: Zeroizing<String>,
         os_pi_password: Zeroizing<String>,
@@ -843,6 +885,7 @@ mod desktop {
                 sudo_password: Zeroizing::new(String::new()),
                 known_hosts: String::new(),
                 hostname: "omt-client".into(),
+                manage_hostname: String::new(),
                 os_root_password: Zeroizing::new(String::new()),
                 os_root_password_confirmation: Zeroizing::new(String::new()),
                 os_pi_password: Zeroizing::new(String::new()),
@@ -918,6 +961,7 @@ mod desktop {
                 user: &self.user,
                 password: &self.password,
                 hostname: &self.hostname,
+                manage_hostname: &self.manage_hostname,
                 os_root_password: &self.os_root_password,
                 os_root_password_confirmation: &self.os_root_password_confirmation,
                 os_pi_password: &self.os_pi_password,
@@ -999,6 +1043,7 @@ mod desktop {
                 wifi_connect: self.wifi_connect,
                 wifi_preserve_existing_profiles: self.wifi_preserve_existing_profiles,
                 hostname: self.hostname.clone(),
+                manage_hostname: self.manage_hostname.clone(),
                 os_root_password: self.os_root_password.clone(),
                 os_pi_password: self.os_pi_password.clone(),
                 rotate_web_password: self.rotate_web_password,
@@ -1024,6 +1069,7 @@ mod desktop {
                     "Scheduling operating-system reboot...".into()
                 }
                 Job::WebPassword => "Changing Web GUI password...".into(),
+                Job::Hostname => "Renaming the appliance...".into(),
                 Job::Wifi => "Applying Wi-Fi settings...".into(),
             });
             thread::spawn(move || {
@@ -1374,6 +1420,7 @@ mod desktop {
         wifi_connect: bool,
         wifi_preserve_existing_profiles: bool,
         hostname: String,
+        manage_hostname: String,
         os_root_password: Zeroizing<String>,
         os_pi_password: Zeroizing<String>,
         rotate_web_password: bool,
@@ -1455,6 +1502,14 @@ mod desktop {
                 change_web_password(remote()?, &password, cancel, &mut progress)
                     .map_err(|error| error.to_string())
             }
+            Job::Hostname => set_hostname(
+                remote()?,
+                &request.manage_hostname,
+                request.options.project_root.as_deref(),
+                cancel,
+                &mut progress,
+            )
+            .map_err(|error| error.to_string()),
             Job::Wifi => {
                 let settings = WifiSettings {
                     ssid: request.wifi_ssid,
@@ -1707,6 +1762,24 @@ mod desktop {
                                 self.pending_confirmation = None;
                             }
                         });
+                    }
+                    ui.separator();
+                    ui.heading("Appliance hostname");
+                    ui.label(
+                        "The name shown in the Web GUI and published as <name>.local. Applying it \
+                         recreates the appliance container, so playback stops for a few seconds.",
+                    );
+                    field(ui, "New hostname", |ui| {
+                        text_field(ui, &mut self.manage_hostname, false);
+                    });
+                    if ui
+                        .add_enabled(
+                            self.form().can_set_hostname() && !self.running(),
+                            egui::Button::new("Change hostname"),
+                        )
+                        .clicked()
+                    {
+                        self.start_job(Job::Hostname);
                     }
                     ui.separator();
                     ui.heading("Web GUI password");

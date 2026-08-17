@@ -195,4 +195,27 @@ LOAD_LINE="$(first_line_of '^docker load')"
 require 'Nothing has been changed and the appliance is still running' \
     "a rejected connector mode must say the appliance was left alone"
 
+# Every update loads a new image and leaves the previous one untagged. Nothing
+# swept those, so an appliance that had been updated a few times was carrying
+# hundreds of megabytes of superseded images on its SD card.
+require 'docker image rm' "an update must reclaim the appliance images it supersedes"
+require 'len \.RepoTags' \
+    "a candidate for removal must be confirmed untagged, not assumed to be"
+require 'NEW_IMAGE_ID' "the image just loaded must be excluded from removal by identity"
+# Alpine's engine returns the *tagged* image from a `dangling=true` filter when
+# a label filter is combined with it, so acting on that list would delete the
+# appliance this installer is installing.
+forbid 'filter dangling=true' \
+    "the dangling filter must not decide what an installer deletes"
+forbid 'image prune' "a broad prune must not stand in for naming the images to reclaim"
+RECLAIM_LINE="$(first_line_of 'docker image rm')"
+[[ -n "${RECLAIM_LINE}" ]] || {
+    echo "FAIL: could not locate the superseded-image reclaim" >&2
+    exit 1
+}
+(( LOAD_LINE < RECLAIM_LINE )) || {
+    echo "FAIL: the reclaim must run after the load that supersedes the old image" >&2
+    exit 1
+}
+
 echo "Alpine OMT installer contract tests passed"
