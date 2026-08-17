@@ -109,15 +109,17 @@ run_test "Lint and syntax" "${PROJECT_ROOT}/scripts/lint.sh"
 run_test "Receiver Core" "${PROJECT_ROOT}/tools/test-receiver.sh"
 
 # ─── Rust Deployer Tests ─────────────────────────────────────
-if [[ "${QUICK_MODE}" == "true" ]]; then
-    run_test "Deployer Core and CLI" "${PROJECT_ROOT}/scripts/check-deployer.sh"
-else
-    run_test "Deployer Core, CLI, and GUI publish" \
-        "${PROJECT_ROOT}/scripts/check-deployer.sh" --publish
-    # Both published deployer packages come off this one Linux workstation, so
-    # the Windows package is built and header-verified in the same gate that
+# No mode publishes a deployer package. A package carries the version its
+# commit carries, so `make build-deployer` and `make build-windows-deployer`
+# own publishing and the post-commit hook runs them; this runner only has to
+# prove both builds compile and pass their contracts.
+run_test "Deployer Core, CLI, and GUI" "${PROJECT_ROOT}/scripts/check-deployer.sh"
+if [[ "${QUICK_MODE}" != "true" ]]; then
+    # Both deployer packages come off this one Linux workstation, so the
+    # Windows build is compiled and header-verified in the same gate that
     # builds the host one.
-    run_test "Windows Deployer Cross Build" "${PROJECT_ROOT}/scripts/build-windows-deployer.sh"
+    run_test "Windows Deployer Cross Build" \
+        "${PROJECT_ROOT}/scripts/build-windows-deployer.sh" --no-publish
 fi
 
 # ─── Python repository/shell-boundary tests ──────────────────

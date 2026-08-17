@@ -1,5 +1,10 @@
 #!/bin/bash
 # Full local gate run before every commit.
+#
+# This hook proves the tree builds and passes; it publishes nothing. Every
+# shipped artifact stamps the detected version into itself, and the version a
+# release carries is the one recorded by the commit, so the publishing builds
+# run from .githooks/post-commit instead.
 
 set -euo pipefail
 

@@ -1,8 +1,16 @@
 #!/bin/bash
 # Cross-compile the Rust CLI and egui deployer for Windows x86-64.
+#
+# --no-publish compiles and header-verifies the cross build without staging a
+# package. The pre-commit gate uses it: a package is stamped with the version
+# the commit carries, so publishing belongs to the post-commit hook.
 set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-[[ $# -eq 0 ]] || { echo "Usage: $0" >&2; exit 2; }
+MODE="${1:-}"
+if [[ $# -gt 1 || ( -n "${MODE}" && "${MODE}" != "--no-publish" ) ]]; then
+    echo "Usage: $0 [--no-publish]" >&2
+    exit 2
+fi
 cd "${PROJECT_ROOT}"
 TARGET=x86_64-pc-windows-gnu
 rustup target list --installed 2>/dev/null | grep -Fxq "${TARGET}" || { echo "ERROR: Rust target ${TARGET} is required. Run: make install" >&2; exit 1; }
@@ -14,6 +22,12 @@ rustup target list --installed 2>/dev/null | grep -Fxq "${TARGET}" || { echo "ER
 }
 VERSION="${RPI_OMT_CLIENT_VERSION:-$("${PROJECT_ROOT}/scripts/detect-version.sh" "${PROJECT_ROOT}")}"
 RPI_OMT_CLIENT_VERSION="${VERSION}" cargo build --locked --release --target "${TARGET}" -p rpi-omt-deploy -p rpi-omt-deployer --features rpi-omt-deployer/desktop
+if [[ "${MODE}" == "--no-publish" ]]; then
+    "${PROJECT_ROOT}/scripts/verify-windows-deployer.sh" --console "target/${TARGET}/release/rpi-omt-deploy.exe"
+    "${PROJECT_ROOT}/scripts/verify-windows-deployer.sh" "target/${TARGET}/release/rpi-omt-deployer.exe"
+    echo "Verified Windows Rust deployer cross build; not published"
+    exit 0
+fi
 STAGE="${PROJECT_ROOT}/.build/deployer-publish-windows.stage"
 PUBLISH="${PROJECT_ROOT}/.build/deployer-publish-windows"
 rm -rf "${STAGE}"

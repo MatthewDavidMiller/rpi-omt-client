@@ -1,0 +1,57 @@
+#!/bin/bash
+# Publishing builds, run once the commit exists.
+#
+# Every artifact bakes the detected version in at build time: the receiver, the
+# web service, both deployer executables, and the SBOMs beside them. Built from
+# a pre-commit hook they are stamped against a tree that is not yet a commit,
+# so the published packages describe a revision nobody can check out. Building
+# here instead means the version in an artifact is the version its commit
+# carries.
+#
+# Git ignores this hook's exit status -- the commit is already made -- so a
+# failure has to announce itself rather than rely on a status nobody reads.
+
+set -uo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+cd "${REPO_ROOT}" || exit 1
+
+# Git exports the finished commit's index and directory to its hooks. The build
+# scripts shell out to git for version detection and would resolve this
+# repository against those, so drop them the way the pre-commit gate does.
+unset GIT_INDEX_FILE GIT_DIR GIT_WORK_TREE GIT_PREFIX
+
+GIT_COMMON_DIR="$(git rev-parse --git-common-dir)"
+
+# A rebase, cherry-pick, revert, or merge sequencer replays commits one after
+# another. Publishing on each intermediate commit would rebuild the appliance
+# image several times over and leave the packages describing whichever commit
+# happened to be last. The final commit of the sequence is the one worth
+# publishing, so build then, by hand or on the next ordinary commit.
+for sequencer_state in rebase-merge rebase-apply sequencer MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD; do
+    if [[ -e "${GIT_COMMON_DIR}/${sequencer_state}" ]]; then
+        echo "=== Post-commit builds skipped: ${sequencer_state} in progress ==="
+        echo "Run 'make build-arm64 build-deployer build-windows-deployer' when it finishes."
+        exit 0
+    fi
+done
+
+VERSION="$(./scripts/detect-version.sh "${REPO_ROOT}")"
+
+echo "=== Post-commit builds: $(git rev-parse --short HEAD) as ${VERSION} ==="
+
+# Order is a dependency, not a preference: both deployer executables compile
+# the appliance image into themselves, so the image is built first. Unchanged
+# receiver sources hit the layer cache, which is what keeps this from costing
+# a full emulated build on every commit.
+for target in build-arm64 build-deployer build-windows-deployer; do
+    echo "--- make ${target} ---"
+    if ! make "${target}"; then
+        echo "=== FAILED: make ${target} ===" >&2
+        echo "The commit stands; the published artifacts do not match it." >&2
+        echo "Fix the build and rerun: make ${target}" >&2
+        exit 1
+    fi
+done
+
+echo "=== Post-commit builds published ${VERSION} ==="

@@ -43,6 +43,8 @@ The Rust Web service has one version reader used by About, Diagnostics, and the
 `version.txt` support-bundle member. Build entry points prefer an explicit
 `RPI_OMT_CLIENT_VERSION`, then the canonical workspace version in `Cargo.toml`,
 before falling back to release metadata from Git or a versioned source directory.
+Because that version is baked into every artifact at build time, the builds that
+publish one run from `.githooks/post-commit` rather than the commit gate.
 
 `diagnostics.rs` owns both sides of the correlated host request boundary and
 lays out the support ZIP. It returns the runtime check together with the exact
@@ -107,6 +109,7 @@ are POST and CSRF protected.
 | egui desktop deployer, its button-gating and display-scaling rules, and embedded legal texts | `crates/rpi-omt-deployer/` |
 | Hash-locked Rust dependencies and supply-chain gates | `Cargo.lock`, `deny.toml`, `supply-chain/`, `scripts/check-supply-chain.sh` |
 | Windows cross build | `scripts/build-windows-deployer.sh` |
+| Local commit gate and the publishing builds that follow it | `.githooks/pre-commit`, `.githooks/post-commit`, `scripts/setup-hooks.sh` |
 | Local toolchain provisioning | `scripts/install-dev-deps.sh`, `scripts/install-hadolint.sh`, `scripts/install-trivy.sh`, `scripts/install-arm64-emulation.sh` |
 
 `tools.rs` is where the deployer's answers about the *operator's* machine live,

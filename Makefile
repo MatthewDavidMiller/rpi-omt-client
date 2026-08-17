@@ -22,6 +22,8 @@ help:
 	@echo "  build-deployer Test and publish the native deployer for this host"
 	@echo "  build-windows-deployer  Cross-compile the Windows x86-64 deployer (Linux host)"
 	@echo "                 Both embed $(ARM64_TARBALL), so run build-arm64 first"
+	@echo "                 The post-commit hook runs all three: a published"
+	@echo "                 artifact carries the version of its own commit"
 	@echo "  build-omt-sender  Build the first-party Rust OMT A/V sender"
 	@echo ""
 	@echo "Deploy targets:"

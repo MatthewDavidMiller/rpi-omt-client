@@ -69,7 +69,7 @@ chmod +x "${fixture_root}/tests/integration/test_docker_build.sh"
 
 cat > "${fixture_root}/scripts/build-windows-deployer.sh" <<'EOF'
 #!/bin/bash
-printf 'ran\n' >> "${WINDOWS_BUILD_LOG}"
+printf '%s\n' "$*" >> "${WINDOWS_BUILD_LOG}"
 EOF
 chmod +x "${fixture_root}/scripts/build-windows-deployer.sh"
 for stub_path in "${stub_paths[@]}"; do
@@ -150,16 +150,19 @@ run_container_mode() {
             > "${case_dir}/${mode}-output" 2>&1
     )
     # Every mode that reaches a container engine builds the image and both
-    # deployer packages. A mode that quietly drops one of them would still be
-    # green here without these three logs. The deployer gate is invoked exactly
+    # deployer executables. A mode that quietly drops one of them would still
+    # be green here without these three logs. Neither deployer build publishes
+    # a package: `make build-deployer`, `make build-windows-deployer`, and the
+    # post-commit hook that runs them own publishing, so an artifact's version
+    # is the one its commit carries. The deployer gate is invoked exactly
     # once: the second invocation this used to require was the retired
     # `--integration-only` mode, which re-ran the tests the first one had
     # already run and reported it as an Alpine userland check.
     if [[ "$(wc -l < "${log_file}")" -eq 1 ]] &&
-       grep -Fxq -- '--publish' "${log_file}" &&
+       [[ -z "$(< "${log_file}")" ]] &&
        grep -Fxq ran "${case_dir}/${mode}-docker-build" &&
-       grep -Fxq ran "${case_dir}/${mode}-windows"; then
-        echo "PASS: ${mode} mode builds the image and publishes both deployers"
+       grep -Fxq -- '--no-publish' "${case_dir}/${mode}-windows"; then
+        echo "PASS: ${mode} mode builds the image and both deployers without publishing"
     else
         echo "FAIL: ${mode} mode deployer contract changed" >&2
         cat "${case_dir}/${mode}-output" >&2

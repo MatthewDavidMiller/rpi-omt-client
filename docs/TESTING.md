@@ -139,8 +139,11 @@ Restricted or offline builders use a trusted Cargo registry mirror populated
 with the exact checksums in `Cargo.lock`.
 
 `make build-windows-deployer` cross-compiles the deployment CLI and egui
-application for `x86_64-pc-windows-gnu`. Every non-quick local run performs
-this cross build, so both published packages come off the same commit.
+application for `x86_64-pc-windows-gnu` and publishes the package. Every
+non-quick local run performs the same cross build with `--no-publish`, which
+compiles and header-verifies the executables without staging a package, so a
+broken cross build stops a commit while both published packages still come off
+one commit's sources.
 
 `make test-quick` runs every shell contract/behavior suite, receiver tests,
 deployer tests, lint, and Python tests without requiring a container image
@@ -158,7 +161,36 @@ passwordless sudo; it never replaces the packet test with a text-only check.
 The normal `make test` adds the Windows cross build, an amd64 image build, and
 the ARM64 receiver builder stage. Full mode adds container smoke and OMT
 network tests. The pre-commit hook runs full mode, the Python dependency audit,
-and the Trivy scans.
+and the Trivy scans. No test mode publishes an artifact.
+
+## Local hooks
+
+`./scripts/setup-hooks.sh` — run by `make install` — points `core.hooksPath` at
+the tracked `.githooks/` directory, so both hooks update with a checkout
+instead of drifting as copies under `.git/hooks`.
+
+| Hook | Runs |
+|------|------|
+| `.githooks/pre-commit` | `./scripts/test-local.sh --full`, `scripts/audit-python-deps.sh`, `scripts/security-scan.sh` |
+| `.githooks/post-commit` | `make build-arm64`, `make build-deployer`, `make build-windows-deployer` |
+
+The publishing builds run after the commit rather than before it because every
+shipped artifact bakes in the version `scripts/detect-version.sh` reports —
+the receiver, the web service, both deployer executables, and the SBOMs beside
+them. Publishing from the pre-commit gate stamps them against a tree that is
+not yet a commit; publishing afterwards means an artifact's version is the one
+its commit carries. The ARM64 image is built first because both deployer
+executables compile it into themselves.
+
+Git ignores a post-commit hook's exit status, so a failed build cannot undo the
+commit; the hook prints a `FAILED` banner and the `make` target to rerun. It
+skips itself while a rebase, cherry-pick, revert, or merge sequencer is
+replaying commits — publishing on each intermediate commit would rebuild the
+image repeatedly and leave the packages describing whichever commit landed
+last. Publish from the finished sequence with
+`make build-arm64 build-deployer build-windows-deployer`. `git commit
+--no-verify` bypasses the pre-commit gate only; the post-commit builds still
+run.
 
 ## Hardware validation boundary
 

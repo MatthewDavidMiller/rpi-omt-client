@@ -16,12 +16,14 @@ if ! git -C "${PROJECT_ROOT}" rev-parse --is-inside-work-tree >/dev/null 2>&1; t
     exit 1
 fi
 
-# Keep the tracked hook live so updates cannot drift from copied .git files.
-[[ -f "${HOOKS_DIR}/pre-commit" ]] || {
-    echo "ERROR: Missing tracked hook: ${HOOKS_DIR}/pre-commit" >&2
-    exit 1
-}
-chmod +x "${HOOKS_DIR}/pre-commit"
+# Keep the tracked hooks live so updates cannot drift from copied .git files.
+for hook in pre-commit post-commit; do
+    [[ -f "${HOOKS_DIR}/${hook}" ]] || {
+        echo "ERROR: Missing tracked hook: ${HOOKS_DIR}/${hook}" >&2
+        exit 1
+    }
+    chmod +x "${HOOKS_DIR}/${hook}"
+done
 git -C "${PROJECT_ROOT}" config --local core.hooksPath .githooks
 echo "Configured core.hooksPath=.githooks"
 
@@ -29,7 +31,13 @@ echo ""
 echo "Git hooks installed successfully!"
 echo ""
 echo "Hooks will run automatically:"
-echo "  - pre-commit: Full tests, audits, Windows publish, and security scans"
+echo "  - pre-commit:  Full tests, audits, cross builds, and security scans"
+echo "  - post-commit: ARM64 image and both deployer packages, versioned to"
+echo "                 the commit that was just made"
 echo ""
-echo "To bypass hooks temporarily (not recommended):"
+echo "To bypass the pre-commit gate temporarily (not recommended):"
 echo "  git commit --no-verify"
+echo ""
+echo "--no-verify does not skip post-commit; the builds still run. The same"
+echo "builds by hand:"
+echo "  make build-arm64 build-deployer build-windows-deployer"
