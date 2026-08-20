@@ -22,17 +22,22 @@ rustup target list --installed 2>/dev/null | grep -Fxq "${TARGET}" || { echo "ER
 }
 VERSION="${RPI_OMT_CLIENT_VERSION:-$("${PROJECT_ROOT}/scripts/detect-version.sh" "${PROJECT_ROOT}")}"
 RPI_OMT_CLIENT_VERSION="${VERSION}" cargo build --locked --release --target "${TARGET}" -p rpi-omt-deploy -p rpi-omt-deployer --features rpi-omt-deployer/desktop
+# Asked for rather than assumed to be ./target: the gates run inside the
+# toolbox image, which points CARGO_TARGET_DIR at a cache volume so compiled
+# artifacts survive between runs.
+RELEASE_DIR="$(cargo metadata --format-version 1 --no-deps 2>/dev/null |
+    sed -n 's/.*"target_directory":"\([^"]*\)".*/\1/p')/${TARGET}/release"
 if [[ "${MODE}" == "--no-publish" ]]; then
-    "${PROJECT_ROOT}/scripts/verify-windows-deployer.sh" --console "target/${TARGET}/release/rpi-omt-deploy.exe"
-    "${PROJECT_ROOT}/scripts/verify-windows-deployer.sh" "target/${TARGET}/release/rpi-omt-deployer.exe"
+    "${PROJECT_ROOT}/scripts/verify-windows-deployer.sh" --console "${RELEASE_DIR}/rpi-omt-deploy.exe"
+    "${PROJECT_ROOT}/scripts/verify-windows-deployer.sh" "${RELEASE_DIR}/rpi-omt-deployer.exe"
     echo "Verified Windows Rust deployer cross build; not published"
     exit 0
 fi
 STAGE="${PROJECT_ROOT}/.build/deployer-publish-windows.stage"
 PUBLISH="${PROJECT_ROOT}/.build/deployer-publish-windows"
 rm -rf "${STAGE}"
-install -Dm755 "target/${TARGET}/release/rpi-omt-deploy.exe" "${STAGE}/bin/rpi-omt-deploy.exe"
-install -Dm755 "target/${TARGET}/release/rpi-omt-deployer.exe" "${STAGE}/bin/rpi-omt-deployer.exe"
+install -Dm755 "${RELEASE_DIR}/rpi-omt-deploy.exe" "${STAGE}/bin/rpi-omt-deploy.exe"
+install -Dm755 "${RELEASE_DIR}/rpi-omt-deployer.exe" "${STAGE}/bin/rpi-omt-deployer.exe"
 install -Dm644 LICENSE "${STAGE}/LICENSE"
 install -Dm644 THIRD_PARTY_NOTICES.txt "${STAGE}/THIRD_PARTY_NOTICES.txt"
 python3 scripts/generate-deployer-sbom.py --cargo-lock Cargo.lock --output "${STAGE}/deployer-sbom.cdx.json" --version "${VERSION}"

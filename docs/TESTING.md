@@ -1,15 +1,31 @@
 # Testing
 
-Bootstrap Python tooling, Rust 1.97.1 with rustfmt/Clippy and the Windows GNU
-target, Hadolint, Trivy, and ARM64 container emulation once:
+Build the gate toolbox once:
 
 ```bash
 make install
 ```
 
-`make install` fails if it cannot provision one of those tools, because every
-gate below runs on every commit and none of them substitute a pass for a tool
-they could not find.
+Docker or Podman is the only thing the gates need from a workstation. Rust
+1.97.1 with rustfmt and Clippy, the Windows GNU and musl targets, cargo-deny,
+cargo-vet, Hadolint, ShellCheck, Trivy, mingw-w64, and the Python tooling all
+live inside `tools/toolbox/Dockerfile`; nothing is installed onto the host.
+`scripts/toolbox.sh` runs each gate in that image and rebuilds it automatically
+when a pinned version changes, because the image tag is a content hash of the
+Dockerfile, the Python requirements, and the pinned installers.
+
+The toolbox is built on the same digest-pinned `rust:1.97.1-alpine3.23` image
+the appliance compiles with, so the gates and the shipped receiver resolve one
+compiler rather than two that can drift. Its musl host is also what makes the
+static Linux deployer a native build rather than a cross-compile.
+
+The repository is bind-mounted at its own absolute path rather than at a fixed
+`/work`. Gates that start their own containers pass paths through the mounted
+socket to the *host* daemon, which resolves them in its own filesystem, so any
+other mount point would silently mount the wrong directory.
+
+`scripts/install-dev-deps.sh` still provisions that toolchain on a host for
+anyone who wants it, but no gate requires it any more.
 
 ## No gate skips
 
@@ -25,7 +41,7 @@ for a check it did not run:
 - `tests/unit/test_supply_chain.sh` fails if a new skip escape appears in
   `tests/`, `scripts/`, or `tools/`.
 
-Fix the workstation with `make install` instead of narrowing the suite.
+Rebuild the toolbox with `make install` instead of narrowing the suite.
 
 Use the narrowest relevant gate:
 

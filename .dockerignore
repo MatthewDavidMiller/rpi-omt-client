@@ -4,6 +4,13 @@ tests/
 scripts/*
 !scripts/generate-runtime-sbom.py
 !scripts/cargo_lock.py
+# tools/toolbox/Dockerfile builds from this same context and reads its pinned
+# tool versions out of the tree rather than restating them. These enter the
+# context only; the appliance image never copies them, so its contents and its
+# runtime-sha256.manifest are unchanged.
+!scripts/install-hadolint.sh
+!scripts/install-trivy.sh
+!tests/requirements-dev.txt
 *.md
 *.log
 *.tar.gz

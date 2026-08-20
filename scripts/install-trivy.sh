@@ -9,6 +9,12 @@ TRIVY_VERSION="0.73.0"
 TRIVY_LINUX_X86_64_SHA256="2edd39da482bb4e9831962487b68f68e3928ec3137794757f54d00383d79547b"
 TRIVY_LINUX_ARM64_SHA256="13833d97e8a1a5367471c372a173180157f593bece570e20d5d925fef552f5dd"
 
+# The toolbox image runs this as root during its build, where there is no sudo
+# to call. Escalate only when the caller is not already root.
+if [[ "$(id -u)" -eq 0 ]]; then
+    sudo() { "$@"; }
+fi
+
 case "$(uname -s)/$(uname -m)" in
     Linux/x86_64)
         archive_name="trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"

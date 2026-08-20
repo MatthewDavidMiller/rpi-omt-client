@@ -762,16 +762,17 @@ mod desktop {
     use crate::gates::Form;
     use crate::layout;
     use eframe::egui;
+    // Job, JobRequest, WorkerEvent, and run_job live in the core rather than
+    // here: the terminal deployer runs the same jobs, and a deployment must
+    // not mean something different depending on which frontend started it.
     use omt_deployer_core::{
-        AlpineSetupSettings, AuthMethod, Connection, DeployOptions, IMAGE_MEMBER, ManagementAction,
-        Secret, WifiSettings, alpine_setup, apply_wifi, change_web_password, deploy,
-        embedded_image, manage, set_hostname, test_connection, validate_web_password,
-        validate_wifi,
+        AuthMethod, Connection, DeployOptions, IMAGE_MEMBER, Job, JobRequest, ManagementAction,
+        Secret, WorkerEvent, embedded_image, run_job,
     };
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::mpsc::{self, Receiver, Sender};
+    use std::sync::mpsc::{self, Receiver};
     use std::thread;
     use zeroize::Zeroizing;
 
@@ -791,28 +792,6 @@ mod desktop {
         Wifi,
         Activity,
         About,
-    }
-
-    enum WorkerEvent {
-        Line(String),
-        Finished(Result<(), String>),
-    }
-
-    /// Every job this application runs, all of which talk to the Raspberry Pi.
-    ///
-    /// There is no local job left: the workstation probe, the winget installs,
-    /// and the ARM64 emulation setup all existed to prepare a machine to
-    /// *build* the appliance image, and this application no longer builds
-    /// anything. It carries the image instead. `rpi-omt-deploy prerequisites`
-    /// and `setup-emulation` still serve a developer rebuilding from a tree.
-    enum Job {
-        Test,
-        Alpine,
-        Deploy,
-        Manage(ManagementAction),
-        WebPassword,
-        Hostname,
-        Wifi,
     }
 
     /// Which field an open file dialog is filling in.
@@ -1398,131 +1377,6 @@ mod desktop {
             ui.add(egui::TextEdit::singleline(text).desired_width(f32::INFINITY));
         });
         browse
-    }
-
-    /// One queued operation, handed to the worker thread.
-    ///
-    /// `wifi_password` stays `Zeroizing` across the move: the form field it is
-    /// cloned from is zeroized, and copying it into a bare `String` for the
-    /// trip through the channel would defeat that for every request that is
-    /// built but never sent to `apply_wifi`.
-    struct JobRequest {
-        job: Job,
-        /// Absent for the Setup jobs, which never leave this machine.
-        connection: Option<Connection>,
-        /// Carried by every job, not only Deploy: the Setup probe describes a
-        /// particular project root and archive, and reading them from anywhere
-        /// else would let the view answer for one while the deployment used
-        /// another.
-        options: DeployOptions,
-        wifi_ssid: String,
-        wifi_password: Zeroizing<String>,
-        wifi_connect: bool,
-        wifi_preserve_existing_profiles: bool,
-        hostname: String,
-        manage_hostname: String,
-        os_root_password: Zeroizing<String>,
-        os_pi_password: Zeroizing<String>,
-        rotate_web_password: bool,
-        web_password: Zeroizing<String>,
-    }
-
-    fn run_job(
-        request: JobRequest,
-        cancel: &Arc<AtomicBool>,
-        tx: &Sender<WorkerEvent>,
-    ) -> Result<(), String> {
-        let mut progress = |message: &str| {
-            for line in message.lines() {
-                if !line.is_empty() {
-                    let _ = tx.send(WorkerEvent::Line(line.to_owned()));
-                }
-            }
-        };
-        // Every remote job proved its connection before the worker started;
-        // this is the one place that unwrapping is expressed as an error.
-        let remote = || {
-            request
-                .connection
-                .as_ref()
-                .ok_or_else(|| "no connection was prepared for this operation".to_owned())
-        };
-        match request.job {
-            Job::Test => {
-                test_connection(remote()?, cancel, &mut progress).map_err(|error| error.to_string())
-            }
-            Job::Alpine => {
-                let wifi = if request.wifi_ssid.is_empty() {
-                    None
-                } else {
-                    Some(WifiSettings {
-                        ssid: request.wifi_ssid.clone(),
-                        password: Secret::new((*request.wifi_password).clone())
-                            .map_err(|error| error.to_string())?,
-                        connect: false,
-                        preserve_existing_profiles: true,
-                    })
-                };
-                let settings = AlpineSetupSettings {
-                    hostname: request.hostname,
-                    wifi,
-                    root_password: Secret::new((*request.os_root_password).clone())
-                        .map_err(|error| error.to_string())?,
-                    pi_password: Secret::new((*request.os_pi_password).clone())
-                        .map_err(|error| error.to_string())?,
-                };
-                alpine_setup(
-                    remote()?,
-                    &settings,
-                    request.options.project_root.as_deref(),
-                    cancel,
-                    &mut progress,
-                )
-                .map_err(|error| error.to_string())
-            }
-            Job::Deploy => {
-                deploy(remote()?, &request.options, cancel, &mut progress)
-                    .map_err(|error| error.to_string())?;
-                if !request.rotate_web_password {
-                    return Ok(());
-                }
-                let password = Secret::new((*request.web_password).clone())
-                    .map_err(|error| error.to_string())?;
-                validate_web_password(&password).map_err(|error| error.to_string())?;
-                change_web_password(remote()?, &password, cancel, &mut progress)
-                    .map_err(|error| error.to_string())
-            }
-            Job::Manage(action) => manage(remote()?, action, cancel, &mut progress)
-                .map(|_| ())
-                .map_err(|error| error.to_string()),
-            Job::WebPassword => {
-                let password = Secret::new((*request.web_password).clone())
-                    .map_err(|error| error.to_string())?;
-                validate_web_password(&password).map_err(|error| error.to_string())?;
-                change_web_password(remote()?, &password, cancel, &mut progress)
-                    .map_err(|error| error.to_string())
-            }
-            Job::Hostname => set_hostname(
-                remote()?,
-                &request.manage_hostname,
-                request.options.project_root.as_deref(),
-                cancel,
-                &mut progress,
-            )
-            .map_err(|error| error.to_string()),
-            Job::Wifi => {
-                let settings = WifiSettings {
-                    ssid: request.wifi_ssid,
-                    password: Secret::new((*request.wifi_password).clone())
-                        .map_err(|error| error.to_string())?,
-                    connect: request.wifi_connect,
-                    preserve_existing_profiles: request.wifi_preserve_existing_profiles,
-                };
-                validate_wifi(&settings).map_err(|error| error.to_string())?;
-                apply_wifi(remote()?, &settings, cancel, &mut progress)
-                    .map_err(|error| error.to_string())
-            }
-        }
     }
 
     impl eframe::App for App {

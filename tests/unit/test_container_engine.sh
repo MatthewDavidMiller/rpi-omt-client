@@ -40,6 +40,24 @@ EOF
     chmod +x "${bin_dir}/${engine_name}"
 }
 
+# Make a bin directory the only thing on PATH for a case that needs an engine
+# to be genuinely absent.
+#
+# Keeping /usr/bin on PATH would not do: whether Docker is "absent" would then
+# depend on whether the machine running the gate happens to have a real
+# /usr/bin/docker, and the toolbox image necessarily does -- it drives the host
+# engine through its socket. The helper shells out to exactly these two, so
+# they are linked in rather than inherited.
+isolate_path() {
+    local bin_dir="$1"
+    local tool path
+    for tool in basename grep; do
+        path="$(command -v "${tool}")"
+        ln -sf "${path}" "${bin_dir}/${tool}"
+    done
+    printf '%s\n' "${bin_dir}"
+}
+
 echo "=== Live Container Engine Selection Tests ==="
 
 case_dir="${TEST_TMPDIR}/podman-only"
@@ -47,7 +65,8 @@ make_fake_engine "${case_dir}/bin" podman
 if (
     unset CONTAINER_ENGINE CONTAINER_ENGINE_KIND CONTAINER_ENGINE_ANNOUNCED
     export ENGINE_TEST_LOG="${case_dir}/calls"
-    export PATH="${case_dir}/bin:/usr/bin:/bin"
+    isolated_path="$(isolate_path "${case_dir}/bin")"
+    export PATH="${isolated_path}"
     # shellcheck disable=SC1090
     source "${HELPER}"
     ensure_test_container_engine

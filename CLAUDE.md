@@ -26,15 +26,15 @@ Raspberry Pi OMT Client — receives Open Media Transport video/audio streams on
 ## Essential Commands
 
 ```bash
-# Provision every local gate tool (compilers, linters, Trivy, mingw-w64, ARM64 emulation)
+# Build the gate toolbox image (Docker or Podman is the only host dependency)
 make install
 
 # Build ARM64 image (for Raspberry Pi 5)
 make build-arm64         # → omt-client-arm64.tar.gz
 
 # Build the operator deployment application
-make build-deployer            # host-native package
-make build-windows-deployer    # Windows x86-64 cross build (Linux host)
+make build-deployer            # Linux CLI + TUI, static musl, runs on any distro
+make build-windows-deployer    # Windows x86-64 CLI + egui GUI (cross build)
 
 # Deploy to Pi
 make deploy HOST=pi@<ip>   # promote capsule + run deploy/host/install.sh
@@ -54,7 +54,14 @@ make lint                  # shellcheck + hadolint + yamllint + ruff + mypy
 ```
 
 No gate skips: a missing tool, an unregistered ARM64 emulator, or a skipped
-pytest case fails the run. Repair the workstation with `make install`.
+pytest case fails the run. Every gate runs inside `tools/toolbox/Dockerfile`
+via `scripts/toolbox.sh`; rebuild it with `make install`.
+
+The Linux deployer is a terminal application, not a GUI. egui `dlopen`s the
+operator's glibc-linked graphics driver, so a Linux GUI cannot be the
+one-binary-runs-anywhere artifact this ships; Windows keeps the egui GUI, where
+`opengl32.dll` is a system library. Both frontends run the same jobs from
+`crates/omt-deployer-core/src/jobs.rs`.
 
 ## Architecture
 

@@ -85,6 +85,14 @@ fi
 # Static linking is what makes the .exe runnable on a stock Windows host. These
 # names are the redistributables and third-party runtimes that a dynamic link
 # would leave behind for the operator to chase down.
+#
+# api-ms-win-crt-* is deliberately not among them. Those are the Universal CRT,
+# which has shipped as part of Windows itself since Windows 10 -- an operator
+# installs nothing to satisfy them. The mingw-w64 toolchain that builds this
+# targets the UCRT by default, where older mingw builds targeted the legacy
+# msvcrt; importing them is the modern, supported arrangement rather than a
+# missing dependency. msvcp*/vcruntime* stay listed: those are the MSVC
+# redistributable, which is genuinely a separate install.
 mapfile -t imports < <(awk '/DLL Name:/ { print tolower($3) }' <<< "${headers}")
 if ((${#imports[@]} == 0)); then
     fail "artifact imports no DLLs at all, so its headers are unreadable"
@@ -92,7 +100,9 @@ fi
 bundled=()
 for import in "${imports[@]}"; do
     case "${import}" in
-        lib*|sdl3*|zlib*|msvcp*|vcruntime*|api-ms-win-crt-*)
+        api-ms-win-crt-*)
+            ;;
+        lib*|sdl3*|zlib*|msvcp*|vcruntime*)
             bundled+=("${import}")
             ;;
     esac

@@ -107,7 +107,12 @@ are POST and CSRF protected.
 | Workstation tooling: executable discovery, prerequisites, winget installs, ARM64 emulation, and the image-build plan | `crates/omt-deployer-core/src/tools.rs` |
 | Secure command-line deployer | `crates/rpi-omt-deploy/src/main.rs` |
 | Deployer CLI contract | `tests/native/test_deployer_cli.sh` |
-| egui desktop deployer, its button-gating and display-scaling rules, and embedded legal texts | `crates/rpi-omt-deployer/` |
+| egui desktop deployer (Windows), its button-gating and display-scaling rules, and embedded legal texts | `crates/rpi-omt-deployer/` |
+| Terminal deployer (Linux), the static-musl frontend with the same field set | `crates/rpi-omt-deploy-tui/` |
+| Job definitions both deployer frontends share, so a deployment means one thing | `crates/omt-deployer-core/src/jobs.rs` |
+| Gate toolbox image: every compiler, linter, and scanner the gates use | `tools/toolbox/Dockerfile` |
+| Runs a gate inside the toolbox; the only thing the host needs is Docker or Podman | `scripts/toolbox.sh` |
+| Reads the Linux deployer's static-linkage guarantee back out of the ELF headers | `scripts/verify-linux-deployer.sh` |
 | Hash-locked Rust dependencies and supply-chain gates | `Cargo.lock`, `deny.toml`, `supply-chain/`, `scripts/check-supply-chain.sh` |
 | Windows cross build | `scripts/build-windows-deployer.sh` |
 | Local commit gate and the publishing builds that follow it | `.githooks/pre-commit`, `.githooks/post-commit`, `scripts/setup-hooks.sh` |

@@ -72,8 +72,13 @@ cat > "${fixture_root}/scripts/build-windows-deployer.sh" <<'EOF'
 printf '%s\n' "$*" >> "${WINDOWS_BUILD_LOG}"
 EOF
 chmod +x "${fixture_root}/scripts/build-windows-deployer.sh"
+# A real stub rather than a symlink to /bin/true. Both busybox and Alpine's
+# GNU coreutils are multicall binaries that dispatch on argv[0], so a symlink
+# to one under a suite's name is answered with "unknown program" instead of
+# succeeding.
 for stub_path in "${stub_paths[@]}"; do
-    ln -s /bin/true "${fixture_root}/${stub_path}"
+    printf '#!/bin/sh\nexit 0\n' > "${fixture_root}/${stub_path}"
+    chmod +x "${fixture_root}/${stub_path}"
 done
 
 cat > "${fixture_root}/scripts/check-deployer.sh" <<'EOF'
@@ -114,7 +119,7 @@ if (
         PROBE_RESULT="${probe_result}" \
         CHECK_DEPLOYER_LOG="${case_dir}/quick-deployer" \
         WINDOWS_BUILD_LOG="${case_dir}/quick-windows" \
-        "${fixture_root}/scripts/test-local.sh" --quick \
+        env -u OMT_PYTHON_VENV "${fixture_root}/scripts/test-local.sh" --quick \
         > "${case_dir}/runner-output" 2>&1
 ) && grep -Fxq "${fixture_root}" "${probe_result}"; then
     echo "PASS: test-local resolves relative test paths from its project root"
@@ -146,7 +151,7 @@ run_container_mode() {
             EXPECTED_PROJECT_ROOT="${fixture_root}" \
             PROBE_RESULT="${probe_result}" \
             CHECK_DEPLOYER_LOG="${log_file}" \
-            "${fixture_root}/scripts/test-local.sh" "${mode_args[@]}" \
+            env -u OMT_PYTHON_VENV "${fixture_root}/scripts/test-local.sh" "${mode_args[@]}" \
             > "${case_dir}/${mode}-output" 2>&1
     )
     # Every mode that reaches a container engine builds the image and both

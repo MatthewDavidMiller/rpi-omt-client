@@ -175,7 +175,11 @@ forbid 'install -d -m 0750 -o root -g "\$\{OMT_GID\}" "\$\{AVAHI_STATE_DIR\}"' \
 # when it fired. Assert the order rather than the presence: this only regresses
 # by the block moving.
 first_line_of() {
-    grep -nE -- "$1" "${INSTALL}" | head -1 | cut -d: -f1
+    # One awk rather than `grep -nE | head -1 | cut`: under `set -o pipefail`
+    # head exits at its first line and SIGPIPEs grep, so the pipeline reports
+    # 141 and the whole gate fails. GNU grep often finishes writing before that
+    # lands; busybox does not, and the gates run on Alpine.
+    awk -v pattern="$1" '$0 ~ pattern { print NR; exit }' "${INSTALL}"
 }
 GUARD_LINE="$(first_line_of 'contains an unmanaged connector mode')"
 STOP_LINE="$(first_line_of 'Stopping the appliance before updating Alpine packages')"

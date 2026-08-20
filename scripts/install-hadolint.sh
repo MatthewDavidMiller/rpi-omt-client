@@ -12,6 +12,12 @@ if [[ "$(uname -s)" != "Linux" || "$(uname -m)" != "x86_64" ]]; then
     exit 1
 fi
 
+# The toolbox image runs this as root during its build, where there is no sudo
+# to call. Escalate only when the caller is not already root.
+if [[ "$(id -u)" -eq 0 ]]; then
+    sudo() { "$@"; }
+fi
+
 download_dir="$(mktemp -d)"
 trap 'rm -rf "${download_dir}"' EXIT
 binary="${download_dir}/hadolint-Linux-x86_64"

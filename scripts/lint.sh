@@ -31,16 +31,25 @@ missing_tool() {
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-PYTHON_VENV="${PROJECT_ROOT}/tests/.venv"
+# The toolbox image bakes the Python tooling into /opt/venv and points
+# OMT_PYTHON_VENV at it, so a gate run never writes into the mounted tree. A
+# host run falls back to the venv `make test-setup` builds.
+PYTHON_VENV="${OMT_PYTHON_VENV:-${PROJECT_ROOT}/tests/.venv}"
 
 cd "${PROJECT_ROOT}"
 
 if command -v cargo >/dev/null 2>&1; then
     echo "Running rustfmt and strict Clippy..."
     cargo fmt --all -- --check
-    # The egui deployer is behind a feature. Without it here, the largest
-    # single file in the workspace is never linted.
     cargo clippy --workspace --all-targets --locked \
+        --exclude rpi-omt-deployer -- -D warnings
+    # The egui deployer is a Windows artifact and is linted against the target
+    # it actually ships for. It cannot ride the workspace pass above: that one
+    # builds omt-receiver, which binds ALSA and does not cross-compile to
+    # Windows. Without this the largest single file in the workspace goes
+    # unlinted, since `desktop` is off by default.
+    cargo clippy -p rpi-omt-deployer --all-targets --locked \
+        --target x86_64-pc-windows-gnu \
         --features rpi-omt-deployer/desktop -- -D warnings
     echo "Running Rust supply-chain gates..."
     "${SCRIPT_DIR}/check-supply-chain.sh"

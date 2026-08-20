@@ -9,7 +9,8 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 PIP_AUDIT_BIN="${PIP_AUDIT_BIN:-}"
 PIP_AUDIT_CACHE_DIR="${PIP_AUDIT_CACHE_DIR:-${PROJECT_ROOT}/.build/pip-audit-cache}"
-PYTHON_VENV="${PROJECT_ROOT}/tests/.venv/bin/python"
+# See scripts/lint.sh: the toolbox supplies its own venv through this.
+PYTHON_VENV="${OMT_PYTHON_VENV:-${PROJECT_ROOT}/tests/.venv}/bin/python"
 
 if [[ -z "${PIP_AUDIT_BIN}" ]]; then
     if [[ -x "${PYTHON_VENV}" ]] && \

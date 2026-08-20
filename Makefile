@@ -11,6 +11,11 @@ RPI_OMT_CLIENT_VERSION ?= $(shell ./scripts/detect-version.sh "$(CURDIR)")
 TEST_PYTHON := tests/.venv/bin/python
 OMT_SENDER_TARGET ?= auto
 
+# Every gate runs inside the toolbox image, so Docker or Podman is the only
+# thing this repository needs from a workstation. scripts/toolbox.sh builds the
+# image on first use and execs straight through when it is already inside one.
+TOOLBOX := ./scripts/toolbox.sh
+
 # Default target
 help:
 	@echo "RPi OMT Client Build System"
@@ -19,8 +24,8 @@ help:
 	@echo "  build-arm64   Build ARM64 image (for Raspberry Pi), output: $(ARM64_TARBALL)"
 	@echo "  build-amd64   Build amd64 image locally (for testing)"
 	@echo "  build         Alias for build-arm64"
-	@echo "  build-deployer Test and publish the native deployer for this host"
-	@echo "  build-windows-deployer  Cross-compile the Windows x86-64 deployer (Linux host)"
+	@echo "  build-deployer Test and publish the Linux CLI + TUI (static musl)"
+	@echo "  build-windows-deployer  Cross-compile the Windows CLI + egui GUI"
 	@echo "                 Both embed $(ARM64_TARBALL), so run build-arm64 first"
 	@echo "                 The post-commit hook runs all three: a published"
 	@echo "                 artifact carries the version of its own commit"
@@ -46,17 +51,19 @@ help:
 	@echo "  test-web      Run Rust Web frontend tests"
 	@echo "  test-receiver Build and test the Rust receiver and test sender"
 	@echo "  test-deployer Build and test the Rust deployer"
-	@echo "  test-setup    Bootstrap Python test tooling"
+	@echo "  test-setup    Bootstrap a host Python venv (not needed for the toolbox)"
 	@echo "  security-scan Run Trivy filesystem + image scans"
 	@echo "  clean         Remove build artifacts and stopped containers"
 	@echo ""
-	@echo "Build prerequisite: Docker with buildx support and ARM64 emulation"
-	@echo "Live test prerequisite: Docker or Podman (auto-detected)"
+	@echo "Prerequisite: Docker or Podman. Nothing else -- every gate runs"
+	@echo "inside the toolbox image that 'make install' builds."
 
-# Install local developer prerequisites and Python test tooling
+# Build the gate toolbox and install the git hooks. Nothing is installed onto
+# the host: the compilers, linters, scanners, and Python tooling all live in
+# the image. scripts/install-dev-deps.sh remains for anyone who wants that
+# toolchain on the host as well, and is no longer required by any gate.
 install:
-	./scripts/install-dev-deps.sh
-	$(MAKE) test-setup
+	$(TOOLBOX) --build
 	./scripts/setup-hooks.sh
 
 setup-arm64-emulation:
@@ -68,7 +75,7 @@ build-arm64:
 	ARM64_TARBALL="$(abspath $(ARM64_TARBALL))" \
 	BUILD_METADATA_DIR="$(abspath $(BUILD_METADATA_DIR))" \
 	RPI_OMT_CLIENT_VERSION="$(RPI_OMT_CLIENT_VERSION)" \
-		./scripts/build-arm64.sh
+		$(TOOLBOX) ./scripts/build-arm64.sh
 
 # Build amd64 image locally (for testing)
 build-amd64:
@@ -88,11 +95,11 @@ build: build-arm64
 # minutes, and starting one from a target named "build the deployer" would be a
 # surprise rather than a convenience. Both build scripts say so and stop.
 build-deployer:
-	RPI_OMT_CLIENT_VERSION="$(RPI_OMT_CLIENT_VERSION)" ./scripts/check-deployer.sh --publish
+	RPI_OMT_CLIENT_VERSION="$(RPI_OMT_CLIENT_VERSION)" $(TOOLBOX) ./scripts/check-deployer.sh --publish
 
 # Cross-compile the Windows x86-64 deployer from Linux with mingw-w64.
 build-windows-deployer:
-	RPI_OMT_CLIENT_VERSION="$(RPI_OMT_CLIENT_VERSION)" ./scripts/build-windows-deployer.sh
+	RPI_OMT_CLIENT_VERSION="$(RPI_OMT_CLIENT_VERSION)" $(TOOLBOX) ./scripts/build-windows-deployer.sh
 
 build-omt-sender:
 	./scripts/build-omt-test-sender.sh --target "$(OMT_SENDER_TARGET)"
@@ -145,31 +152,31 @@ logs:
 
 # Lint
 lint:
-	./scripts/lint.sh
-	./scripts/check-no-c-sources.sh
-	python3 ./scripts/check-legal-notices.py
+	$(TOOLBOX) ./scripts/lint.sh
+	$(TOOLBOX) ./scripts/check-no-c-sources.sh
+	$(TOOLBOX) python3 ./scripts/check-legal-notices.py
 
 # Run all tests (unit + live container build)
 test:
 	@echo "Running all tests..."
-	./scripts/test-local.sh
+	$(TOOLBOX) ./scripts/test-local.sh
 
 # Run every unit suite, no container engine (~1m)
 test-quick:
-	./scripts/test-local.sh --quick
+	$(TOOLBOX) ./scripts/test-local.sh --quick
 
 # Build and test the Rust Web frontend.
 test-web:
-	cargo test --locked -p omt-web
+	$(TOOLBOX) cargo test --locked -p omt-web
 
 test-receiver:
-	./tools/test-receiver.sh
+	$(TOOLBOX) ./tools/test-receiver.sh
 
 test-deployer:
-	./scripts/check-deployer.sh
+	$(TOOLBOX) ./scripts/check-deployer.sh
 
 security-scan:
-	./scripts/security-scan.sh
+	$(TOOLBOX) ./scripts/security-scan.sh
 
 # Bootstrap pytest dev venv (run once)
 test-setup:

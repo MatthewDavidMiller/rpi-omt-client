@@ -18,7 +18,8 @@ cd "${PROJECT_ROOT}"
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 NC='\033[0m'
-PYTEST_VENV="${PROJECT_ROOT}/tests/.venv"
+# See scripts/lint.sh: the toolbox supplies its own venv through this.
+PYTEST_VENV="${OMT_PYTHON_VENV:-${PROJECT_ROOT}/tests/.venv}"
 PYTHON_TEST_BIN="${PYTEST_VENV}/bin/python"
 if [[ ! -x "${PYTHON_TEST_BIN}" ]]; then
     echo -e "${RED}FAILED${NC}: Python test venv not set up. Run: make test-setup"

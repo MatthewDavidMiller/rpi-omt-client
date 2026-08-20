@@ -10,6 +10,7 @@ members = [
   "crates/omt-deployer-core",
   "crates/rpi-omt-deploy",
   "crates/rpi-omt-deployer",
+  "crates/rpi-omt-deploy-tui",
 ]
 
 [workspace.package]
@@ -24,6 +25,15 @@ axum-server = { version = "0.8.0", default-features = false, features = ["tls-ru
 alsa = "0.12.1"
 async-io = "2.6.0"
 clap = { version = "4.5.48", features = ["derive"] }
+# The Linux deployer's terminal frontend. Terminal I/O is read/write/ioctl on
+# file descriptors, so unlike the egui stack these dlopen nothing and the
+# Linux deployer links fully static -- one binary for every distribution.
+# crossterm keeps its default features: `events` is the keyboard input the
+# whole frontend is driven by.
+crossterm = "0.29.0"
+# 0.30 dropped the `paste` dependency, which is unmaintained per
+# RUSTSEC-2024-0436; staying on 0.29 would mean carrying an advisory ignore.
+ratatui = { version = "0.30.2", default-features = false, features = ["crossterm"] }
 drm = "0.15.0"
 eframe = { version = "0.32.3", default-features = false, features = ["accesskit", "glow", "wayland", "x11"] }
 egui = "0.32.3"

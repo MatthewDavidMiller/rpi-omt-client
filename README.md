@@ -43,13 +43,27 @@ make build-windows-deployer
 
 The ARM64 build creates `omt-client-arm64.tar.gz`, and the deployer build
 embeds it: run `make build-arm64` first, or the deployer build stops and says
-so. The deployer build stages a host-native egui application, CLI, and
-CycloneDX SBOM in `.build/deployer-publish/`. Each executable carries the whole
-manifest-v3 capsule, so an operator needs that one file and no checkout. On Linux, `make build-windows-deployer`
-cross-compiles the same application for Windows x86-64 with mingw-w64 into
-`.build/deployer-publish-windows/`. Linux and Windows hosts build the same
-ARM64 appliance through the hermetic Dockerfile; `make install` provisions the
-full local toolchain, including persistent ARM64 emulation on Linux x86-64.
+so. Each executable carries the whole manifest-v3 capsule, so an operator needs
+that one file and no checkout.
+
+The Linux build stages a CLI and a terminal application, both linked fully
+static against musl, plus a CycloneDX SBOM, in `.build/deployer-publish/`.
+Static linking is why the Linux deployer is a terminal application rather than
+a GUI: egui reaches the screen by `dlopen`ing libEGL, libGL, libX11, and
+libwayland-client, which are the operator's graphics driver and are linked
+against that machine's glibc. A terminal frontend opens nothing, so one binary
+runs on every distribution -- glibc and musl alike -- and works over SSH.
+`scripts/verify-linux-deployer.sh` reads that guarantee back out of the ELF
+headers rather than trusting the build flags.
+
+`make build-windows-deployer` cross-compiles the CLI and the egui application
+for Windows x86-64 with mingw-w64 into `.build/deployer-publish-windows/`,
+where `opengl32.dll` is a system library and the GUI costs nothing. Both
+frontends run the same jobs from `omt-deployer-core`.
+
+Docker or Podman is the only thing any of this needs from a workstation:
+`make install` builds the toolbox image that carries every compiler, linter,
+and scanner the gates use.
 
 ## Install
 

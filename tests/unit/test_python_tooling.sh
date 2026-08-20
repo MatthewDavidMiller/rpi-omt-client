@@ -55,7 +55,13 @@ chmod +x "${FIXTURE}/tests/.venv/bin/python"
 
 (
     cd "${OUTSIDE}"
-    PATH="${FIXTURE}/fake-bin:${PATH}" \
+    # OMT_PYTHON_VENV is unset deliberately: this case is about lint.sh
+    # resolving tests/.venv relative to its own checkout, so a moved tree still
+    # works. The toolbox image sets that variable to its baked-in venv, and
+    # inheriting it here would point lint.sh at the real tooling instead of
+    # this fixture's stand-in.
+    env -u OMT_PYTHON_VENV \
+        PATH="${FIXTURE}/fake-bin:${PATH}" \
         PYTHON_MODULE_LOG="${CASE_DIR}/module.log" \
         "${FIXTURE}/scripts/lint.sh" >/dev/null
 )
@@ -69,7 +75,7 @@ if (
     PATH="${FIXTURE}/fake-bin:${PATH}" \
         PYTHON_MODULES_AVAILABLE=0 \
         PYTHON_MODULE_LOG="${CASE_DIR}/missing.log" \
-        "${FIXTURE}/scripts/lint.sh" >/dev/null 2>&1
+        env -u OMT_PYTHON_VENV "${FIXTURE}/scripts/lint.sh" >/dev/null 2>&1
 ); then
     echo "FAIL: lint accepted missing repo-local Python modules" >&2
     exit 1
@@ -81,7 +87,7 @@ if (
     PATH="${FIXTURE}/fake-bin:${PATH}" \
         PYTHON_MODULES_AVAILABLE=0 \
         PYTHON_MODULE_LOG="${CASE_DIR}/missing.log" \
-        "${FIXTURE}/scripts/lint.sh" --allow-missing >/dev/null 2>&1
+        env -u OMT_PYTHON_VENV "${FIXTURE}/scripts/lint.sh" --allow-missing >/dev/null 2>&1
 ); then
     echo "FAIL: lint still offers a mode that tolerates missing linters" >&2
     exit 1

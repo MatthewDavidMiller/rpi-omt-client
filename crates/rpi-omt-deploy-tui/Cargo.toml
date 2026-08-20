@@ -1,0 +1,19 @@
+[package]
+name = "rpi-omt-deploy-tui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+crossterm.workspace = true
+ratatui.workspace = true
+omt-deployer-core = { version = "0.9.61", path = "../omt-deployer-core" }
+zeroize.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "rpi-omt-deploy-tui"
+path = "src/main.rs"

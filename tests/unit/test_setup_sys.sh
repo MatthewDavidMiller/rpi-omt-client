@@ -246,7 +246,12 @@ fi
 
 # free_boot_media must use the same matcher, not a prefix that would unmount
 # another disk's partition.
-grep -A80 '^free_boot_media()' "${SETUP_SYS}" | grep -q 'dev_on_disk' || \
+# Not `| grep -q`: under `set -o pipefail` the reader exits on its first match
+# and SIGPIPEs the writer, so the pipeline reports 141 rather than success.
+# GNU grep usually fills the pipe buffer before that happens and passes anyway;
+# busybox does not, and the gates run on Alpine. Reading all of the input is
+# what makes the result depend on the file rather than on the grep.
+grep -A80 '^free_boot_media()' "${SETUP_SYS}" | grep 'dev_on_disk' >/dev/null || \
     fail "free_boot_media must unmount with dev_on_disk, not a device-name prefix"
 
 grep -qxF 'deploy/host/setup-sys.sh' "${MANIFEST}" || \

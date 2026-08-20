@@ -6,6 +6,7 @@ import os
 import shutil
 import signal
 import subprocess
+import sys
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager, suppress
@@ -124,8 +125,14 @@ def test_process_start_time_rejects_invalid_pid_and_reads_current_shell():
 def test_process_identity_matches_the_executable_behind_the_pid(tmp_path):
     """The strongest signal is /proc/<pid>/exe, which no argument can forge."""
     executable = tmp_path / "omt-receiver"
-    shutil.copy(shutil.which("sleep") or "/bin/sleep", executable)
-    with running(str(executable), "30") as process:
+    # The interpreter rather than `sleep`: on Alpine, and anywhere busybox
+    # provides the base utilities, `sleep` is a multicall binary that dispatches
+    # on argv[0], so a copy named omt-receiver answers "unknown program" instead
+    # of sleeping. CPython is a standalone executable and keeps working when
+    # copied, which is what this needs -- a real ELF whose /proc/<pid>/exe is
+    # this path.
+    shutil.copy(sys.executable, executable)
+    with running(str(executable), "-c", "import time; time.sleep(30)") as process:
         assert matches_command(process.pid, str(executable))
         assert not matches_command(process.pid, str(tmp_path / "other-receiver"))
 

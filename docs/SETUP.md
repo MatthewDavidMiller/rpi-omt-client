@@ -135,8 +135,16 @@ make build-windows-deployer
 ```
 
 That target cross-compiles with Rust's `x86_64-pc-windows-gnu` target and
-stages both `rpi-omt-deploy.exe` and `rpi-omt-deployer.exe` with the license,
-notices, and CycloneDX SBOM.
+stages both `rpi-omt-deploy.exe` and the egui `rpi-omt-deployer.exe` with the
+license, notices, and CycloneDX SBOM.
+
+The Linux package is different by design: `rpi-omt-deploy` and the terminal
+`rpi-omt-deploy-tui`, both static musl binaries with no shared-library
+dependencies at all. The same file runs on Ubuntu, Debian, RHEL, Fedora, Arch,
+and Alpine, needs no runtime to be installed first, and runs over SSH -- which
+is usually how a rack-mounted Pi is reached. There is no Linux GUI: egui would
+`dlopen` the operator's glibc-linked graphics driver and tie the binary to a
+glibc floor, which is exactly the portability this avoids.
 `make install` provisions the cross toolchain along with the rest of the local
 gate tooling.
 
@@ -207,8 +215,8 @@ that VM restarts; a `--rebuild-image` deployment registers it again first. On
 Linux the handler belongs in the host's own kernel, where
 `make setup-arm64-emulation` installs it persistently and verifies it as root.
 
-Run `.build/deployer-publish/bin/rpi-omt-deployer` (or the `.exe` produced on
-Windows) with a Pi key already trusted in `~/.ssh/known_hosts` and
+Run `.build/deployer-publish/bin/rpi-omt-deploy-tui` on Linux, or
+`rpi-omt-deployer.exe` on Windows, with a Pi key already trusted in `~/.ssh/known_hosts` and
 administrator SSH/sudo credentials. Nothing else: the capsule is inside it. The Connection view
 accepts an optional sudo password and an optional alternate `known_hosts` path,
 each with a Browse button; the CLI equivalents are the `sudo_password` field in

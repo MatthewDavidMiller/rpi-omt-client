@@ -147,7 +147,9 @@ grep -qx 'country=US' <<< "${wpa_config}"
 grep -qx '    ssid=74657374' <<< "${wpa_config}"
 [[ "$(host_wpa_supplicant_config CA < /dev/null | grep -c '^country=CA$')" -eq 1 ]]
 # The globals still lead the document, ahead of every preserved network block.
-[[ "$(host_wpa_supplicant_config <<< 'network={' | head -n 4 | tail -n 1)" == "country=US" ]]
+# `sed -n 4p` rather than `head -n 4 | tail -n 1`: head exits early and
+# SIGPIPEs the writer, which `set -o pipefail` turns into a failed gate.
+[[ "$(host_wpa_supplicant_config <<< 'network={' | sed -n '4p')" == "country=US" ]]
 
 # The 5 GHz band policy. Unlike the country this is not a default: 2.4 GHz is
 # unsupported because its packet loss makes OMT playback unusable, so a scan
