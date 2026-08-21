@@ -26,15 +26,18 @@ COPY .cargo/ .cargo/
 COPY crates/omt-deployer-core/Cargo.toml crates/omt-deployer-core/Cargo.toml
 COPY crates/rpi-omt-deploy/Cargo.toml crates/rpi-omt-deploy/Cargo.toml
 COPY crates/rpi-omt-deployer/Cargo.toml crates/rpi-omt-deployer/Cargo.toml
+COPY crates/rpi-omt-deploy-tui/Cargo.toml crates/rpi-omt-deploy-tui/Cargo.toml
 COPY crates/omt-test-sender/Cargo.toml crates/omt-test-sender/Cargo.toml
 RUN mkdir -p \
         crates/omt-deployer-core/src \
         crates/rpi-omt-deploy/src \
         crates/rpi-omt-deployer/src \
+        crates/rpi-omt-deploy-tui/src \
         crates/omt-test-sender/src \
     && : > crates/omt-deployer-core/src/lib.rs \
     && printf 'fn main() {}\n' > crates/rpi-omt-deploy/src/main.rs \
     && printf 'fn main() {}\n' > crates/rpi-omt-deployer/src/main.rs \
+    && printf 'fn main() {}\n' > crates/rpi-omt-deploy-tui/src/main.rs \
     && printf 'fn main() {}\n' > crates/omt-test-sender/src/main.rs
 COPY crates/omt-protocol/ crates/omt-protocol/
 COPY crates/omt-receiver-core/ crates/omt-receiver-core/

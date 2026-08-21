@@ -200,8 +200,13 @@ else
     fail "ARM64 artifact image exceeds the 64 MiB size budget (${arm64_artifact_image_size} bytes)"
 fi
 
+# The artifact stage is FROM scratch and defines no command, and `create`
+# refuses an image that leaves it unset -- so one is supplied here. It is never
+# executed and never could be: this container exists only to be copied out of,
+# and the stage holds nothing but the two binaries.
 "${CONTAINER_ENGINE}" create \
-    --name "${ARM64_ARTIFACT_CONTAINER}" "${ARM64_ARTIFACT_TAG}" >/dev/null
+    --name "${ARM64_ARTIFACT_CONTAINER}" "${ARM64_ARTIFACT_TAG}" \
+    /nonexistent-never-run >/dev/null
 receiver_artifact="$(mktemp)"
 web_artifact="$(mktemp)"
 if "${CONTAINER_ENGINE}" cp \

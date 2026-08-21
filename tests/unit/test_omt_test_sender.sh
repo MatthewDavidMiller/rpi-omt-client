@@ -22,8 +22,21 @@ for script in "${BUILD_SCRIPT}" "${RUN_SCRIPT}" "${FIREWALL_SCRIPT}"; do
     [[ -x "${script}" ]] && pass "$(basename "${script}") is executable" ||
         fail "$(basename "${script}") is executable"
 done
-require_literal "${SENDER_MANIFEST}" 'omt-protocol = { version = "0.9.61", path = "../omt-protocol" }' \
-    "sender uses the repository protocol crate"
+# Read the version rather than restating it. What this checks is that the path
+# edge carries the workspace version, which is what keeps cargo-deny's
+# multiple-versions ban meaningful for registry crates -- a literal here would
+# instead make every release bump fail this gate until somebody edited it.
+WORKSPACE_VERSION="$(
+    sed -n '/^\[workspace\.package\]$/,/^\[/s/^version = "\([^"]*\)"$/\1/p' \
+        "${PROJECT_ROOT}/Cargo.toml"
+)"
+[[ -n "${WORKSPACE_VERSION}" ]] || {
+    echo "FAIL: Cargo.toml declares no [workspace.package] version" >&2
+    exit 1
+}
+require_literal "${SENDER_MANIFEST}" \
+    "omt-protocol = { version = \"${WORKSPACE_VERSION}\", path = \"../omt-protocol\" }" \
+    "sender uses the repository protocol crate at the workspace version"
 dependency_count="$(awk '
     /^\[dependencies\]$/ { dependencies=1; next }
     /^\[/ { dependencies=0 }

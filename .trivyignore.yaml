@@ -1,0 +1,15 @@
+# Scoped Trivy exceptions. Path-scoped on purpose: the rules stay in force for
+# every other file, and the appliance image in particular is still held to all
+# of them.
+misconfigurations:
+  - id: AVD-DS-0002
+    paths:
+      - "tools/toolbox/Dockerfile"
+    statement: >-
+      The gate toolbox declares no USER because scripts/toolbox.sh supplies the
+      uid at run time -- the invoking user's, so a gate leaves no root-owned
+      files in the mounted tree -- and that uid is not known at build time.
+      Baking one in would be overridden on Docker anyway and would collide with
+      Podman's --userns=keep-id mapping. The image is a developer tool: it is
+      never published, never serves traffic, and runs only this repository's
+      own gates.

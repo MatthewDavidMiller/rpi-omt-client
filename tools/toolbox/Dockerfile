@@ -7,6 +7,16 @@
 # appliance resolve one compiler rather than two that may drift. Its musl host
 # is also what makes the static Linux deployer a native build instead of a
 # cross-compile.
+# This image is a developer tool, not a shipped artifact: it is never published,
+# never serves traffic, and exists only to run this repository's own gates.
+#
+# It declares no USER on purpose, which .trivyignore.yaml records as a scoped
+# exception rather than silencing the rule everywhere. scripts/toolbox.sh supplies the uid at run
+# time -- the invoking user's, so a gate leaves no root-owned files in the tree
+# -- and that uid is not known when the image is built. Baking one in would be
+# overridden on Docker and would collide with Podman's --userns=keep-id
+# mapping, where the caller's uid is whatever it happens to be.
+
 ARG RUST_DIGEST=sha256:c4a364ddbf684fe038e6fa6a4f25b30c8dc85247423e0e660676ece0d17be4a2
 
 # hadolint ignore=DL3029,DL3006

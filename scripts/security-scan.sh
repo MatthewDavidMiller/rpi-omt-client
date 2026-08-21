@@ -31,6 +31,7 @@ echo "=== Trivy filesystem scan ==="
     --scanners vuln,secret,misconfig \
     --ignore-unfixed \
     --severity "${SEVERITY_LEVELS}" \
+    --ignorefile "${PROJECT_ROOT}/.trivyignore.yaml" \
     --exit-code 1 \
     --no-progress \
     --skip-dirs tests/.venv \
@@ -71,6 +72,7 @@ echo "=== Trivy image scan ==="
     --scanners vuln,secret \
     --ignore-unfixed \
     --severity "${SEVERITY_LEVELS}" \
+    --ignorefile "${PROJECT_ROOT}/.trivyignore.yaml" \
     --exit-code 1 \
     --no-progress \
     --input "${SCAN_IMAGE_ARCHIVE}"

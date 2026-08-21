@@ -31,6 +31,7 @@ source "${SCRIPT_DIR}/docker-test-env.sh"
 
 DOCKERFILE="${PROJECT_ROOT}/tools/toolbox/Dockerfile"
 CARGO_VOLUME="${OMT_TOOLBOX_CARGO_VOLUME:-omt-toolbox-cargo}"
+TOOLBOX_REPO=omt-toolbox
 
 # The tag is the digest of everything that determines what lands in the image.
 # A changed pin, linter version, or Python requirement therefore names a
@@ -46,7 +47,32 @@ toolbox_tag() {
             "${PROJECT_ROOT}/scripts/install-trivy.sh" |
             sha256sum | cut -c1-16
     )"
-    printf 'omt-toolbox:%s\n' "${digest}"
+    printf '%s:%s\n' "${TOOLBOX_REPO}" "${digest}"
+}
+
+# Drop the builds this one replaces.
+#
+# Content-hash tags mean a bumped pin names a new image and silently strands
+# the old one, and the toolbox is roughly 4 GB apiece. Without this a year of
+# routine version bumps leaves tens of gigabytes of images nothing will ever
+# run again.
+#
+# Failures are ignored on purpose: `rmi` refuses an image a container is still
+# using, which is exactly what a gate running concurrently in the previous
+# toolbox looks like. That one survives and is collected on the next build.
+prune_superseded_toolboxes() {
+    local keep="$1" image removed=0
+    while read -r image; do
+        [[ -n "${image}" && "${image}" != "${keep}" ]] || continue
+        if "${CONTAINER_ENGINE}" rmi "${image}" >/dev/null 2>&1; then
+            removed=$((removed + 1))
+        fi
+    done < <(
+        "${CONTAINER_ENGINE}" images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null |
+            grep "^${TOOLBOX_REPO}:" || true
+    )
+    ((removed > 0)) && echo "Removed ${removed} superseded toolbox image(s)." >&2
+    return 0
 }
 
 build_toolbox() {
@@ -58,6 +84,9 @@ build_toolbox() {
         -f "${DOCKERFILE}" \
         -t "${tag}" \
         "${PROJECT_ROOT}"
+    # Only after the build succeeded: a failed one leaves the previous image as
+    # the only working toolbox on the machine.
+    prune_superseded_toolboxes "${tag}"
 }
 
 main() {
@@ -91,6 +120,27 @@ main() {
         run --rm
         -v "$(container_engine_volume "${PROJECT_ROOT}" "${PROJECT_ROOT}")"
         -v "${CARGO_VOLUME}:/cargo"
+        # The host's /tmp, for the same reason the repository is mounted at its
+        # own path. Gates build fixtures under `mktemp -d` and bind-mount them
+        # into containers they start; those paths are resolved by the host
+        # daemon, so a private /tmp in here means it creates an empty
+        # root-owned directory instead and the fixture is silently missing.
+        # Not relabelled under Podman: /tmp is shared with the rest of the
+        # system and relabelling it would affect far more than this container.
+        -v /tmp:/tmp
+        # Containers a gate starts publish their ports on the host, which is
+        # not this container's loopback, so the smoke test talks to the
+        # appliance on the engine network instead of through its published
+        # port.
+        #
+        # Deliberately not --network host, which would make the published port
+        # reachable but also makes /proc/sys/net the host's, where the
+        # hardening sysctls the diagnostics gate reports on are root-owned and
+        # mode 0600 -- unreadable to the mapped user, silently dropped by
+        # sysctl, and absent from the report that gate then inspects. Nor a
+        # host-gateway route: that depends on the workstation's firewall
+        # allowing bridge-to-host traffic, which this one does not.
+        -e OMT_SMOKE_VIA_ENGINE_NETWORK=1
         -w "${PROJECT_ROOT}"
         -e HOME=/cargo
     )

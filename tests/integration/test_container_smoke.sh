@@ -15,6 +15,10 @@ IMAGE_TAG="omt-client:smoke-test"
 CONTAINER_NAME="omt-client-smoke"
 ACK_CONTAINER_NAME="omt-client-reboot-ack"
 PORT=15000
+# Reassigned to the appliance's own address on the engine network when
+# OMT_SMOKE_VIA_ENGINE_NETWORK is set, once the container exists and has one.
+# The certificate is self-signed and curl_app passes --insecure, so the address
+# it is reached by does not have to match the certificate.
 BASE_URL="https://127.0.0.1:${PORT}"
 TEST_PASSWORD="smoke-test-password"
 NEW_TEST_PASSWORD="rotated-smoke-password"
@@ -104,6 +108,22 @@ fi
     -v "${config_volume}" \
     -v "${actions_volume}" \
     "${IMAGE_TAG}" >/dev/null || fail "container failed to start"
+
+# The published port is on the container engine's host, which is reachable
+# from the loopback of whatever normally runs this suite. When the gate itself
+# runs inside the toolbox that is a different host, and reaching it across the
+# bridge depends on the workstation's own firewall allowing bridge-to-host
+# traffic, which is not something a test can assume. Talking to the appliance
+# on the engine network instead depends on nothing outside the engine.
+if [[ "${OMT_SMOKE_VIA_ENGINE_NETWORK:-0}" == "1" ]]; then
+    container_ip="$(
+        "${CONTAINER_ENGINE}" inspect -f \
+            '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' \
+            "${CONTAINER_NAME}"
+    )"
+    [[ -n "${container_ip}" ]] || fail "the appliance container reported no address"
+    BASE_URL="https://${container_ip}:5000"
+fi
 
 for attempt in $(seq 1 30); do
     # shellcheck disable=SC2310

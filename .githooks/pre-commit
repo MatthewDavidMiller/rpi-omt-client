@@ -18,13 +18,23 @@ unset GIT_INDEX_FILE GIT_DIR GIT_WORK_TREE GIT_PREFIX
 
 echo "=== Pre-commit checks ==="
 
-# Keep the amd64 test image for the security scan that follows, so Trivy does
-# not rebuild the same Dockerfile a second time.
+# The whole gate runs inside the toolbox image, so committing needs nothing
+# from this workstation but Docker or Podman -- the same contract `make lint`
+# and `make test` keep. One invocation rather than three: each one would
+# otherwise start its own container and pay the startup again, and the
+# security scan needs the image the test run leaves behind.
+#
+# SECURITY_SCAN_* are set inside for that reason -- keeping the amd64 test
+# image means Trivy does not rebuild the same Dockerfile a second time -- and
+# scripts/toolbox.sh forwards no environment beyond what it needs to.
+#
+# scripts/test-local.sh owns the shared syntax, lint, unit, Docker-build, and
+# smoke/network test sequence so Make, manual runs, and this hook cannot drift.
+./scripts/toolbox.sh bash -c '
+set -euo pipefail
 export SECURITY_SCAN_REUSE_IMAGE=1
 export SECURITY_SCAN_IMAGE_TAG=omt-client:test-build
 
-# scripts/test-local.sh owns the shared syntax, lint, unit, Docker-build, and
-# smoke/network test sequence so Make, manual runs, and this hook cannot drift.
 ./scripts/test-local.sh --full
 
 echo "Running Python tooling dependency audit..."
@@ -32,5 +42,6 @@ echo "Running Python tooling dependency audit..."
 
 echo "Running security scans..."
 ./scripts/security-scan.sh
+'
 
 echo "=== Pre-commit checks passed ==="
