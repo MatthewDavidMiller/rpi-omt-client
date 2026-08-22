@@ -111,8 +111,8 @@ def test_headless_wifi_example_contains_the_required_fields():
     example = block.group(1)
     assert re.search(r"^country=[A-Z]{2}$", example, re.MULTILINE)
     assert "network={" in example
-    assert 'ssid="your-network-name"' in example
-    assert 'psk="your-wifi-passphrase"' in example
+    assert "ssid=<hex-encoded-network-name>" in example
+    assert "psk=<64-character-derived-psk>" in example
     assert "key_mgmt=WPA-PSK" in example
 
 

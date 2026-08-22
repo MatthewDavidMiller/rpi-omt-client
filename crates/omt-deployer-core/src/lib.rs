@@ -3,6 +3,7 @@
 mod capsule;
 mod jobs;
 mod ops;
+mod sd_card;
 mod ssh;
 mod tools;
 
@@ -11,6 +12,10 @@ pub use jobs::{Job, JobRequest, WorkerEvent, run_job};
 pub use ops::{
     alpine_setup, apply_wifi, change_web_password, connect, deploy, manage, set_hostname,
     test_connection,
+};
+pub use sd_card::{
+    HEADLESS_FILE_NAME, HEADLESS_VERSION, SdCardSettings, prepare_sd_card,
+    validate_sd_card_settings, wpa_supplicant_config,
 };
 pub use ssh::{RemoteResult, SshSession};
 pub use tools::{

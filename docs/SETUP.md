@@ -48,30 +48,33 @@ Imager headless presets do not apply to the Alpine image.
 The Raspberry Pi Imager's headless presets do not apply to the Alpine image:
 they write Raspberry Pi OS `userconf`/`firstrun` files that Alpine never reads,
 so an Alpine card flashed that way still boots to a login prompt on the console
-with no network. The deployer talks to a Pi that already has SSH: either plug
-in Ethernet (factory Alpine answers as `root` with no password) or, to bring
-Wi-Fi up before the deployer can reach the board, use
-[macmpi/alpine-linux-headless-bootstrap](https://github.com/macmpi/alpine-linux-headless-bootstrap):
-drop its `headless.apkovl.tar.gz` onto the boot partition alongside a
-`wpa_supplicant.conf` for Wi-Fi, boot once, then run Alpine setup from the
-deployer instead of `setup-alpine` on the console.
+with no network. After Imager finishes, mount the card's `PIBOOT` partition and
+open **SD card** in the Windows GUI or terminal deployer. Select that mounted
+partition, enter the two-letter uppercase regulatory country, SSID, and Wi-Fi
+password, then choose **Prepare SD card**. The deployer:
 
-Create `wpa_supplicant.conf` as a Linux-text file (LF line endings) in the root
-of the boot partition. Replace the two-letter regulatory country, SSID, and
-passphrase:
+1. confirms the selected directory is an Alpine boot partition;
+2. downloads
+   [`macmpi/alpine-linux-headless-bootstrap`](https://github.com/macmpi/alpine-linux-headless-bootstrap/releases/tag/v1.9)
+   v1.9 from its pinned commit over HTTPS, with a 1 MiB limit, and verifies its
+   SHA-512;
+3. writes `headless.apkovl.tar.gz` and a Linux-text `wpa_supplicant.conf` at
+   the root of the partition.
+
+The generated Wi-Fi file stores the SSID as hex and a derived WPA PSK, not the
+plaintext passphrase. Its equivalent readable form is:
 
 ```ini
 country=US
 network={
     key_mgmt=WPA-PSK
-    ssid="your-network-name"
-    psk="your-wifi-passphrase"
+    ssid=<hex-encoded-network-name>
+    psk=<64-character-derived-psk>
 }
 ```
 
-This first-boot file contains the Wi-Fi passphrase in plaintext. Keep the boot
-media physically controlled, remove the bootstrap copy after the installed
-system is reachable, and keep the installed
+Keep the boot media physically controlled, remove the bootstrap copy after the
+installed system is reachable, and keep the installed
 `/etc/wpa_supplicant/wpa_supplicant.conf` root-only. The appliance installer
 preserves the network block and adds the control settings needed for later
 Wi-Fi changes from the deployer.
@@ -310,6 +313,20 @@ WINIT_X11_SCALE_FACTOR=2 .build/deployer-publish/bin/rpi-omt-deployer
 Wayland and Windows report their scale per monitor and need no override.
 
 ## CLI deployment
+
+Prepare a freshly flashed, mounted Alpine boot partition before the Pi's first
+boot. The Wi-Fi password uses the same bounded stdin secret channel as remote
+Wi-Fi management and never appears in process arguments:
+
+```bash
+printf '%s\n' '{"wifi_password":"..."}' | \
+rpi-omt-deploy --secrets-stdin prepare-sd \
+    --boot-directory /run/media/$USER/PIBOOT --country US --ssid studio
+```
+
+On Windows, `--boot-directory` is the mounted drive root, for example `E:\\`.
+The command needs network access to download the pinned overlay, but it needs
+no Pi connection and no project checkout.
 
 ```bash
 make build-arm64

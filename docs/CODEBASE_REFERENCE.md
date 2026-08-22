@@ -104,6 +104,7 @@ are POST and CSRF protected.
 | Capsule embedded into the deployer, and the build step that compiles it in | `crates/omt-deployer-core/src/capsule.rs`, `crates/omt-deployer-core/build.rs` |
 | CLI deployment | `scripts/deploy.sh` |
 | Deployer validation, fixed actions, SSH/SFTP, deploy, Alpine sys setup, rename, and Wi-Fi | `crates/omt-deployer-core/src/lib.rs`, `crates/omt-deployer-core/src/ssh.rs`, `crates/omt-deployer-core/src/ops.rs` |
+| Local Alpine SD-card preparation, verified headless-overlay download, and initial Wi-Fi configuration | `crates/omt-deployer-core/src/sd_card.rs` |
 | Workstation tooling: executable discovery, prerequisites, winget installs, ARM64 emulation, and the image-build plan | `crates/omt-deployer-core/src/tools.rs` |
 | Secure command-line deployer | `crates/rpi-omt-deploy/src/main.rs` |
 | Deployer CLI contract | `tests/native/test_deployer_cli.sh` |
@@ -133,6 +134,14 @@ The native deployers default to the user's OpenSSH `known_hosts` file and can
 select an alternate verified file when deployment automation keeps host keys
 separately. Factory Alpine images accept `root` with an empty SSH password;
 password, `none`, and keyboard-interactive methods are tried in that case.
+Before first boot, every deployer frontend can prepare the mounted boot
+partition of a freshly flashed Alpine image. The shared job downloads the
+version-pinned headless bootstrap over HTTPS, bounds it to 1 MiB, verifies its
+committed SHA-512, and writes it beside a Linux-text `wpa_supplicant.conf`.
+That configuration stores the SSID as hex and the derived WPA PSK rather than
+the operator's plaintext passphrase. The selected directory must carry the
+Alpine marker plus the Raspberry Pi `config.txt` and boot subdirectory, so an
+arbitrary workstation folder cannot be mistaken for the card.
 The Alpine view (and CLI `alpine-setup`) uploads `deploy/host/setup-sys.sh`
 (SFTP, or a `cat` exec fallback when a headless overlay sshd has no SFTP
 subsystem) and drives hostname, IPv4 DHCP, optional Wi-Fi, user `pi`, root/`pi`

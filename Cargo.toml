@@ -14,7 +14,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.9.63"
+version = "0.9.64"
 edition = "2024"
 license = "MIT"
 rust-version = "1.97.1"
@@ -64,6 +64,8 @@ russh = { version = "0.62.5", default-features = false, features = ["flate2", "r
 russh-sftp = "2.4.0"
 tokio = { version = "1.53.1", features = ["rt", "macros", "net", "io-util", "time", "sync"] }
 rustls = { version = "0.23.37", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-native-certs = "0.8.4"
+ureq = { version = "3.3.0", default-features = false, features = ["rustls-no-provider"] }
 scrypt = "0.11.0"
 time = { version = "0.3.55", features = ["formatting", "parsing", "macros"] }
 zip = { version = "7.2.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }

@@ -9,8 +9,9 @@
 //! Rendering lives in `ui`; this module never draws.
 
 use omt_deployer_core::{
-    AuthMethod, Connection, DeployOptions, Job, JobRequest, ManagementAction, Secret, WorkerEvent,
-    run_job, valid_appliance_hostname, validate_connection,
+    AuthMethod, Connection, DeployOptions, Job, JobRequest, ManagementAction, SdCardSettings,
+    Secret, WorkerEvent, run_job, valid_appliance_hostname, validate_connection,
+    validate_sd_card_settings,
 };
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -33,6 +34,7 @@ pub const VERSION: &str = match option_env!("RPI_OMT_CLIENT_VERSION") {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum View {
     Connection,
+    SdCard,
     Alpine,
     Deploy,
     Manage,
@@ -42,8 +44,9 @@ pub enum View {
 }
 
 impl View {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::Connection,
+        Self::SdCard,
         Self::Alpine,
         Self::Deploy,
         Self::Manage,
@@ -55,6 +58,7 @@ impl View {
     pub const fn title(self) -> &'static str {
         match self {
             Self::Connection => "Connection",
+            Self::SdCard => "SD card",
             Self::Alpine => "Alpine",
             Self::Deploy => "Deploy",
             Self::Manage => "Manage",
@@ -74,6 +78,13 @@ impl View {
                 Slot::SudoPassword,
                 Slot::KnownHosts,
                 Slot::TestButton,
+            ],
+            Self::SdCard => &[
+                Slot::BootDirectory,
+                Slot::SdWifiCountry,
+                Slot::SdWifiSsid,
+                Slot::SdWifiPassword,
+                Slot::PrepareSdButton,
             ],
             Self::Alpine => &[
                 Slot::AlpineHostname,
@@ -127,6 +138,12 @@ pub enum Slot {
     KnownHosts,
     TestButton,
 
+    BootDirectory,
+    SdWifiCountry,
+    SdWifiSsid,
+    SdWifiPassword,
+    PrepareSdButton,
+
     AlpineHostname,
     AlpineRootPassword,
     AlpineRootConfirm,
@@ -178,6 +195,12 @@ impl Slot {
             Self::KnownHosts => "known_hosts path (optional)",
             Self::TestButton => "Test connection",
 
+            Self::BootDirectory => "Alpine boot partition path",
+            Self::SdWifiCountry => "Wi-Fi country",
+            Self::SdWifiSsid => "Initial Wi-Fi SSID",
+            Self::SdWifiPassword => "Initial Wi-Fi password",
+            Self::PrepareSdButton => "Prepare SD card",
+
             Self::AlpineHostname => "Appliance hostname",
             Self::AlpineRootPassword => "New root password",
             Self::AlpineRootConfirm => "Confirm root password",
@@ -215,6 +238,9 @@ impl Slot {
             Self::Host
             | Self::User
             | Self::KnownHosts
+            | Self::BootDirectory
+            | Self::SdWifiCountry
+            | Self::SdWifiSsid
             | Self::AlpineHostname
             | Self::AlpineWifiSsid
             | Self::RemoteDirectory
@@ -223,6 +249,7 @@ impl Slot {
 
             Self::Password
             | Self::SudoPassword
+            | Self::SdWifiPassword
             | Self::AlpineRootPassword
             | Self::AlpineRootConfirm
             | Self::AlpinePiPassword
@@ -240,6 +267,7 @@ impl Slot {
             | Self::WifiPreserve => Kind::Toggle,
 
             Self::TestButton
+            | Self::PrepareSdButton
             | Self::AlpineButton
             | Self::DeployButton
             | Self::StatusButton
@@ -277,6 +305,9 @@ pub struct App {
     pub password: Zeroizing<String>,
     pub sudo_password: Zeroizing<String>,
     pub known_hosts: String,
+
+    pub boot_directory: String,
+    pub wifi_country: String,
 
     pub hostname: String,
     pub os_root_password: Zeroizing<String>,
@@ -327,6 +358,8 @@ impl Default for App {
             password: Zeroizing::new(String::new()),
             sudo_password: Zeroizing::new(String::new()),
             known_hosts: String::new(),
+            boot_directory: String::new(),
+            wifi_country: "US".into(),
             hostname: "omt-client".into(),
             os_root_password: Zeroizing::new(String::new()),
             os_root_confirm: Zeroizing::new(String::new()),
@@ -375,13 +408,17 @@ impl App {
             Slot::Password => &mut self.password,
             Slot::SudoPassword => &mut self.sudo_password,
             Slot::KnownHosts => &mut self.known_hosts,
+            Slot::BootDirectory => &mut self.boot_directory,
+            Slot::SdWifiCountry => &mut self.wifi_country,
             Slot::AlpineHostname => &mut self.hostname,
             Slot::AlpineRootPassword => &mut self.os_root_password,
             Slot::AlpineRootConfirm => &mut self.os_root_confirm,
             Slot::AlpinePiPassword => &mut self.os_pi_password,
             Slot::AlpinePiConfirm => &mut self.os_pi_confirm,
-            Slot::AlpineWifiSsid | Slot::WifiSsid => &mut self.wifi_ssid,
-            Slot::AlpineWifiPassword | Slot::WifiPassword => &mut self.wifi_password,
+            Slot::SdWifiSsid | Slot::AlpineWifiSsid | Slot::WifiSsid => &mut self.wifi_ssid,
+            Slot::SdWifiPassword | Slot::AlpineWifiPassword | Slot::WifiPassword => {
+                &mut self.wifi_password
+            }
             Slot::RemoteDirectory => &mut self.remote_directory,
             Slot::WebPassword => &mut self.web_password,
             Slot::WebConfirm => &mut self.web_confirm,
@@ -399,13 +436,17 @@ impl App {
             Slot::Password => &self.password,
             Slot::SudoPassword => &self.sudo_password,
             Slot::KnownHosts => &self.known_hosts,
+            Slot::BootDirectory => &self.boot_directory,
+            Slot::SdWifiCountry => &self.wifi_country,
             Slot::AlpineHostname => &self.hostname,
             Slot::AlpineRootPassword => &self.os_root_password,
             Slot::AlpineRootConfirm => &self.os_root_confirm,
             Slot::AlpinePiPassword => &self.os_pi_password,
             Slot::AlpinePiConfirm => &self.os_pi_confirm,
-            Slot::AlpineWifiSsid | Slot::WifiSsid => &self.wifi_ssid,
-            Slot::AlpineWifiPassword | Slot::WifiPassword => &self.wifi_password,
+            Slot::SdWifiSsid | Slot::AlpineWifiSsid | Slot::WifiSsid => &self.wifi_ssid,
+            Slot::SdWifiPassword | Slot::AlpineWifiPassword | Slot::WifiPassword => {
+                &self.wifi_password
+            }
             Slot::RemoteDirectory => &self.remote_directory,
             Slot::WebPassword => &self.web_password,
             Slot::WebConfirm => &self.web_confirm,
@@ -574,8 +615,19 @@ impl App {
     }
 
     /// Reject what the operator can still fix before anything reaches the Pi.
-    fn precheck(&self, job: &Job) -> Result<(), String> {
+    fn precheck(&self, job: Job) -> Result<(), String> {
         match job {
+            Job::PrepareSd => {
+                let password = Secret::new((*self.wifi_password).clone())
+                    .map_err(|error| error.to_string())?;
+                validate_sd_card_settings(&SdCardSettings {
+                    boot_directory: PathBuf::from(self.boot_directory.trim()),
+                    country: self.wifi_country.trim().to_owned(),
+                    wifi_ssid: self.wifi_ssid.trim().to_owned(),
+                    wifi_password: password,
+                })
+                .map_err(|error| error.to_string())
+            }
             Job::Alpine => {
                 if !valid_appliance_hostname(self.hostname.trim()) {
                     return Err(
@@ -630,8 +682,14 @@ impl App {
         };
         Ok(JobRequest {
             job,
-            connection: Some(self.connection()?),
+            connection: if matches!(job, Job::PrepareSd) {
+                None
+            } else {
+                Some(self.connection()?)
+            },
             options,
+            boot_directory: PathBuf::from(self.boot_directory.trim()),
+            wifi_country: self.wifi_country.trim().to_owned(),
             wifi_ssid: self.wifi_ssid.trim().to_owned(),
             wifi_password: self.wifi_password.clone(),
             wifi_connect: self.wifi_connect,
@@ -650,7 +708,7 @@ impl App {
             self.status = "A job is already running.".into();
             return;
         }
-        if let Err(error) = self.precheck(&job) {
+        if let Err(error) = self.precheck(job) {
             self.status = format!("Cannot start: {error}");
             return;
         }
@@ -697,6 +755,7 @@ impl App {
     fn press(&mut self, slot: Slot) {
         match slot {
             Slot::TestButton => self.start(Job::Test),
+            Slot::PrepareSdButton => self.start(Job::PrepareSd),
             Slot::AlpineButton => self.start(Job::Alpine),
             Slot::DeployButton => self.start(Job::Deploy),
             Slot::StatusButton => self.start(Job::Manage(ManagementAction::Status)),
@@ -795,5 +854,37 @@ impl App {
         self.cursor = self
             .selected()
             .map_or(0, |slot| self.value(slot).chars().count());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sd_card_job_is_local_and_uses_the_shared_validation() {
+        let root = std::env::temp_dir().join(format!("omt-tui-sd-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir(&root).unwrap_or_else(|error| panic!("{error}"));
+        std::fs::write(root.join(".alpine-release"), b"alpine-rpi-3.24.1\n")
+            .unwrap_or_else(|error| panic!("{error}"));
+        std::fs::write(root.join("config.txt"), b"[all]\n")
+            .unwrap_or_else(|error| panic!("{error}"));
+        std::fs::create_dir(root.join("boot")).unwrap_or_else(|error| panic!("{error}"));
+
+        let mut app = App {
+            boot_directory: root.to_string_lossy().into_owned(),
+            wifi_ssid: "studio".into(),
+            wifi_password: Zeroizing::new("passphrase".into()),
+            ..App::default()
+        };
+        assert!(app.precheck(Job::PrepareSd).is_ok());
+        let request = app
+            .request(Job::PrepareSd)
+            .unwrap_or_else(|error| panic!("{error}"));
+        assert!(request.connection.is_none());
+        app.wifi_country = "us".into();
+        assert!(app.precheck(Job::PrepareSd).is_err());
+        std::fs::remove_dir_all(&root).unwrap_or_else(|error| panic!("{error}"));
     }
 }

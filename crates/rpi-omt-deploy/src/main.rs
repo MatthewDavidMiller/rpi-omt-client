@@ -3,11 +3,12 @@
 use clap::{Args, Parser, Subcommand};
 use omt_deployer_core::{
     AlpineSetupSettings, AuthMethod, Connection, DeployOptions, IMAGE_MEMBER, ManagementAction,
-    ON_WINDOWS, Prerequisite, Secret, WifiSettings, alpine_setup, apply_wifi, change_web_password,
-    deploy, embedded_image, embedded_members, ensure_arm64_emulation, install_packages,
-    load_manifest, manage, missing_packages, prerequisites, set_hostname, sha256_bytes,
-    valid_appliance_hostname, validate_alpine_setup, validate_connection, validate_options,
-    validate_web_password, validate_wifi,
+    ON_WINDOWS, Prerequisite, SdCardSettings, Secret, WifiSettings, alpine_setup, apply_wifi,
+    change_web_password, deploy, embedded_image, embedded_members, ensure_arm64_emulation,
+    install_packages, load_manifest, manage, missing_packages, prepare_sd_card, prerequisites,
+    set_hostname, sha256_bytes, valid_appliance_hostname, validate_alpine_setup,
+    validate_connection, validate_options, validate_sd_card_settings, validate_web_password,
+    validate_wifi,
 };
 use serde::{Deserialize, Serialize};
 use std::io::{self, Read};
@@ -57,6 +58,8 @@ enum Command {
     /// registers the emulator in the container engine and verifies it; on
     /// Linux it names the target that installs it persistently.
     SetupEmulation,
+    /// Prepare a flashed Alpine boot partition for its first headless boot.
+    PrepareSd(PrepareSdArgs),
     /// Install Alpine in persistent sys mode on a factory Raspberry Pi image.
     AlpineSetup(AlpineSetupArgs),
     Deploy(DeployArgs),
@@ -88,6 +91,17 @@ struct AlpineSetupArgs {
     hostname: String,
     #[arg(long)]
     ssid: Option<String>,
+}
+#[derive(Args)]
+struct PrepareSdArgs {
+    /// Mounted root of the Alpine boot partition.
+    #[arg(long)]
+    boot_directory: PathBuf,
+    #[arg(long)]
+    ssid: String,
+    /// Two-letter uppercase Wi-Fi regulatory country.
+    #[arg(long, default_value = "US")]
+    country: String,
 }
 #[derive(Args)]
 struct DeployArgs {
@@ -220,7 +234,10 @@ fn connection(cli: &Cli, mut values: SecretInput) -> Result<Connection, String> 
 fn needs_connection(command: &Command) -> bool {
     !matches!(
         command,
-        Command::Check | Command::Prerequisites(_) | Command::SetupEmulation
+        Command::Check
+            | Command::Prerequisites(_)
+            | Command::SetupEmulation
+            | Command::PrepareSd(_)
     )
 }
 
@@ -371,6 +388,35 @@ fn run(cli: Cli) -> Result<(), (i32, String)> {
                     Some(true),
                 );
             }
+        }
+        Command::PrepareSd(args) => {
+            let wifi_value = if let Some(value) = secrets.wifi_password.take() {
+                value
+            } else if cli.interactive_secrets {
+                rpassword::prompt_password("Wi-Fi password: ").map_err(|e| (1, e.to_string()))?
+            } else {
+                return Err((
+                    2,
+                    "wifi_password is required through --secrets-stdin or an interactive prompt"
+                        .into(),
+                ));
+            };
+            let settings = SdCardSettings {
+                boot_directory: args.boot_directory.clone(),
+                country: args.country.clone(),
+                wifi_ssid: args.ssid.clone(),
+                wifi_password: Secret::new(wifi_value).map_err(|e| (2, e.to_string()))?,
+            };
+            validate_sd_card_settings(&settings).map_err(|e| (2, e.to_string()))?;
+            let mut progress = progress_emitter(cli.json);
+            prepare_sd_card(&settings, &cancellation, &mut progress)
+                .map_err(|e| (1, e.to_string()))?;
+            emit(
+                cli.json,
+                "result",
+                "The Alpine boot partition is ready for headless first boot.",
+                Some(true),
+            );
         }
         Command::AlpineSetup(args) => {
             let root_value = if let Some(value) = secrets.root_password.take() {

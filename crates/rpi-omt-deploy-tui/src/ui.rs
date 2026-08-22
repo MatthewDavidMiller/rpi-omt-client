@@ -224,7 +224,7 @@ fn about_text(width: usize) -> Vec<String> {
         "Everything this deploys is compiled in; no checkout is needed.".to_owned(),
         String::new(),
         "Keys:".to_owned(),
-        "  F1-F7 / Ctrl+Left / Ctrl+Right   switch view".to_owned(),
+        "  F1-F8 / Ctrl+Left / Ctrl+Right   switch view".to_owned(),
         "  Tab / Shift+Tab                  move between fields".to_owned(),
         "  Enter                            toggle, or run the focused action".to_owned(),
         "  Ctrl+R                           reveal or hide secrets".to_owned(),

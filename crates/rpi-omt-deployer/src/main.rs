@@ -13,8 +13,8 @@
 #[cfg_attr(not(feature = "desktop"), allow(dead_code))]
 mod gates {
     use omt_deployer_core::{
-        Secret, WifiSettings, valid_appliance_hostname, valid_host, valid_username,
-        validate_os_password, validate_web_password, validate_wifi,
+        SdCardSettings, Secret, WifiSettings, valid_appliance_hostname, valid_host, valid_username,
+        validate_os_password, validate_sd_card_settings, validate_web_password, validate_wifi,
     };
 
     /// The connection and deployment fields as the operator has typed them.
@@ -22,6 +22,8 @@ mod gates {
         pub host: &'a str,
         pub user: &'a str,
         pub password: &'a str,
+        pub boot_directory: &'a str,
+        pub wifi_country: &'a str,
         pub hostname: &'a str,
         /// The rename typed on Manage. Separate from `hostname`, which names a
         /// factory image Alpine setup is about to install: an operator who
@@ -56,6 +58,18 @@ mod gates {
         /// is to check: the capsule it uploads is part of this program.
         pub fn can_deploy(&self) -> bool {
             self.can_connect() && (!self.rotate_web_password || self.web_password_is_ready())
+        }
+
+        pub fn can_prepare_sd(&self) -> bool {
+            Secret::new(self.wifi_password.to_owned()).is_ok_and(|password| {
+                validate_sd_card_settings(&SdCardSettings {
+                    boot_directory: std::path::PathBuf::from(self.boot_directory.trim()),
+                    country: self.wifi_country.trim().to_owned(),
+                    wifi_ssid: self.wifi_ssid.trim().to_owned(),
+                    wifi_password: password,
+                })
+                .is_ok()
+            })
         }
 
         pub fn can_install_alpine(&self) -> bool {
@@ -126,6 +140,8 @@ mod gates {
                 host: "pi.local",
                 user: "root",
                 password: "secret",
+                boot_directory: "missing-alpine-boot-partition",
+                wifi_country: "US",
                 hostname: "omt-client",
                 manage_hostname: "studio-pi-2",
                 os_root_password: "rootpass1",
@@ -786,6 +802,7 @@ mod desktop {
     #[derive(Clone, Copy, PartialEq)]
     enum View {
         Connection,
+        SdCard,
         Alpine,
         Deploy,
         Manage,
@@ -798,6 +815,7 @@ mod desktop {
     #[derive(Clone, Copy, PartialEq)]
     enum Picking {
         KnownHosts,
+        BootDirectory,
     }
 
     #[allow(clippy::struct_excessive_bools)]
@@ -808,6 +826,8 @@ mod desktop {
         password: Zeroizing<String>,
         sudo_password: Zeroizing<String>,
         known_hosts: String,
+        boot_directory: String,
+        wifi_country: String,
         hostname: String,
         /// The rename typed on Manage, kept apart from `hostname` so the
         /// Alpine view's factory-image name can never drive a live rename.
@@ -863,6 +883,8 @@ mod desktop {
                 password: Zeroizing::new(String::new()),
                 sudo_password: Zeroizing::new(String::new()),
                 known_hosts: String::new(),
+                boot_directory: String::new(),
+                wifi_country: "US".into(),
                 hostname: "omt-client".into(),
                 manage_hostname: String::new(),
                 os_root_password: Zeroizing::new(String::new()),
@@ -939,6 +961,8 @@ mod desktop {
                 host: &self.host,
                 user: &self.user,
                 password: &self.password,
+                boot_directory: &self.boot_directory,
+                wifi_country: &self.wifi_country,
                 hostname: &self.hostname,
                 manage_hostname: &self.manage_hostname,
                 os_root_password: &self.os_root_password,
@@ -1002,12 +1026,16 @@ mod desktop {
             if self.running() {
                 return;
             }
-            let connection = match self.connection() {
-                Ok(value) => Some(value),
-                Err(error) => {
-                    self.activity.push(error);
-                    self.view = View::Activity;
-                    return;
+            let connection = if matches!(job, Job::PrepareSd) {
+                None
+            } else {
+                match self.connection() {
+                    Ok(value) => Some(value),
+                    Err(error) => {
+                        self.activity.push(error);
+                        self.view = View::Activity;
+                        return;
+                    }
                 }
             };
             let changes_web_password = matches!(job, Job::WebPassword)
@@ -1017,6 +1045,8 @@ mod desktop {
                 job,
                 connection,
                 options: self.deploy_options(),
+                boot_directory: PathBuf::from(self.boot_directory.trim()),
+                wifi_country: self.wifi_country.trim().to_owned(),
                 wifi_ssid: self.wifi_ssid.clone(),
                 wifi_password: self.wifi_password.clone(),
                 wifi_connect: self.wifi_connect,
@@ -1038,6 +1068,7 @@ mod desktop {
             self.events = Some(rx);
             self.view = View::Activity;
             self.activity.push(match request.job {
+                Job::PrepareSd => "Preparing the Alpine boot partition...".into(),
                 Job::Test => "Testing connection...".into(),
                 Job::Alpine => "Starting Alpine sys-mode install...".into(),
                 Job::Deploy => "Starting deployment...".into(),
@@ -1068,6 +1099,7 @@ mod desktop {
             }
             let start = match target {
                 Picking::KnownHosts => self.known_hosts.clone(),
+                Picking::BootDirectory => self.boot_directory.clone(),
             };
             let (tx, rx) = mpsc::channel();
             self.picker = Some((target, rx));
@@ -1091,6 +1123,9 @@ mod desktop {
                     Picking::KnownHosts => dialog
                         .set_title("Select an OpenSSH known_hosts file")
                         .pick_file(),
+                    Picking::BootDirectory => dialog
+                        .set_title("Select the Alpine boot partition")
+                        .pick_folder(),
                 };
                 let _ = tx.send(picked);
             });
@@ -1109,6 +1144,7 @@ mod desktop {
                         let chosen = path.display().to_string();
                         match target {
                             Picking::KnownHosts => self.known_hosts = chosen,
+                            Picking::BootDirectory => self.boot_directory = chosen,
                         }
                     }
                 }
@@ -1389,6 +1425,7 @@ mod desktop {
                 ui.horizontal_wrapped(|ui| {
                     for (name, view) in [
                         ("Connection", View::Connection),
+                        ("SD card", View::SdCard),
                         ("Alpine", View::Alpine),
                         ("Deploy", View::Deploy),
                         ("Manage", View::Manage),
@@ -1444,6 +1481,51 @@ mod desktop {
                     }
                     if test {
                         self.start_job(Job::Test);
+                    }
+                }
+                View::SdCard => {
+                    let mut browse = false;
+                    let mut prepare = false;
+                    column(ui, |ui| {
+                        ui.heading("Initial SD card setup");
+                        ui.label(
+                            "Select the boot partition of a clean Alpine Raspberry Pi image. \
+                             The deployer downloads a checksum-verified headless bootstrap and \
+                             writes an initial wpa_supplicant.conf so the Pi can start SSH over Wi-Fi.",
+                        );
+                        ui.add_space(ui.spacing().item_spacing.y);
+                        let idle = !self.running() && self.picker.is_none();
+                        field(ui, "Alpine boot partition", |ui| {
+                            browse = path_field(ui, &mut self.boot_directory, idle);
+                        });
+                        field(ui, "Wi-Fi country", |ui| {
+                            text_field(ui, &mut self.wifi_country, false);
+                        });
+                        field(ui, "Wi-Fi SSID", |ui| {
+                            text_field(ui, &mut self.wifi_ssid, false);
+                        });
+                        field(ui, "Wi-Fi password", |ui| {
+                            text_field(ui, &mut self.wifi_password, !self.reveal);
+                        });
+                        ui.checkbox(&mut self.reveal, "Reveal secrets");
+                        ui.label(
+                            egui::RichText::new(
+                                "The generated file stores a derived WPA PSK, not the plaintext passphrase.",
+                            )
+                            .italics(),
+                        );
+                        prepare = ui
+                            .add_enabled(
+                                self.form().can_prepare_sd() && !self.running(),
+                                egui::Button::new("Prepare SD card"),
+                            )
+                            .clicked();
+                    });
+                    if browse {
+                        self.start_picker(Picking::BootDirectory);
+                    }
+                    if prepare {
+                        self.start_job(Job::PrepareSd);
                     }
                 }
                 View::Alpine => {
@@ -1892,6 +1974,30 @@ mod desktop {
         fn alpine_defaults_to_omt_client_hostname() {
             assert_eq!(App::default().hostname, "omt-client");
             assert!(!App::default().pending_alpine_confirm);
+        }
+
+        #[test]
+        fn sd_card_button_requires_a_real_alpine_pi_boot_partition() {
+            let root = std::env::temp_dir().join(format!("omt-gui-sd-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&root);
+            std::fs::create_dir(&root).unwrap_or_else(|error| panic!("{error}"));
+            let path = root.to_string_lossy().into_owned();
+            let mut app = App {
+                boot_directory: path,
+                wifi_ssid: "studio".into(),
+                wifi_password: Zeroizing::new("passphrase".into()),
+                ..App::default()
+            };
+            assert!(!app.form().can_prepare_sd());
+            std::fs::write(root.join(".alpine-release"), b"alpine-rpi-3.24.1\n")
+                .unwrap_or_else(|error| panic!("{error}"));
+            std::fs::write(root.join("config.txt"), b"[all]\n")
+                .unwrap_or_else(|error| panic!("{error}"));
+            std::fs::create_dir(root.join("boot")).unwrap_or_else(|error| panic!("{error}"));
+            assert!(app.form().can_prepare_sd());
+            app.wifi_country = "us".into();
+            assert!(!app.form().can_prepare_sd());
+            std::fs::remove_dir_all(&root).unwrap_or_else(|error| panic!("{error}"));
         }
 
         #[test]

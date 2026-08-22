@@ -112,6 +112,24 @@ expect_status 2 "deploy --rebuild-image without a project" \
 expect_status 2 "an unknown subcommand" "${deployer}" --project "${project}" frobnicate
 expect_status 2 "an unknown option" "${deployer}" --project "${project}" --colour red check
 
+# SD-card preparation is local and needs only a mounted Alpine boot partition
+# plus the secret Wi-Fi channel. These rejected cases stop before the pinned
+# overlay download, so the CLI contract remains deterministic without network.
+alpine_boot="${empty}/PIBOOT"
+mkdir "${alpine_boot}"
+printf '%s\n' '3.24.1' >"${alpine_boot}/.alpine-release"
+printf '%s\n' '[all]' >"${alpine_boot}/config.txt"
+mkdir "${alpine_boot}/boot"
+expect_status 2 "prepare-sd with no password source" \
+    "${deployer}" prepare-sd --boot-directory "${alpine_boot}" --ssid studio
+expect_status_stdin 2 "prepare-sd rejects a lowercase country" \
+    '{"wifi_password":"passphrase"}' \
+    "${deployer}" --secrets-stdin prepare-sd --boot-directory "${alpine_boot}" \
+    --country us --ssid studio
+expect_status_stdin 2 "prepare-sd rejects a non-Alpine directory" \
+    '{"wifi_password":"passphrase"}' \
+    "${deployer}" --secrets-stdin prepare-sd --boot-directory "${empty}" --ssid studio
+
 # Connection arguments are validated before anything is opened.
 expect_status 2 "a management action without a host" "${deployer}" --username root status
 expect_status 2 "a management action without a username" "${deployer}" --host pi.local status

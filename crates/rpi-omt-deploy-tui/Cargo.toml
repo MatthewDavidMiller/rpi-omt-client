@@ -8,7 +8,7 @@ rust-version.workspace = true
 [dependencies]
 crossterm.workspace = true
 ratatui.workspace = true
-omt-deployer-core = { version = "0.9.63", path = "../omt-deployer-core" }
+omt-deployer-core = { version = "0.9.64", path = "../omt-deployer-core" }
 zeroize.workspace = true
 
 [lints]

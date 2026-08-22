@@ -114,6 +114,13 @@ widening, that labels stack at the narrowest window, and that zoom steps by a
 tenth, saturates at its bounds, and returns to exactly 100%. None of that
 needs a display attached.
 
+The deployer core tests also pin the initial SD-card configuration to LF line
+endings, hex SSIDs, derived PSKs, uppercase regulatory countries, and an Alpine
+boot-partition marker. They do not download from the network. For a release
+candidate, run `prepare-sd` against a freshly imaged Alpine card, confirm the
+two files and pinned overlay digest on the mounted partition, then boot the Pi
+and complete the Alpine view over its headless SSH service.
+
 `tests/native/test_deployer_cli.sh` then runs the built CLI: capsule
 validation with and without a project root -- including that an embedded
 deployment reports no workstation prerequisite at all and that `--rebuild-image`

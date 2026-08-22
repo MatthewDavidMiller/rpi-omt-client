@@ -13,10 +13,11 @@
 //! channel, and renders the `WorkerEvent`s that come back.
 
 use crate::{
-    AlpineSetupSettings, Connection, DeployOptions, ManagementAction, Secret, WifiSettings,
-    alpine_setup, apply_wifi, change_web_password, deploy, manage, set_hostname, test_connection,
-    validate_web_password, validate_wifi,
+    AlpineSetupSettings, Connection, DeployOptions, ManagementAction, SdCardSettings, Secret,
+    WifiSettings, alpine_setup, apply_wifi, change_web_password, deploy, manage, prepare_sd_card,
+    set_hostname, test_connection, validate_web_password, validate_wifi,
 };
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::Sender;
@@ -31,14 +32,13 @@ pub enum WorkerEvent {
     Finished(Result<(), String>),
 }
 
-/// Every job a deployer frontend runs, all of which talk to the Raspberry Pi.
+/// Every operation exposed by the native frontends.
 ///
-/// There is no local job here: the workstation probe, the package installs,
-/// and the ARM64 emulation setup all existed to prepare a machine to *build*
-/// the appliance image, and neither frontend builds anything. They carry the
-/// image instead. `rpi-omt-deploy prerequisites` and `setup-emulation` still
-/// serve a developer rebuilding from a tree.
+/// `PrepareSd` is local to the workstation; the remaining jobs use the
+/// request's verified SSH connection.
+#[derive(Clone, Copy)]
 pub enum Job {
+    PrepareSd,
     Test,
     Alpine,
     Deploy,
@@ -62,6 +62,8 @@ pub struct JobRequest {
     /// project root and archive, and reading them from anywhere else would let
     /// the frontend answer for one while the deployment used another.
     pub options: DeployOptions,
+    pub boot_directory: PathBuf,
+    pub wifi_country: String,
     pub wifi_ssid: String,
     pub wifi_password: Zeroizing<String>,
     pub wifi_connect: bool,
@@ -80,6 +82,8 @@ impl Default for JobRequest {
             job: Job::Test,
             connection: None,
             options: DeployOptions::default(),
+            boot_directory: PathBuf::new(),
+            wifi_country: "US".into(),
             wifi_ssid: String::new(),
             wifi_password: Zeroizing::new(String::new()),
             wifi_connect: true,
@@ -120,6 +124,16 @@ pub fn run_job(
             .ok_or_else(|| "no connection was prepared for this operation".to_owned())
     };
     match request.job {
+        Job::PrepareSd => {
+            let settings = SdCardSettings {
+                boot_directory: request.boot_directory,
+                country: request.wifi_country,
+                wifi_ssid: request.wifi_ssid,
+                wifi_password: Secret::new((*request.wifi_password).clone())
+                    .map_err(|error| error.to_string())?,
+            };
+            prepare_sd_card(&settings, cancel, &mut progress).map_err(|error| error.to_string())
+        }
         Job::Test => {
             test_connection(remote()?, cancel, &mut progress).map_err(|error| error.to_string())
         }
