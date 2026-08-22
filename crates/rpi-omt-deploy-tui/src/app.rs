@@ -304,6 +304,9 @@ pub struct App {
     pub log: Vec<String>,
     pub log_scroll: usize,
     pub follow_log: bool,
+    /// First visible line of the About document, which carries the licence and
+    /// the third-party notices and is far longer than any terminal.
+    pub about_scroll: usize,
     pub pending: Option<Pending>,
 
     cancel: Arc<AtomicBool>,
@@ -344,6 +347,7 @@ impl Default for App {
             log: Vec::new(),
             log_scroll: 0,
             follow_log: true,
+            about_scroll: 0,
             pending: None,
             cancel: Arc::new(AtomicBool::new(false)),
             events: None,
@@ -452,6 +456,18 @@ impl App {
         self.cursor = self
             .selected()
             .map_or(0, |slot| self.value(slot).chars().count());
+    }
+
+    /// Move the About document by `delta` lines.
+    ///
+    /// Only the near end is clamped here. How far down the text goes depends on
+    /// the width it wrapped to and the height it is drawn in, neither of which
+    /// this module knows, so the far end is clamped where the drawing happens --
+    /// the same division the activity log already uses.
+    pub fn scroll_about(&mut self, delta: isize) {
+        let current = isize::try_from(self.about_scroll).unwrap_or(isize::MAX);
+        let next = current.saturating_add(delta).max(0);
+        self.about_scroll = usize::try_from(next).unwrap_or(0);
     }
 
     pub fn push_log(&mut self, line: String) {

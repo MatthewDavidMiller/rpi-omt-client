@@ -30,6 +30,10 @@ def main() -> int:
         "zeroize",
         "egui",
         "eframe",
+        # The Linux deployer's frontend. Shipped in the same package as the
+        # Windows one, so it belongs in the same list.
+        "ratatui",
+        "crossterm",
     ):
         if package not in notices:
             fail(f"Native deployer dependency is missing from notices: {package}")
@@ -38,10 +42,15 @@ def main() -> int:
     if not registry_packages or any("checksum" not in package for package in registry_packages):
         fail("Cargo registry graph is not completely checksum locked")
 
+    # Every About surface an operator can reach: the appliance's Web page and
+    # both deployer frontends. The terminal one was left out of this list while
+    # its About view carried no legal text at all, which is the drift the list
+    # exists to catch.
     for path in (
         ROOT / "LICENSE",
         ROOT / "crates/omt-web/templates/about.html",
         ROOT / "crates/rpi-omt-deployer/src/main.rs",
+        ROOT / "crates/rpi-omt-deploy-tui/src/ui.rs",
     ):
         require_text(path, COPYRIGHT)
     require_text(ROOT / "LICENSE", "MIT License")

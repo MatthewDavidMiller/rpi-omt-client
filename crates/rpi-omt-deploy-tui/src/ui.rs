@@ -10,6 +10,13 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Tabs, Wrap};
 
+/// The texts the About view reproduces, taken from the files the release
+/// package ships beside the binary. Included the same way the egui application
+/// includes them, from the same two paths, so the two deployers cannot come to
+/// carry different notices.
+const LICENSE: &str = include_str!("../../../LICENSE");
+const NOTICES: &str = include_str!("../../../THIRD_PARTY_NOTICES.txt");
+
 /// Terminals vary in how many colours they honour, so emphasis carries through
 /// modifiers as well as colour. A monochrome console still shows focus.
 const FOCUS: Style = Style::new()
@@ -53,7 +60,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
     draw_tabs(frame, areas[0], app);
     match app.view {
         View::Activity => draw_activity(frame, areas[1], app),
-        View::About => draw_about(frame, areas[1]),
+        View::About => draw_about(frame, areas[1], app),
         view => draw_form(frame, areas[1], app, view),
     }
     draw_status(frame, areas[2], app);
@@ -188,7 +195,14 @@ fn draw_activity(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(Paragraph::new(lines), inner);
 }
 
-fn draw_about(frame: &mut Frame, area: Rect) {
+/// The About document as one scrollable text, wrapped to `width`.
+///
+/// The egui application puts the licence and the third-party notices behind
+/// collapsing headers on its own About view. A terminal has no such widget, so
+/// the same two texts are sections of one document here. They are not optional
+/// extras: the deployer ships as a single file with the appliance compiled into
+/// it, so this is the only copy of those notices an operator receives.
+fn about_text(width: usize) -> Vec<String> {
     // The digest is the point: a single-file deployer is otherwise opaque
     // about which appliance build it carries.
     let capsule = embedded_image().map_or_else(
@@ -202,24 +216,129 @@ fn draw_about(frame: &mut Frame, area: Rect) {
             )
         },
     );
-    let body = vec![
-        Line::from(format!("Raspberry Pi OMT client deployer {VERSION}")),
-        Line::from(""),
-        Line::from(capsule),
-        Line::from(""),
-        Line::from("Everything this deploys is compiled in; no checkout is needed."),
-        Line::from(""),
-        Line::from("Keys:"),
-        Line::from("  F1-F7 / Ctrl+Left / Ctrl+Right   switch view"),
-        Line::from("  Tab / Shift+Tab / Up / Down      move between fields"),
-        Line::from("  Enter                            toggle, or run the focused action"),
-        Line::from("  Ctrl+R                           reveal or hide secrets"),
-        Line::from("  Esc                              cancel a running job"),
-        Line::from("  Ctrl+Q                           quit"),
+    let head = [
+        format!("Raspberry Pi OMT client deployer {VERSION}"),
+        String::new(),
+        capsule,
+        String::new(),
+        "Everything this deploys is compiled in; no checkout is needed.".to_owned(),
+        String::new(),
+        "Keys:".to_owned(),
+        "  F1-F7 / Ctrl+Left / Ctrl+Right   switch view".to_owned(),
+        "  Tab / Shift+Tab                  move between fields".to_owned(),
+        "  Enter                            toggle, or run the focused action".to_owned(),
+        "  Ctrl+R                           reveal or hide secrets".to_owned(),
+        "  Esc                              cancel a running job".to_owned(),
+        "  PageUp / PageDown / Up / Down    scroll Activity and About".to_owned(),
+        "  Home / End                       jump to the ends of this view".to_owned(),
+        "  Ctrl+Q                           quit".to_owned(),
+    ]
+    .join("\n");
+
+    let sections = [
+        head.as_str(),
+        "\nLICENSE\n-------",
+        LICENSE.trim_end(),
+        "\nTHIRD-PARTY NOTICES\n-------------------",
+        NOTICES.trim_end(),
     ];
-    let block = Block::default().borders(Borders::ALL).title(" About ");
+    sections
+        .iter()
+        .flat_map(|section| wrap(section, width))
+        .collect()
+}
+
+/// Wrap `text` to `width`, keeping each source line's indentation.
+///
+/// Pre-wrapped rather than handed to ratatui's `Wrap`, because that wrapping
+/// happens after the scroll offset is applied: the licence's long lines would
+/// then expand into more rows than the offset was ever clamped against, and the
+/// end of the notices could not be reached. Wrapping here makes the line count
+/// the drawing clamps with the same one the operator scrolls through.
+fn wrap(text: &str, width: usize) -> Vec<String> {
+    let width = width.max(1);
+    let mut wrapped = Vec::new();
+    for source in text.lines() {
+        // A line that already fits is kept exactly as written, so the columns
+        // the key legend is aligned in survive on a terminal wide enough for
+        // them. Only a line that must be broken is re-flowed.
+        if source.chars().count() <= width {
+            wrapped.push(source.to_owned());
+            continue;
+        }
+        let mut indent: String = source
+            .chars()
+            .take_while(|character| character.is_whitespace())
+            .collect();
+        // An indent as wide as the area leaves nowhere to put the words.
+        if indent.chars().count() >= width {
+            indent = String::new();
+        }
+        let margin = indent.chars().count();
+        let mut line = indent.clone();
+        for word in source
+            .split_whitespace()
+            .flat_map(|word| split_word(word, width - margin))
+        {
+            let filled = line.chars().count();
+            let occupied = filled > margin;
+            if occupied && filled + 1 + word.chars().count() > width {
+                wrapped.push(std::mem::replace(&mut line, indent.clone()));
+            } else if occupied {
+                line.push(' ');
+            }
+            line.push_str(&word);
+        }
+        wrapped.push(line);
+    }
+    wrapped
+}
+
+/// Break a word too long for the area into pieces that fit.
+///
+/// The capsule digest is 64 characters and does not fit a narrow terminal, and
+/// it is the one line on this view an operator might want to compare against a
+/// release. Broken across rows it can still be read; clipped it cannot.
+fn split_word(word: &str, width: usize) -> Vec<String> {
+    if word.chars().count() <= width {
+        return vec![word.to_owned()];
+    }
+    let mut pieces = Vec::new();
+    let mut piece = String::new();
+    for character in word.chars() {
+        if piece.chars().count() == width {
+            pieces.push(std::mem::take(&mut piece));
+        }
+        piece.push(character);
+    }
+    if !piece.is_empty() {
+        pieces.push(piece);
+    }
+    pieces
+}
+
+fn draw_about(frame: &mut Frame, area: Rect, app: &App) {
+    let inner = Block::default().borders(Borders::ALL).inner(area);
+    let lines = about_text(usize::from(inner.width));
+    let height = usize::from(inner.height);
+    // The far end of the scroll is clamped here rather than in `App`, which
+    // knows neither the width the text wrapped to nor the height it lands in.
+    let offset = app.about_scroll.min(lines.len().saturating_sub(height));
+    let last = (offset + height).min(lines.len());
+    let title = if lines.len() > height {
+        format!(" About (lines {}-{} of {}) ", offset + 1, last, lines.len())
+    } else {
+        " About ".to_owned()
+    };
+
+    let body: Vec<Line> = lines
+        .into_iter()
+        .skip(offset)
+        .take(height)
+        .map(Line::from)
+        .collect();
     frame.render_widget(
-        Paragraph::new(body).block(block).wrap(Wrap { trim: false }),
+        Paragraph::new(body).block(Block::default().borders(Borders::ALL).title(title)),
         area,
     );
 }
@@ -267,4 +386,94 @@ fn draw_confirm(frame: &mut Frame, prompt: &str) {
         ),
         region,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    /// Everything the egui About view shows. This one shipped with the version
+    /// and the capsule but neither of the two texts, and a deployer that is one
+    /// file with no package around it is the only place an operator would find
+    /// them.
+    #[test]
+    fn about_reproduces_the_licence_and_the_third_party_notices() {
+        let text = about_text(80).join("\n");
+        assert!(text.contains(VERSION), "{text}");
+        assert!(text.contains("MIT License"));
+        assert!(text.contains("Copyright (c) 2026 Matthew David Miller"));
+        assert!(text.contains("Permission is hereby granted, free of charge"));
+        assert!(text.contains("THIRD-PARTY NOTICES"));
+        assert!(text.contains("OPEN MEDIA TRANSPORT COMPONENTS"));
+        assert!(text.contains("SPDX license identifiers above are descriptive"));
+    }
+
+    /// The two texts are included from the files the release package ships, so
+    /// neither can be edited into a paraphrase of what was actually shipped.
+    #[test]
+    fn the_texts_are_the_files_themselves() {
+        let text = about_text(200).join("\n");
+        for line in LICENSE.lines().chain(NOTICES.lines()) {
+            assert!(text.contains(line.trim_end()), "missing: {line}");
+        }
+    }
+
+    #[test]
+    fn wrapping_keeps_blank_lines_and_indentation() {
+        assert_eq!(
+            wrap("head\n\n  a bb ccc", 6),
+            vec!["head", "", "  a bb", "  ccc"]
+        );
+    }
+
+    /// The digest is 64 characters and the narrowest allowed view is 38, so
+    /// clipping it would leave the one value worth comparing unreadable.
+    #[test]
+    fn a_word_wider_than_the_view_is_broken_rather_than_clipped() {
+        assert_eq!(wrap("abcdefgh", 3), vec!["abc", "def", "gh"]);
+        let narrow = about_text(38).join("");
+        let digest = embedded_image().map(|image| sha256_bytes(image.bytes));
+        if let Some(digest) = digest {
+            assert!(narrow.contains(&digest), "{narrow}");
+        }
+    }
+
+    /// Pre-wrapping is what makes the line count the scroll is clamped against
+    /// the count that is actually drawn, so nothing may exceed the area.
+    #[test]
+    fn the_document_fits_the_width_it_wrapped_to() {
+        // 38 is the narrowest inner width `MIN_WIDTH` allows.
+        for width in [38, 60, 120] {
+            for line in about_text(width) {
+                assert!(line.chars().count() <= width, "{width}: {line}");
+            }
+        }
+    }
+
+    /// Scrolling to the end must show the end. An offset clamped against the
+    /// unwrapped count would stop short of it by hundreds of lines.
+    #[test]
+    fn the_end_of_the_notices_can_be_scrolled_to() {
+        let mut app = App::default();
+        app.view = View::About;
+        app.about_scroll = usize::MAX;
+        let bottom = render(&app);
+        let tail = NOTICES.trim_end().lines().next_back().unwrap_or_default();
+        assert!(bottom.contains(tail.trim()), "{bottom}");
+
+        app.about_scroll = 0;
+        assert!(render(&app).contains("Raspberry Pi OMT client deployer"));
+    }
+
+    /// What a terminal would show, as text.
+    fn render(app: &App) -> String {
+        let backend = TestBackend::new(80, 30);
+        let mut terminal = Terminal::new(backend).unwrap_or_else(|error| panic!("{error}"));
+        terminal
+            .draw(|frame| draw(frame, app))
+            .unwrap_or_else(|error| panic!("{error}"));
+        terminal.backend().to_string()
+    }
 }

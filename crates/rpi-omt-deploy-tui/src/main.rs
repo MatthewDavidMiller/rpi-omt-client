@@ -112,6 +112,15 @@ fn handle_key(app: &mut App, key: KeyEvent) {
             }
         }
 
+        // About has no fields, so the keys that would move between them read
+        // the licence and the notices instead. Home and End are the two ends of
+        // the document; End overshoots deliberately and is clamped at render,
+        // where the wrapped line count is known.
+        KeyCode::Down if app.view == View::About => app.scroll_about(1),
+        KeyCode::Up if app.view == View::About => app.scroll_about(-1),
+        KeyCode::Home if app.view == View::About => app.about_scroll = 0,
+        KeyCode::End if app.view == View::About => app.about_scroll = usize::MAX,
+
         KeyCode::Tab | KeyCode::Down => app.move_focus(1),
         KeyCode::BackTab | KeyCode::Up => app.move_focus(-1),
         KeyCode::Enter => app.activate(),
@@ -123,8 +132,8 @@ fn handle_key(app: &mut App, key: KeyEvent) {
         KeyCode::Backspace => app.backspace(),
         KeyCode::Delete => app.delete(),
 
-        KeyCode::PageUp => scroll_log(app, -1),
-        KeyCode::PageDown => scroll_log(app, 1),
+        KeyCode::PageUp => scroll(app, -1),
+        KeyCode::PageDown => scroll(app, 1),
 
         KeyCode::Char(character) if !control => app.insert(character),
         _ => {}
@@ -141,6 +150,15 @@ fn cycle_view(app: &mut App, delta: isize) {
     let next = (current + delta).rem_euclid(count);
     if let Some(view) = usize::try_from(next).ok().and_then(|i| View::ALL.get(i)) {
         app.select_view(*view);
+    }
+}
+
+/// A page of whichever view scrolls: the About document, or the activity log.
+fn scroll(app: &mut App, direction: isize) {
+    if app.view == View::About {
+        app.scroll_about(direction * 10);
+    } else {
+        scroll_log(app, direction);
     }
 }
 

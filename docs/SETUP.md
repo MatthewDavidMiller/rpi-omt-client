@@ -256,7 +256,10 @@ About shows `LICENSE` and `THIRD_PARTY_NOTICES.txt` from inside the executable:
 `include_str!` compiles both texts in, so the page cannot go blank
 because the binary was copied somewhere without them. The published packages
 still carry the files as well, for anyone reading the package rather than
-running it.
+running it. The GUI puts each text behind a collapsing header; the terminal
+application has no such widget, so About is one document there -- version,
+capsule digest, keys, license, notices -- scrolled with PageUp/PageDown,
+Up/Down, Home, and End.
 
 The application does not otherwise rely on the working directory it happens to
 inherit from a shell or a desktop shortcut, and it reads no file beside itself:
