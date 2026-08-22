@@ -53,6 +53,7 @@ literal "${PROJECT_ROOT}/deploy/compose.yml" 'pids_limit: 64' "Runtime process c
 executable "${PROJECT_ROOT}/tools/test-receiver.sh" "Rust receiver gate is executable"
 executable "${PROJECT_ROOT}/scripts/check-deployer.sh" "Rust deployer gate is executable"
 executable "${PROJECT_ROOT}/scripts/build-windows-deployer.sh" "Windows Rust gate is executable"
+executable "${PROJECT_ROOT}/scripts/publish-github-release.sh" "Local GitHub Release publisher is executable"
 executable "${PROJECT_ROOT}/scripts/check-no-c-sources.sh" "No-C gate is executable"
 literal "${PROJECT_ROOT}/Makefile" 'test-receiver:' "Make exposes test-receiver"
 literal "${PROJECT_ROOT}/Makefile" 'test-deployer:' "Make exposes test-deployer"

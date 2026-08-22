@@ -65,6 +65,10 @@ Docker or Podman is the only thing any of this needs from a workstation:
 `make install` builds the toolbox image that carries every compiler, linter,
 and scanner the gates use.
 
+A finished version can be built, tagged, pushed, and published as a GitHub
+Release entirely from the workstation with `make release`. This requires the
+GitHub CLI authenticated by `gh auth login`; it does not use GitHub Actions.
+
 ## Install
 
 Flash the official Alpine Raspberry Pi aarch64 image, add the Pi's SSH host

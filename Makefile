@@ -1,7 +1,7 @@
 # Raspberry Pi OMT Client Build System
 # Usage: make [target]
 
-.PHONY: help install setup-arm64-emulation build build-arm64 build-amd64 build-deployer build-windows-deployer build-omt-sender omt-sender-start omt-sender-stop omt-sender-status omt-sender-firewall-allow omt-sender-firewall-remove deploy up down logs lint test test-quick test-web test-receiver test-deployer test-setup security-scan clean
+.PHONY: help install setup-arm64-emulation build build-arm64 build-amd64 build-deployer build-windows-deployer release build-omt-sender omt-sender-start omt-sender-stop omt-sender-status omt-sender-firewall-allow omt-sender-firewall-remove deploy up down logs lint test test-quick test-web test-receiver test-deployer test-setup security-scan clean
 
 IMAGE_NAME   := omt-client
 ARM64_TARBALL := omt-client-arm64.tar.gz
@@ -29,6 +29,8 @@ help:
 	@echo "                 Both embed $(ARM64_TARBALL), so run build-arm64 first"
 	@echo "                 The post-commit hook runs all three: a published"
 	@echo "                 artifact carries the version of its own commit"
+	@echo "  release       Build locally, tag and push HEAD, and create the"
+	@echo "                 GitHub Release (requires an authenticated gh CLI)"
 	@echo "  build-omt-sender  Build the first-party Rust OMT A/V sender"
 	@echo ""
 	@echo "Deploy targets:"
@@ -100,6 +102,12 @@ build-deployer:
 # Cross-compile the Windows x86-64 deployer from Linux with mingw-w64.
 build-windows-deployer:
 	RPI_OMT_CLIENT_VERSION="$(RPI_OMT_CLIENT_VERSION)" $(TOOLBOX) ./scripts/build-windows-deployer.sh
+
+# This remains a local pipeline: the script runs the release builds above on
+# this workstation, then uses the authenticated GitHub CLI only for the final
+# push and Release API call.
+release:
+	./scripts/publish-github-release.sh
 
 build-omt-sender:
 	./scripts/build-omt-test-sender.sh --target "$(OMT_SENDER_TARGET)"

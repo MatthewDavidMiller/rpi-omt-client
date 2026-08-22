@@ -215,6 +215,27 @@ last. Publish from the finished sequence with
 --no-verify` bypasses the pre-commit gate only; the post-commit builds still
 run.
 
+## Publishing a GitHub Release locally
+
+After the final versioned commit is on a clean branch with an upstream, run:
+
+```bash
+gh auth login
+make release
+```
+
+This does not use GitHub Actions. It reruns the ARM64 image and Linux/Windows
+deployer publishers locally, packages the two deployer directories with fixed
+timestamps and ownership, writes `SHA256SUMS`, creates the annotated tag named
+by `workspace.package.version`, and atomically pushes the branch and tag before
+calling the GitHub Release API. `0.x` versions are marked as prereleases and
+release notes are generated from the repository history.
+
+The command refuses a dirty or detached worktree, a branch without an
+upstream, and a version tag that already belongs to another commit. It never
+replaces assets on an existing GitHub Release. The staged upload files remain
+under `.build/github-release/<version>/` for inspection or recovery.
+
 ## Hardware validation boundary
 
 There is intentionally no full-system Raspberry Pi VM tier. QEMU models none of

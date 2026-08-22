@@ -116,7 +116,7 @@ are POST and CSRF protected.
 | Reads the Linux deployer's static-linkage guarantee back out of the ELF headers | `scripts/verify-linux-deployer.sh` |
 | Hash-locked Rust dependencies and supply-chain gates | `Cargo.lock`, `deny.toml`, `supply-chain/`, `scripts/check-supply-chain.sh` |
 | Windows cross build | `scripts/build-windows-deployer.sh` |
-| Local commit gate and the publishing builds that follow it | `.githooks/pre-commit`, `.githooks/post-commit`, `scripts/setup-hooks.sh` |
+| Local commit gate, publishing builds, and GitHub Release publisher | `.githooks/pre-commit`, `.githooks/post-commit`, `scripts/setup-hooks.sh`, `scripts/publish-github-release.sh` |
 | Local toolchain provisioning | `scripts/install-dev-deps.sh`, `scripts/install-hadolint.sh`, `scripts/install-trivy.sh`, `scripts/install-arm64-emulation.sh` |
 
 `tools.rs` is where the deployer's answers about the *operator's* machine live,
@@ -190,3 +190,12 @@ image.
 inputs. `scripts/check-legal-notices.py` compares shipped Rust and Alpine
 dependencies to the notices. `scripts/generate-runtime-sbom.py` and
 `scripts/generate-deployer-sbom.py` create CycloneDX inventories.
+
+`make release` is the local release pipeline; there is no GitHub Actions
+workflow. It requires a clean branch with an upstream and an authenticated
+GitHub CLI, runs the ARM64 and both deployer publishers in dependency order,
+creates an annotated tag from the canonical workspace version when needed,
+atomically pushes the branch and tag, and creates a GitHub Release with
+reproducible Linux and Windows package archives plus SHA-256 checksums. Existing
+release assets are immutable: rerunning the command recognizes an existing
+release and does not replace them.
