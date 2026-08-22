@@ -342,6 +342,7 @@ pub struct App {
 
     cancel: Arc<AtomicBool>,
     events: Option<Receiver<WorkerEvent>>,
+    switch_to_pi_after_job: bool,
 }
 
 impl Default for App {
@@ -384,6 +385,7 @@ impl Default for App {
             pending: None,
             cancel: Arc::new(AtomicBool::new(false)),
             events: None,
+            switch_to_pi_after_job: false,
         }
     }
 }
@@ -556,12 +558,22 @@ impl App {
                 Ok(()) => {
                     self.status = "Finished successfully.".into();
                     self.push_log("-- finished successfully --".into());
+                    if self.switch_to_pi_after_job {
+                        self.user = "pi".into();
+                        self.password = self.os_pi_password.clone();
+                        self.sudo_password = self.os_pi_password.clone();
+                        self.push_log(
+                            "Connection updated to user pi. Deploy next; the Alpine root password installs sudo on first deploy."
+                                .into(),
+                        );
+                    }
                 }
                 Err(error) => {
                     self.status = format!("Failed: {error}");
                     self.push_log(format!("-- failed: {error} --"));
                 }
             }
+            self.switch_to_pi_after_job = false;
         }
     }
 
@@ -575,11 +587,13 @@ impl App {
 
     /// Build the connection the remote jobs share.
     fn connection(&self) -> Result<Connection, String> {
-        let password = if self.password.is_empty() {
-            None
-        } else {
-            Some(Secret::new((*self.password).clone()).map_err(|error| error.to_string())?)
-        };
+        // The terminal deployer supports password authentication only, so the
+        // field is always an explicit credential. An empty string is distinct
+        // from a missing credential: untouched factory Alpine accepts root
+        // with an empty SSH password, and the shared SSH adapter deliberately
+        // tries none, password, and keyboard-interactive for that case.
+        let password =
+            Some(Secret::new((*self.password).clone()).map_err(|error| error.to_string())?);
         let sudo_password = if self.sudo_password.is_empty() {
             None
         } else {
@@ -721,6 +735,7 @@ impl App {
         };
         let (tx, rx) = channel();
         self.cancel.store(false, Ordering::SeqCst);
+        self.switch_to_pi_after_job = matches!(job, Job::Alpine) && self.apply_alpine_login;
         let cancel = Arc::clone(&self.cancel);
         // Detached deliberately: the receiver going away is how a quit stops
         // caring about the result, and joining here would block the redraw.
@@ -886,5 +901,45 @@ mod tests {
         app.wifi_country = "us".into();
         assert!(app.precheck(Job::PrepareSd).is_err());
         std::fs::remove_dir_all(&root).unwrap_or_else(|error| panic!("{error}"));
+    }
+
+    #[test]
+    fn factory_alpine_keeps_an_explicit_empty_ssh_password() {
+        let app = App {
+            host: "10.1.20.223".into(),
+            user: "root".into(),
+            password: Zeroizing::new(String::new()),
+            ..App::default()
+        };
+
+        let connection = app.connection().unwrap_or_else(|error| panic!("{error}"));
+        let password = connection
+            .password
+            .as_ref()
+            .unwrap_or_else(|| panic!("empty factory password was dropped"));
+        assert_eq!(password.expose(), "");
+    }
+
+    #[test]
+    fn successful_alpine_setup_can_apply_the_new_pi_login() {
+        let mut app = App {
+            user: "root".into(),
+            password: Zeroizing::new(String::new()),
+            sudo_password: Zeroizing::new(String::new()),
+            os_pi_password: Zeroizing::new("new-pi-password".into()),
+            switch_to_pi_after_job: true,
+            ..App::default()
+        };
+        let (tx, rx) = channel();
+        app.events = Some(rx);
+        tx.send(WorkerEvent::Finished(Ok(())))
+            .unwrap_or_else(|error| panic!("{error}"));
+
+        app.poll_worker();
+
+        assert_eq!(app.user, "pi");
+        assert_eq!(&*app.password, "new-pi-password");
+        assert_eq!(&*app.sudo_password, "new-pi-password");
+        assert!(!app.switch_to_pi_after_job);
     }
 }

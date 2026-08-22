@@ -8,6 +8,7 @@ BUILD_SCRIPT="${PROJECT_ROOT}/scripts/build-omt-test-sender.sh"
 RUN_SCRIPT="${PROJECT_ROOT}/scripts/omt-test-sender.sh"
 FIREWALL_SCRIPT="${PROJECT_ROOT}/scripts/configure-omt-test-sender-firewall.sh"
 SENDER_MANIFEST="${PROJECT_ROOT}/crates/omt-test-sender/Cargo.toml"
+MAKEFILE="${PROJECT_ROOT}/Makefile"
 failures=0
 
 pass() { echo "PASS: $1"; }
@@ -54,6 +55,12 @@ require_literal "${BUILD_SCRIPT}" 'aarch64-unknown-linux-musl' \
     "Pi 4 and Pi 5 share an explicit ARM64 musl build"
 require_literal "${BUILD_SCRIPT}" 'CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=rust-lld' \
     "ARM64 sender uses the receiver-compatible linker"
+require_literal "${BUILD_SCRIPT}" '[[ "${requested_target}" == *-unknown-linux-musl ]]' \
+    "every musl sender build is self-contained"
+require_literal "${BUILD_SCRIPT}" 'RUSTFLAGS=-Clink-self-contained=yes' \
+    "musl sender builds do not require a host musl loader"
+require_literal "${MAKEFILE}" '$(TOOLBOX) ./scripts/build-omt-test-sender.sh' \
+    "the documented sender build needs only the toolbox"
 require_literal "${FIREWALL_SCRIPT}" 'port port=6400-6600 protocol=tcp' \
     "firewalld covers the bounded direct OMT port range"
 require_literal "${FIREWALL_SCRIPT}" 'tcp dport 6400-6600' \

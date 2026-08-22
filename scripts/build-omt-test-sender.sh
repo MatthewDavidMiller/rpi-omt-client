@@ -39,6 +39,9 @@ host_target="$(rustc -vV | awk '/^host:/ { print $2 }')"
 
 target_args=(--target "${requested_target}")
 target_environment=()
+if [[ "${requested_target}" == *-unknown-linux-musl ]]; then
+    target_environment+=(RUSTFLAGS=-Clink-self-contained=yes)
+fi
 if [[ "${requested_target}" == "aarch64-unknown-linux-musl" ]]; then
     command -v rustup >/dev/null 2>&1 || {
         echo "ERROR: rustup is required to verify the ARM64 Rust target" >&2
@@ -48,10 +51,7 @@ if [[ "${requested_target}" == "aarch64-unknown-linux-musl" ]]; then
         echo "ERROR: ${requested_target} is not installed. Run: make install" >&2
         exit 1
     }
-    target_environment=(
-        CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=rust-lld
-        RUSTFLAGS=-Clink-self-contained=yes
-    )
+    target_environment+=(CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=rust-lld)
 fi
 
 echo "Building Rust OMT test sender for ${requested_target}..."

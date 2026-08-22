@@ -110,7 +110,7 @@ release:
 	./scripts/publish-github-release.sh
 
 build-omt-sender:
-	./scripts/build-omt-test-sender.sh --target "$(OMT_SENDER_TARGET)"
+	$(TOOLBOX) ./scripts/build-omt-test-sender.sh --target "$(OMT_SENDER_TARGET)"
 
 omt-sender-start:
 	./scripts/omt-test-sender.sh start

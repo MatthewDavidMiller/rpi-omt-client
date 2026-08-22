@@ -52,7 +52,7 @@ make test-deployer
 make build-windows-deployer
 make test-quick
 make test
-./scripts/test-local.sh --full
+./scripts/toolbox.sh ./scripts/test-local.sh --full
 ```
 
 For full network, codec, audio, and real-Pi playback validation, build the
@@ -194,7 +194,7 @@ instead of drifting as copies under `.git/hooks`.
 
 | Hook | Runs |
 |------|------|
-| `.githooks/pre-commit` | `./scripts/test-local.sh --full`, `scripts/audit-python-deps.sh`, `scripts/security-scan.sh` |
+| `.githooks/pre-commit` | Runs `./scripts/test-local.sh --full`, `scripts/audit-python-deps.sh`, and `scripts/security-scan.sh` inside one toolbox invocation |
 | `.githooks/post-commit` | `make build-arm64`, `make build-deployer`, `make build-windows-deployer` |
 
 The publishing builds run after the commit rather than before it because every

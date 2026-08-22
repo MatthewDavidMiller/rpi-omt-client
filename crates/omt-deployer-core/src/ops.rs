@@ -391,6 +391,7 @@ fn first_web_password(logs: &str) -> Option<&str> {
 
 fn wait_for_reboot(
     connections: &[&Connection],
+    previous_boot_id: &str,
     timeout: Duration,
     cancellation: &AtomicBool,
     progress: &mut dyn FnMut(&str),
@@ -407,8 +408,11 @@ fn wait_for_reboot(
         cancelled(cancellation)?;
         for (connection, saw_down) in connections.iter().zip(saw_down.iter_mut()) {
             match connect(connection) {
-                Ok(session) if *saw_down => return Ok(session),
-                Ok(_) => {}
+                Ok(mut session) => match read_boot_id(&mut session, cancellation) {
+                    Ok(boot_id) if boot_id != previous_boot_id => return Ok(session),
+                    Err(_) if *saw_down => return Ok(session),
+                    Ok(_) | Err(_) => {}
+                },
                 Err(_) => *saw_down = true,
             }
         }
@@ -417,6 +421,16 @@ fn wait_for_reboot(
     Err(io::Error::other(
         "the Raspberry Pi did not come back after reboot within the wait",
     ))
+}
+
+fn read_boot_id(session: &mut SshSession, cancellation: &AtomicBool) -> io::Result<String> {
+    let result = session.run("cat /proc/sys/kernel/random/boot_id", "", cancellation)?;
+    require_success(&result, "Read Linux boot ID")?;
+    let boot_id = result.stdout.trim();
+    if boot_id.is_empty() {
+        return Err(io::Error::other("Linux boot ID was empty"));
+    }
+    Ok(boot_id.to_owned())
 }
 
 fn wait_for_appliance(
@@ -885,6 +899,7 @@ pub fn alpine_setup(
         ));
     }
     progress("Alpine sys install finished. Rebooting into the persistent root...");
+    let previous_boot_id = read_boot_id(&mut session, cancellation)?;
     let reboot = privileged_argv_command(connection, ManagementAction::Reboot.remote_argv());
     require_success(
         &session.run(&reboot, &sudo_input(connection), cancellation)?,
@@ -901,6 +916,7 @@ pub fn alpine_setup(
     let root = password_connection(connection, "root", &settings.root_password, None)?;
     wait_for_reboot(
         &[&pi, &root],
+        &previous_boot_id,
         Duration::from_mins(8),
         cancellation,
         progress,
@@ -1391,6 +1407,7 @@ pub fn deploy(
         progress(&redact(summary, &secrets));
     }
     progress("Rebooting to apply kernel, firmware, and KMS settings...");
+    let previous_boot_id = read_boot_id(&mut session, cancellation)?;
     let reboot = privileged_argv_command(connection, ManagementAction::Reboot.remote_argv());
     require_success(
         &session.run(&reboot, &sudo_data, cancellation)?,
@@ -1399,6 +1416,7 @@ pub fn deploy(
     drop(session);
     let mut session = wait_for_reboot(
         &[connection],
+        &previous_boot_id,
         Duration::from_mins(6),
         cancellation,
         progress,
