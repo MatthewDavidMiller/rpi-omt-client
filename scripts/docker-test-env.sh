@@ -26,12 +26,33 @@ set_test_container_engine() {
     fi
 }
 
+# Identify the client a path actually runs, rather than the name it is
+# installed under.
+#
+# `podman-docker` ships a /usr/bin/docker that execs Podman, so the name says
+# Docker while every flag chosen from this kind -- `--format docker`, the `:Z`
+# relabel, and the user mapping in scripts/toolbox.sh -- has to be the Podman
+# spelling. Asking the client to identify itself also stays correct in the
+# inverse case, which matters just as much: the toolbox image ships a real
+# Docker CLI that drives the workstation's Podman socket, and that one must
+# keep the Docker spelling even though the server is Podman.
+#
+# An unrecognized `--version` falls back to the installed name. The answer is
+# then no worse than the one this made before asking.
 container_engine_kind() {
     local engine_path="$1"
-    case "$(basename "${engine_path}")" in
-        docker) printf '%s\n' docker ;;
-        podman) printf '%s\n' podman ;;
+    local engine_name version
+    engine_name="$(basename "${engine_path}")"
+    case "${engine_name}" in
+        docker|podman) ;;
         *) return 1 ;;
+    esac
+
+    version="$("${engine_path}" --version 2>/dev/null || true)"
+    case "${version}" in
+        [Pp]odman*) printf '%s\n' podman ;;
+        [Dd]ocker*) printf '%s\n' docker ;;
+        *) printf '%s\n' "${engine_name}" ;;
     esac
 }
 
@@ -125,6 +146,7 @@ ensure_docker_daemon() {
 
 ensure_test_container_engine() {
     local docker_path=""
+    local docker_kind=""
     local podman_path=""
     local requested_engine="${CONTAINER_ENGINE}"
     local requested_kind=""
@@ -161,12 +183,36 @@ ensure_test_container_engine() {
     fi
 
     docker_path="$(command -v docker 2>/dev/null || true)"
-    if [[ -n "${docker_path}" ]] && "${docker_path}" info >/dev/null 2>&1; then
-        set_test_container_engine "${docker_path}" docker
+    podman_path="$(command -v podman 2>/dev/null || true)"
+
+    # Match the client to the server when the caller knows what the server is.
+    #
+    # The toolbox installs both clients and a Podman socket answers either, so
+    # first-found is not good enough there: a Podman engine driven by the
+    # Docker CLI builds OCI images, and an OCI image config has nowhere to
+    # store a HEALTHCHECK. The appliance image then ships without the probe
+    # deploy/Dockerfile declares, and the only thing that notices is the smoke
+    # gate, one build too late. `--format docker` fixes it and only Podman's
+    # own client can pass it.
+    if [[ "${OMT_ENGINE_SERVER_KIND:-}" == "podman" && -n "${podman_path}" ]] &&
+       "${podman_path}" info >/dev/null 2>&1; then
+        set_test_container_engine "${podman_path}" podman
         return 0
     fi
 
-    podman_path="$(command -v podman 2>/dev/null || true)"
+    if [[ -n "${docker_path}" ]] && "${docker_path}" info >/dev/null 2>&1; then
+        docker_kind="$(container_engine_kind "${docker_path}")"
+        # A `docker` that is really podman-docker's shim: run the engine under
+        # its own name when it is installed, so the gate announces what it
+        # actually drives and no output is prefixed by the shim's notice.
+        if [[ "${docker_kind}" == "podman" && -n "${podman_path}" ]]; then
+            set_test_container_engine "${podman_path}" podman
+        else
+            set_test_container_engine "${docker_path}" "${docker_kind}"
+        fi
+        return 0
+    fi
+
     if [[ -n "${podman_path}" ]] && "${podman_path}" info >/dev/null 2>&1; then
         set_test_container_engine "${podman_path}" podman
         return 0
@@ -175,7 +221,7 @@ ensure_test_container_engine() {
     # Preserve the existing Docker behavior when it is the only installed
     # option: attempt to start its daemon without prompting.
     if [[ -n "${docker_path}" ]] && ensure_docker_daemon; then
-        set_test_container_engine "${docker_path}" docker
+        set_test_container_engine "${docker_path}" "$(container_engine_kind "${docker_path}")"
         return 0
     fi
 

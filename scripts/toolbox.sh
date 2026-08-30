@@ -32,6 +32,7 @@ source "${SCRIPT_DIR}/docker-test-env.sh"
 DOCKERFILE="${PROJECT_ROOT}/tools/toolbox/Dockerfile"
 CARGO_VOLUME="${OMT_TOOLBOX_CARGO_VOLUME:-omt-toolbox-cargo}"
 TOOLBOX_REPO=omt-toolbox
+GATE_NETWORK="${OMT_TOOLBOX_NETWORK:-omt-toolbox-net}"
 
 # The tag is the digest of everything that determines what lands in the image.
 # A changed pin, linter version, or Python requirement therefore names a
@@ -75,6 +76,26 @@ prune_superseded_toolboxes() {
     return 0
 }
 
+# A bridge the toolbox and the containers a gate starts can both reach.
+#
+# Rootless Podman puts a container on `pasta` unless told otherwise, and a
+# pasta container has no address another container can route to:
+# `NetworkSettings.Networks` comes back empty and the appliance the smoke gate
+# starts is unreachable from in here. Docker's default bridge does hand out
+# such an address, so this was invisible until the gates met rootless Podman.
+# An explicit bridge behaves the same on both engines, which is the point --
+# the gate should not depend on which one the workstation happens to run.
+#
+# The network is shared and long-lived rather than per-run: the toolbox
+# container is created once and the gates that start peers run inside it.
+ensure_gate_network() {
+    "${CONTAINER_ENGINE}" network inspect "${GATE_NETWORK}" >/dev/null 2>&1 && return 0
+    # A concurrent gate run may win the race to create it; that is a success
+    # here, not a conflict, so the result is re-checked rather than trusted.
+    "${CONTAINER_ENGINE}" network create --driver bridge "${GATE_NETWORK}" >/dev/null 2>&1 ||
+        "${CONTAINER_ENGINE}" network inspect "${GATE_NETWORK}" >/dev/null 2>&1
+}
+
 build_toolbox() {
     local tag="$1"
     echo "=== Building toolbox image ${tag} ===" >&2
@@ -116,6 +137,11 @@ main() {
         build_toolbox "${tag}"
     fi
 
+    ensure_gate_network || {
+        echo "ERROR: could not create the ${GATE_NETWORK} bridge network." >&2
+        exit 1
+    }
+
     local -a engine_args=(
         run --rm
         -v "$(container_engine_volume "${PROJECT_ROOT}" "${PROJECT_ROOT}")"
@@ -141,6 +167,10 @@ main() {
         # host-gateway route: that depends on the workstation's firewall
         # allowing bridge-to-host traffic, which this one does not.
         -e OMT_SMOKE_VIA_ENGINE_NETWORK=1
+        # The bridge both ends of that conversation have to be on. Named for
+        # the gate rather than assumed: see ensure_gate_network above.
+        --network "${GATE_NETWORK}"
+        -e "OMT_SMOKE_NETWORK=${GATE_NETWORK}"
         -w "${PROJECT_ROOT}"
         -e HOME=/cargo
     )
@@ -205,6 +235,19 @@ main() {
     fi
     if [[ -n "${socket}" ]]; then
         engine_args+=(-v "$(container_engine_volume "${socket}" /var/run/docker.sock)")
+        # Which engine is on the other end of that socket, so the gates in
+        # here can pick the client that can actually ask it for what they
+        # need. Both clients are installed and both would answer; only
+        # Podman's can request the image format that preserves a HEALTHCHECK.
+        # This is the server's identity, deliberately separate from the client
+        # identity scripts/docker-test-env.sh derives from `--version`.
+        engine_args+=(-e "OMT_ENGINE_SERVER_KIND=${CONTAINER_ENGINE_KIND}")
+        if [[ "${CONTAINER_ENGINE_KIND}" == "podman" ]]; then
+            # Where podman-remote looks for the service. The socket is bound
+            # at the Docker path above because the Docker CLI has no such
+            # setting; Podman's client does, so it is told rather than moved.
+            engine_args+=(-e "CONTAINER_HOST=unix:///var/run/docker.sock")
+        fi
         # A mapped non-root user cannot read the socket without holding the
         # group that owns it. Rootless Podman's socket is already owned by the
         # caller.

@@ -32,6 +32,35 @@ SHELL ["/bin/ash", "-eo", "pipefail", "-c"]
 # appliance image build, the dev compose stack, and the Trivy image scan all
 # run on the host daemon, driven from in here.
 #
+# podman-remote is the second client for that same socket, and it is not
+# redundant. A Podman server asked to build through the Docker CLI stores the
+# result as OCI, whose image config has nowhere to keep a HEALTHCHECK, so the
+# appliance image comes out without the probe deploy/Dockerfile declares and
+# nothing downstream notices. `podman build --format docker` keeps it, and
+# only Podman's own client can ask for that. scripts/docker-test-env.sh
+# selects between the two on what serves the socket, not on what the gate is
+# named. Alpine's subpackage installs that client as `podman-remote` alone, so
+# the symlink gives it the name every caller already spells.
+#
+# Deleting containers-common's seccomp.json is what makes that client usable
+# against a server it does not share a filesystem with. Buildah picks the
+# profile to apply by looking for /etc/containers/seccomp.json and falling back
+# to /usr/share/containers/seccomp.json, and for a build it does that lookup
+# on the *client* and sends the winning path to the server. Alpine ships the
+# profile at both paths; Arch, Debian, and Fedora ship it only under
+# /usr/share. So the file's presence in here made every build fail on the host
+# with `opening seccomp profile failed: /etc/containers/seccomp.json`, naming a
+# path that exists in this image and not on the machine that has to open it.
+# Removing the override leaves the fallback, which is Podman's own documented
+# default and the one path a containers-common host is known to have.
+#
+# This weakens nothing: the profile is applied by the server either way, and
+# the one now named is the default that server would otherwise pick. The
+# alternative fixes are worse -- `seccomp=unconfined` drops the sandbox, and
+# passing an explicit --security-opt would hardcode one distribution's path
+# into every build call. containers.conf's `seccomp_profile` does not help,
+# because buildah's override lookup runs ahead of it.
+#
 # coreutils, findutils, gawk, grep, sed, and diffutils replace busybox's
 # applets with the GNU ones. The gates and their scripts are written for the
 # GNU userland every developer Linux host has, and busybox rejects extensions
@@ -73,6 +102,7 @@ RUN apk add --no-cache \
         openssl \
         perl \
         pkgconf \
+        podman-remote \
         py3-pip \
         python3 \
         python3-dev \
@@ -81,7 +111,9 @@ RUN apk add --no-cache \
         shellcheck \
         tar \
         util-linux-misc \
-        xz
+        xz \
+    && ln -s /usr/bin/podman-remote /usr/local/bin/podman \
+    && rm -f /etc/containers/seccomp.json
 
 # The official image ships clippy-driver and rustfmt as binaries but does not
 # register them as toolchain components, so `cargo clippy` and `cargo fmt` --

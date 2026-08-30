@@ -97,11 +97,20 @@ fi
         : > /host-actions/reboot.request' ||
     fail "non-root config and reboot channel initialization failed"
 
+# Join the caller's bridge when it named one. scripts/toolbox.sh does, because
+# the appliance has to be reachable from inside the toolbox and a rootless
+# Podman container left on its default `pasta` network has no address to reach.
+smoke_network=()
+if [[ -n "${OMT_SMOKE_NETWORK:-}" ]]; then
+    smoke_network=(--network "${OMT_SMOKE_NETWORK}")
+fi
+
 # The tmpfs at /run/omt mirrors deploy/compose.yml: per-boot receiver state is
 # kept off the SD-card-backed config volume. Running without it would only prove
 # the image's own fallback works, and this is the configuration that ships.
 "${CONTAINER_ENGINE}" run -d \
     --name "${CONTAINER_NAME}" \
+    "${smoke_network[@]}" \
     -p "${PORT}:5000" \
     -e OMT_REBOOT_ACK_TIMEOUT_SECONDS=5 \
     --tmpfs /run/omt:size=1m,mode=1777 \
@@ -116,13 +125,29 @@ fi
 # traffic, which is not something a test can assume. Talking to the appliance
 # on the engine network instead depends on nothing outside the engine.
 if [[ "${OMT_SMOKE_VIA_ENGINE_NETWORK:-0}" == "1" ]]; then
-    container_ip="$(
-        "${CONTAINER_ENGINE}" inspect -f \
-            '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' \
-            "${CONTAINER_NAME}"
-    )"
-    [[ -n "${container_ip}" ]] || fail "the appliance container reported no address"
-    BASE_URL="https://${container_ip}:5000"
+    if [[ -n "${OMT_SMOKE_NETWORK:-}" ]]; then
+        # By name, not by address. A user-defined network resolves container
+        # names on both engines, and the name is the only handle that survives
+        # the restart this suite performs after rotating the password: rootless
+        # Podman hands the container a different address when it comes back, so
+        # an address captured here stops answering half way through the run.
+        BASE_URL="https://${CONTAINER_NAME}:5000"
+    else
+        # No named network, so no name resolution either: Docker's default
+        # bridge is the legacy one, which has no embedded DNS. The address is
+        # all there is, and a restart would invalidate it.
+        container_ip="$(
+            "${CONTAINER_ENGINE}" inspect -f \
+                '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' \
+                "${CONTAINER_NAME}"
+        )"
+        # An empty address is what an engine reports for a container that is on
+        # no bridge at all -- rootless Podman's `pasta` default. Say so, rather
+        # than leaving the reader to infer it from a connection timeout below.
+        [[ -n "${container_ip}" ]] ||
+            fail "the appliance container is on no bridge network, so it has no address to reach; set OMT_SMOKE_NETWORK"
+        BASE_URL="https://${container_ip}:5000"
+    fi
 fi
 
 for attempt in $(seq 1 30); do

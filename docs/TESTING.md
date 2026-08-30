@@ -24,6 +24,36 @@ The repository is bind-mounted at its own absolute path rather than at a fixed
 socket to the *host* daemon, which resolves them in its own filesystem, so any
 other mount point would silently mount the wrong directory.
 
+### Rootless Podman
+
+Rootless Podman is a supported workstation engine, and three of its defaults
+differ from Docker's in ways the gates have to answer rather than assume:
+
+- **`podman-docker`.** Its `/usr/bin/docker` execs Podman, so the name says
+  Docker while the client only understands Podman's flags.
+  `scripts/docker-test-env.sh` asks a client to identify itself with
+  `--version` instead of trusting the name it is installed under, which also
+  keeps the inverse case right: the toolbox ships a genuine Docker CLI, and
+  that one keeps Docker's spelling even though a Podman socket answers it.
+- **`pasta` networking.** A rootless container is given no address another
+  container can route to, so the appliance the smoke gate starts would be
+  unreachable from inside the toolbox. `scripts/toolbox.sh` creates an
+  explicit `omt-toolbox-net` bridge and puts both ends on it; it behaves the
+  same under either engine, so the gate does not depend on which one is
+  installed.
+- **OCI image metadata.** An OCI image config has nowhere to keep a
+  `HEALTHCHECK`, so a Podman server asked to build through the Docker CLI
+  returns an appliance image without the probe `deploy/Dockerfile` declares.
+  Only `podman build --format docker` preserves it, and only Podman's own
+  client can pass that flag, so the toolbox installs `podman-remote` alongside
+  the Docker CLI and `scripts/toolbox.sh` reports which engine serves the
+  socket. The client is then matched to the server rather than to whichever
+  binary is found first.
+
+Nothing here needs configuring on the workstation: no `containers.conf`
+change, no rootful socket, and no `CONTAINER_ENGINE` override. Setting
+`CONTAINER_ENGINE` still forces a specific engine when you want one.
+
 `scripts/install-dev-deps.sh` still provisions that toolchain on a host for
 anyone who wants it, but no gate requires it any more.
 
