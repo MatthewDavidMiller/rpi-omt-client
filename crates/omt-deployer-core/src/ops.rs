@@ -87,12 +87,9 @@ const WIFI_SCRIPT: &str = concat!(
     "  [A-Z][A-Z]) ;;\n",
     "  *) wpa_cli -i \"$iface\" set country US >/dev/null 2>&1 || true;;\n",
     "esac\n",
-    // The appliance is 5 GHz only, so the scan is too. This runs before the
-    // scan for the same reason the country does: the operator can only be
-    // offered networks the supplicant looked for. Unlike the country this is
-    // policy rather than a default, so an existing value is replaced.
-    // Association is still verified below, and a profile that does not come up
-    // on 5 GHz fails the action with the old profiles retained.
+    // Ask supplicant to narrow the scan where its build supports the global
+    // control. Alpine currently returns FAIL for this spelling, so the
+    // per-network setting below is the authoritative enforcement point.
     "wpa_cli -i \"$iface\" set freq_list \"",
     wifi_freq_list!(),
     "\" >/dev/null 2>&1 || true\n",
@@ -106,6 +103,9 @@ const WIFI_SCRIPT: &str = concat!(
     "wpa_cli -i \"$iface\" set_network \"$network_id\" ssid \"$ssid_hex\" | grep -Fxq OK\n",
     "wpa_cli -i \"$iface\" set_network \"$network_id\" key_mgmt WPA-PSK | grep -Fxq OK\n",
     "wpa_cli -i \"$iface\" set_network \"$network_id\" psk \"$wifi_password\" | grep -Fxq OK\n",
+    "wpa_cli -i \"$iface\" set_network \"$network_id\" freq_list \"",
+    wifi_freq_list!(),
+    "\" | grep -Fxq OK\n",
     "unset wifi_password\n",
     "if [ \"$activate\" = no ]; then\n",
     "  wpa_cli -i \"$iface\" disconnect | grep -Fxq OK\n",
@@ -1735,6 +1735,7 @@ mod tests {
         assert!(WIFI_SCRIPT.contains("iface=${path#/sys/class/net/}"));
         assert!(WIFI_SCRIPT.contains("wpa_cli -i \"$iface\" ping"));
         assert!(WIFI_SCRIPT.contains("iw dev \"$iface\" set power_save off"));
+        assert!(WIFI_SCRIPT.contains("set_network \"$network_id\" freq_list"));
         assert!(!WIFI_SCRIPT.contains("wpa_cli -i wlan0"));
     }
 

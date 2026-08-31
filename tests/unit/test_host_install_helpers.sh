@@ -164,6 +164,7 @@ EOF
 )"
 [[ "$(grep -c '^freq_list=' <<< "${banded}")" -eq 1 ]]
 grep -qx "freq_list=${HOST_WIFI_FREQ_LIST}" <<< "${banded}"
+grep -qx "    freq_list=${HOST_WIFI_FREQ_LIST}" <<< "${banded}"
 grep -qv '2412' <<< "$(grep '^freq_list=' <<< "${banded}")"
 for host_freq in ${HOST_WIFI_FREQ_LIST}; do
     [[ "${host_freq}" =~ ^5[0-9]{3}$ ]] || {
@@ -172,9 +173,8 @@ for host_freq in ${HOST_WIFI_FREQ_LIST}; do
     }
 done
 
-# A per-network freq_list is a legal key that wpa_supplicant writes indented
-# inside a profile. Only the global is band policy, so an indented one is
-# carried through untouched rather than swallowed by the global's strip.
+# A stale per-network list must be replaced too. Alpine accepts the global key
+# but does not enforce it when roaming an existing profile.
 per_network="$(
     host_wpa_supplicant_config <<'EOF'
 network={
@@ -183,8 +183,9 @@ network={
 }
 EOF
 )"
-grep -qx '    freq_list=5180 5200' <<< "${per_network}"
+grep -qx "    freq_list=${HOST_WIFI_FREQ_LIST}" <<< "${per_network}"
 [[ "$(grep -c 'freq_list' <<< "${per_network}")" -eq 2 ]]
+! grep -q 'freq_list=5180 5200' <<< "${per_network}"
 
 ipv4="$(
     host_primary_ipv4_from <<'EOF'

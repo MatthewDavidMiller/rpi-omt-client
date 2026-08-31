@@ -218,9 +218,10 @@ receiver.
   fault code: that is a stream this build cannot decode, so check the sender's
   codec and quality settings rather than the network.
 - Wi-Fi will not associate, or the deployer's Wi-Fi view offers no networks:
-  the appliance is 5 GHz only. `wpa_supplicant.conf` carries a `freq_list` of
-  the US 5 GHz channels and nothing else, so a 2.4 GHz SSID is never scanned
-  for and cannot be joined. This is deliberate — real-world testing showed
+  the appliance is 5 GHz only. Every network profile in
+  `wpa_supplicant.conf` carries a `freq_list` of
+  the US 5 GHz channels and nothing else, so a 2.4 GHz BSSID cannot be joined.
+  This is deliberate — real-world testing showed
   2.4 GHz packet loss makes OMT playback unusable — and it is why the Pi Zero
   and Pi 3 tiers are no longer supported hosts. Move the SSID to 5 GHz or use
   Ethernet.

@@ -374,7 +374,9 @@ network={
 EOF
 )"
 grep -qx "freq_list=${setup_freqs}" <<< "${preserved_freqs}" || \
-    fail "a preserved config must be re-banded to 5 GHz"
+    fail "a preserved config must carry the global 5 GHz scan list"
+grep -Eq "^[[:space:]]+freq_list=${setup_freqs}$" <<< "${preserved_freqs}" || \
+    fail "a preserved network profile must be restricted to 5 GHz"
 [[ "$(grep -c '^freq_list=' <<< "${preserved_freqs}")" -eq 1 ]] || \
     fail "the preserved config must declare exactly one frequency list"
 

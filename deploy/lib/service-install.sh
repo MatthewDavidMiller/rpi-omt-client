@@ -41,10 +41,10 @@ host_publish_openrc_conf() {
 # A country already in the document wins: it is the operator's declaration of
 # where the appliance is, and re-deploying must not relabel a radio.
 #
-# `freq_list` is not negotiable the same way. It is the band policy in
-# [`HOST_WIFI_FREQ_LIST`], so any value already in the document is replaced
-# rather than preserved: an appliance that kept a 2.4 GHz scan list from an
-# earlier deployment would be exactly the configuration this removes.
+# `freq_list` is not negotiable the same way. Alpine's wpa_supplicant accepts
+# the global spelling in the document but does not enforce it when roaming an
+# existing network profile. Put the policy on every network as well, otherwise
+# a dual-band SSID can silently fall back to 2.4 GHz after a disconnect.
 host_wpa_supplicant_config() {
     local default_country="${1:-US}"
     awk -v default_country="${default_country}" -v freq_list="${HOST_WIFI_FREQ_LIST}" '
@@ -54,13 +54,19 @@ host_wpa_supplicant_config() {
             next
         }
         /^[[:space:]]*(ctrl_interface|ctrl_interface_group|update_config)[[:space:]]*=/ { next }
-        # Anchored, unlike the controls above. Those are meaningless inside a
-        # network block so leading space cannot matter, but `freq_list` is a
-        # legal per-network key: wpa_supplicant writes it indented under
-        # `network={`, and dropping one there would rewrite a profile this
-        # function is only supposed to carry through. Globals start at column
-        # zero, so that is where the band policy is replaced.
-        /^freq_list[[:space:]]*=/ { next }
+        /^[[:space:]]*network[[:space:]]*=\{[[:space:]]*$/ {
+            in_network = 1
+            body[++lines] = $0
+            next
+        }
+        /^[[:space:]]*freq_list[[:space:]]*=/ { next }
+        in_network && /^[[:space:]]*\}[[:space:]]*$/ {
+            printf_line = sprintf("    freq_list=%s", freq_list)
+            body[++lines] = printf_line
+            body[++lines] = $0
+            in_network = 0
+            next
+        }
         { body[++lines] = $0 }
         END {
             print "ctrl_interface=/run/wpa_supplicant"

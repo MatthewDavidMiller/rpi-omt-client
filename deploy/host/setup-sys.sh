@@ -302,8 +302,9 @@ install_wpa_config_from() {
     # scan list. This path is the hand-written boot-partition
     # wpa_supplicant.conf, so it is the one most likely to name a 2.4 GHz
     # network, and the least likely to have thought about `country=` at all.
-    # The `freq_list` strip is anchored for the reason given there: it is a
-    # legal per-network key and only the global is band policy.
+    # Alpine accepts the global `freq_list` spelling but does not enforce it
+    # when roaming an existing profile. Replace every per-network value too so
+    # a dual-band SSID cannot fall back to 2.4 GHz after a disconnect.
     awk -v freq_list="${WIFI_FREQ_LIST}" '
         /^[ \t]*country[ \t]*=/ {
             sub(/^[ \t]*country[ \t]*=[ \t]*/, "")
@@ -311,7 +312,18 @@ install_wpa_config_from() {
             next
         }
         /^[ \t]*(ctrl_interface|ctrl_interface_group|update_config)[ \t]*=/ { next }
-        /^freq_list[ \t]*=/ { next }
+        /^[ \t]*network[ \t]*=\{[ \t]*$/ {
+            in_network = 1
+            body[++lines] = $0
+            next
+        }
+        /^[ \t]*freq_list[ \t]*=/ { next }
+        in_network && /^[ \t]*\}[ \t]*$/ {
+            body[++lines] = "\tfreq_list=" freq_list
+            body[++lines] = $0
+            in_network = 0
+            next
+        }
         { body[++lines] = $0 }
         END {
             print "ctrl_interface=/run/wpa_supplicant"
@@ -537,6 +549,7 @@ if [ -n "${SSID_HEX}" ]; then
         printf '\tssid=%s\n' "${SSID_HEX}"
         printf '\tpsk=%s\n' "${WIFI_PSK}"
         printf '\tkey_mgmt=WPA-PSK\n'
+        printf '\tfreq_list=%s\n' "${WIFI_FREQ_LIST}"
         printf '}\n'
     } > "${WPA_TMP}"
     umask 022
