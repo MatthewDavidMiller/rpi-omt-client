@@ -4,9 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Raspberry Pi OMT Client — receives Open Media Transport video/audio streams on a Raspberry Pi 5 and outputs them to HDMI. Uses bounded Rust 2024 receiver and HTTPS Web services with direct DRM/KMS video and ALSA audio. Managed via Docker; includes a Rust CLI and an egui deployer.
+Raspberry Pi OMT Client — receives Open Media Transport video/audio streams on a Raspberry Pi and outputs them to HDMI. Uses bounded Rust 2024 receiver and HTTPS Web services with direct DRM/KMS video and ALSA audio. Managed via Docker; includes a Rust CLI and an egui deployer.
 
-**Target:** Raspberry Pi 5 running Alpine Linux 3.24 aarch64 in persistent sys mode. Raspberry Pi OS and Alpine diskless mode are unsupported.
+**Target:** Raspberry Pi 5 or Raspberry Pi 4 Model B running Alpine Linux 3.24 aarch64 in persistent sys mode. Each board has its own decode ceiling; see `deploy/lib/board-profile.sh`.
 
 ## Documentation
 
@@ -21,6 +21,7 @@ Raspberry Pi OMT Client — receives Open Media Transport video/audio streams on
 | `docs/CONFIGURATION.md` | All build args, environment variables, volume paths, HDMI config |
 | `docs/CODEBASE_REFERENCE.md` | File map and responsibility index |
 | `docs/DIAGNOSTICS_BUNDLE.md` | Support-bundle ZIP contract |
+| `docs/OMT_TEST_SENDER.md` | First-party Rust OMT test sender |
 | `docs/TESTING.md` | Testing, linters, git hooks |
 
 ## Essential Commands
@@ -46,11 +47,16 @@ sudo ./deploy/host/install.sh  # Hardening, firmware, Docker, HDMI, OpenRC
 make build-amd64           # Build local test image
 make up                    # Start local container on port 5000
 make test                  # Unit + Docker build tests
-./scripts/test-local.sh --full   # Also runs container smoke tests
-./scripts/test-local.sh --quick  # Unit tests only (no Docker)
+make test-quick            # Unit suites only (no container engine)
+./scripts/toolbox.sh ./scripts/test-local.sh --full   # Also runs container smoke tests
 
 # Lint
-make lint                  # shellcheck + hadolint + yamllint + ruff + mypy
+make lint                  # rustfmt + clippy + supply-chain + shellcheck
+                           # + hadolint + yamllint + ruff + mypy
+                           # + no-C-sources and legal-notice gates
+
+# Release (local pipeline; requires an authenticated gh CLI, no GitHub Actions)
+make release
 ```
 
 No gate skips: a missing tool, an unregistered ARM64 emulator, or a skipped

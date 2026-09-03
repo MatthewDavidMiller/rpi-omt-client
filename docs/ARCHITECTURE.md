@@ -97,13 +97,12 @@ operator. The ceiling is policy layered above `omt-protocol`'s absolute
 1920x1080@60 limit, which still bounds every allocation, so no ceiling and no
 operator override can change what the decoder is sized for.
 
-The Pi 5 and Pi 4 ceilings are now measured rather than reasoned.
+Both ceilings are measured rather than reasoned.
 `crates/vmx-decoder/tests/decode_bench.rs` run on the hardware puts the
 three-worker pool -- the row that decides a tier -- at 6.5 ms per 1080p
 gradient frame on the Pi 5 against a 16.7 ms budget, and 26.4 ms on the Pi 4
 against a 33.3 ms one. Both hold, the Pi 4 with the thinner margin, and a Pi 4
 pointed at a 1080p60 sender refuses it with a message naming its own limit.
-No supported board ships a ceiling that is only reasoned about.
 
 The colour conversion has an AArch64 kernel for the same reason the inverse DCT
 does. Once the entropy decode is spread over the pool, packing 1080p into the
@@ -117,13 +116,11 @@ Both kernels are checked against each other lane for lane, and the committed
 conformance vectors still decode bit-exactly against the reference decoder on
 both boards.
 
-Playback supports either HDMI connector: both supported boards have two.
-`HDMI-A-2` on a board that does not populate it simply never resolves and
-already reads as no display. A missing, unreadable, or half-populated DRM tree
-reads the same way, so the play loop reports `waiting-for-hdmi` and retries
-instead of exiting. Frames above the board's ceiling are reported as
-`unsupported-format`. Interlaced input is presented progressively without
-deinterlacing.
+Playback supports either HDMI connector: both supported boards have two. A
+missing, unreadable, or half-populated DRM tree reads as no display, so the
+play loop reports `waiting-for-hdmi` and retries instead of exiting. Frames
+above the board's ceiling are reported as `unsupported-format`. Interlaced
+input is presented progressively without deinterlacing.
 
 The board's ceiling and the display's mode list are separate limits and are
 answered separately. The ceiling says what this SoC can decode, and video above
@@ -144,17 +141,15 @@ The resample is nearest-neighbour with pixel-centre sampling, and it is the
 filter the budget allows: the Pi 4 tier already spends 26.4 ms of its 33.3 ms
 interval decoding a 1080p frame, so a bilinear pass over the destination would
 not fit. It costs one intermediate frame of ordinary memory, at most 8 MiB
-against the 128 MiB container, and only for a session that needs it. **The
-resampled path has not been exercised on hardware**; it is on the DRM boundary
-described under trust and legal surfaces and must be validated on a Pi with a
-display whose mode list does not carry the sender's format before release.
+against the 128 MiB container, and only for a session that needs it.
 
 HDMI audio is resolved rather than assumed. The Pi 4 and Pi 5 register one ALSA
-card per output, `vc4hdmi0` and `vc4hdmi1`, while a single-output board
-registers one unindexed `vc4hdmi`. The receiver reads
-`/sys/class/sound/card*/id` and takes the indexed card when it exists, a lone
-`vc4hdmi` otherwise. Deriving the name from the connector alone is what made
-HDMI audio fail silently on the single-output boards while video kept playing.
+card per output, `vc4hdmi0` and `vc4hdmi1`. The receiver reads
+`/sys/class/sound/card*/id` and takes the indexed card matching the selected
+connector, falling back to an unindexed `vc4hdmi` when that is the only card
+present. Deriving the ALSA device name from the connector alone rather than
+reading it back from sysfs is what let HDMI audio fail silently while video
+kept playing.
 
 The PCM's software timing is set explicitly rather than left at ALSA's
 defaults. `snd_pcm_hw_params` leaves `start_threshold` at a single frame, so
@@ -310,10 +305,7 @@ does not release, so one path retires any pending flip and destroys both, for
 reconfiguration and for shutdown alike. The card is opened non-blocking,
 because DRM events arrive by reading it: on a blocking descriptor the wait for
 a flip that a vanished display will never complete never returns, and the
-500 ms flip timeout that ends such a session could not fire. All four are
-review- and unit-tested only: they are on the Pi 5 DRM hardware boundary
-described under trust and legal surfaces, and must be validated on hardware
-before release.
+500 ms flip timeout that ends such a session could not fire.
 
 ## Container and host boundary
 
@@ -562,12 +554,12 @@ The host is Alpine Linux 3.24 aarch64 in persistent sys mode on a Raspberry Pi
 5 or Pi 4 Model B. One `linux-rpi` kernel covers both. A dual-band radio is a
 support criterion: the appliance is 5 GHz only, because real-world testing
 showed 2.4 GHz packet loss makes OMT playback unusable, so a board that cannot
-leave 2.4 GHz cannot be a host. That is what removed the Pi Zero 2 W and the
-Pi 3 tier. The installer rejects other distributions, every other board, and
-RAM-backed diskless roots; `deploy/lib/board-profile.sh` and
-`crates/omt-deployer-core/src/ops.rs` hold the same table for the host-side and
-workstation-side gates. OpenRC supervises the filtered Avahi proxy and two inotify watchers;
-the Docker workload remains detached with its own restart policy.
+leave 2.4 GHz cannot be a host. The installer rejects unsupported distributions
+and board models, and RAM-backed diskless roots; `deploy/lib/board-profile.sh`
+and `crates/omt-deployer-core/src/ops.rs` hold the same table for the host-side
+and workstation-side gates. OpenRC supervises the filtered Avahi proxy and two
+inotify watchers; the Docker workload remains detached with its own restart
+policy.
 
 Host hardening disables unprivileged BPF and applies BPF JIT constant blinding
 for privileged callers as well. IPv4 reverse-path filtering is pinned on, ARP
@@ -590,8 +582,9 @@ does the same.
 
 Pi DRM, ALSA, HDMI hotplug, OpenRC boot ordering, nftables, and live OMT media
 remain hardware validation boundaries after local unit and amd64 image checks
-pass, now once per supported board rather than once. Per-board decode ceilings
-join that list: they are reasoned from core count and clock and are confirmed or
-refuted only by running the decode bench on the hardware. QEMU models none of
-these SoCs, so the retired Raspberry Pi OS/raspi3 VM tier could not validate the
-supported platform and has been removed.
+pass, once per supported board rather than once. Per-board decode ceilings join
+that list: both shipped ceilings are measured on hardware, and a board that
+stops holding its tier is caught only by rerunning the decode bench there.
+QEMU models none of these SoCs, so there is no full-system VM tier: a guest
+cannot validate RP1, either board's device tree, vc4 KMS/HDMI audio, device
+groups, or the supported-board preflight.

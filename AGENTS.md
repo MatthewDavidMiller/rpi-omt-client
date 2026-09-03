@@ -4,15 +4,15 @@ This file provides guidance to Codex and other coding agents working in this rep
 
 ## Project Overview
 
-Raspberry Pi OMT Client receives OMT video/audio streams on a Raspberry Pi 5 and outputs them to HDMI. The system uses:
+Raspberry Pi OMT Client receives OMT video/audio streams on a Raspberry Pi and outputs them to HDMI. The system uses:
 
 - A multi-stage Docker build for the Rust 2024 OMT receiver and VMX1 decoder
 - A Rust HTTPS Web UI for authentication and OMT source selection
 - Direct DRM/KMS video and ALSA audio playback inside the container
 
-Target platform: Raspberry Pi 5, Alpine Linux 3.24 aarch64 in persistent sys
-mode. Raspberry Pi OS and Alpine diskless mode are unsupported. Local
-development usually happens on amd64.
+Target platform: Raspberry Pi 5 or Raspberry Pi 4 Model B, Alpine Linux 3.24
+aarch64 in persistent sys mode. Each board carries its own decode ceiling from
+`deploy/lib/board-profile.sh`. Local development usually happens on amd64.
 
 ## Read First
 
@@ -27,6 +27,7 @@ Use these as the primary map of the system. Then pull in task-specific docs as n
 - `docs/TESTING.md` for validation commands and local CI behavior
 - `docs/SETUP.md` for Pi install, upgrade, uninstall, and first access
 - `docs/OPERATIONS.md` for source/network control, diagnostics, and troubleshooting
+- `docs/OMT_TEST_SENDER.md` for the first-party Rust OMT test sender
 
 ## Working Rules
 
@@ -61,10 +62,9 @@ make down
 make logs
 
 # Tests
-make test-setup
 make test-quick
 make test
-./scripts/test-local.sh --full
+./scripts/toolbox.sh ./scripts/test-local.sh --full
 make test-web
 make lint
 
@@ -81,7 +81,7 @@ Run the narrowest relevant checks for the files you touched, then broaden if the
 - Shell scripts or installer logic: `make test-quick`
 - Receiver core or the playback-status contract: `make test-receiver` and `make test-web`; both
   suites assert against `tests/schema/playback-status-vectors.json` and must be updated together
-- Dockerfile, entrypoint, or image contents: `make test` or `./scripts/test-local.sh --full` when feasible
+- Dockerfile, entrypoint, or image contents: `make test` or `./scripts/toolbox.sh ./scripts/test-local.sh --full` when feasible
 - Deployer core, SSH, or UI: `make test-deployer` and `make build-windows-deployer`, since the
   same sources ship as a host package and a cross-built Windows package
 - Documentation-only changes: no test run required, but keep commands and paths accurate

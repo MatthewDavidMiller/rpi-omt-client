@@ -258,8 +258,8 @@ This does not use GitHub Actions. It reruns the ARM64 image and Linux/Windows
 deployer publishers locally, packages the two deployer directories with fixed
 timestamps and ownership, writes `SHA256SUMS`, creates the annotated tag named
 by `workspace.package.version`, and atomically pushes the branch and tag before
-calling the GitHub Release API. `0.x` versions are marked as prereleases and
-release notes are generated from the repository history.
+calling the GitHub Release API. Release notes are generated from the repository
+history.
 
 The command refuses a dirty or detached worktree, a branch without an
 upstream, and a version tag that already belongs to another commit. It never
@@ -269,9 +269,8 @@ under `.build/github-release/<version>/` for inspection or recovery.
 ## Hardware validation boundary
 
 There is intentionally no full-system Raspberry Pi VM tier. QEMU models none of
-the supported SoCs, so a guest cannot validate RP1, any board's device tree, vc4
-KMS/HDMI audio, device groups, or the supported board preflight. The previous
-Raspberry Pi OS VM was also the wrong host OS and has been removed.
+the supported SoCs, so a guest cannot validate RP1, either board's device tree,
+vc4 KMS/HDMI audio, device groups, or the supported board preflight.
 
 "Clean Alpine" means genuinely untouched, and that is the state most likely to
 break a deployment: the image has no `bash`, no `sudo`, no `community`
@@ -296,10 +295,11 @@ decode throughput, so a pass on one is not evidence for another:
    `cgroup_enable=memory` the advertised container memory cap is silently not
    enforced. `/proc/cgroups` is only the fallback check for a cgroup-v1 host;
 
-1. deploy through both CLI and native app and confirm unsupported boards fail
-   before upload. Include a near miss if one is available: a Pi 400 or Pi 500
-   must be refused, since its model string starts with a supported prefix, and
-   so must a Pi 3 or Zero 2 W, which are refused for having no 5 GHz radio;
+1. deploy through both CLI and native app and confirm an unsupported board
+   model fails before upload. Include a near miss if one is available: a model
+   string that begins with a supported prefix must still be refused, since
+   `deploy/lib/board-profile.sh` matches on a word boundary rather than a bare
+   prefix;
 2. reboot, then verify all four `omt-client*` OpenRC services and nftables;
 3. verify HDMI connectors, hotplug, EDID, video at the board's ceiling, and
    HDMI audio. Verify both connectors on each board. Include the multi-card
@@ -331,8 +331,7 @@ decode throughput, so a pass on one is not evidence for another:
    written for. Confirm a full picture rather than `unsupported-format`, that
    the running detail names both sizes, that a mismatched aspect ratio gets
    black bars rather than a stretch, and that the board still holds the frame
-   interval with the resample in the loop. This path is unit-tested only; it is
-   on the DRM hardware boundary and has not been exercised on a Pi;
+   interval with the resample in the loop;
 8. verify HDMI audio timing under a loaded link. Play a full session over the
    Wi-Fi link the appliance will actually use and confirm the playing detail
    reports no underruns, then confirm the bundle's ALSA playback stream state

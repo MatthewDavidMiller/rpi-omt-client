@@ -1,11 +1,5 @@
 # Setup Guide
 
-> **Beta — not production ready.** Every `0.9.x` release is a beta: defaults,
-> the supported-board matrix, and on-disk state may change between them without
-> a migration path, and an upgrade may need the appliance re-provisioned rather
-> than migrated. Deploy only to boards you can physically reach with a keyboard
-> and monitor. **Version 1.0 will be the first production release.**
-
 ## Supported host
 
 - Raspberry Pi 5 or Raspberry Pi 4 Model B;
@@ -17,17 +11,14 @@
 Each board has its own decode ceiling; see the video limit table in
 [CONFIGURATION.md](CONFIGURATION.md). Both boards have two HDMI outputs.
 
-Both boards also have a dual-band radio, and that is a support criterion. The
-appliance is 5 GHz only: real-world testing showed 2.4 GHz cannot carry an OMT
-stream, because its packet loss makes playback unusable however strong the
-signal is. A board whose radio cannot leave 2.4 GHz therefore cannot run this
-appliance, which is why the Pi Zero 2 W (BCM43436) and the Pi 3 tier — whose
-Model B (BCM43438) has no 5 GHz radio — are rejected.
+Both boards have a dual-band radio, and on Wi-Fi the appliance is 5 GHz only:
+real-world testing showed 2.4 GHz cannot carry an OMT stream, because its
+packet loss makes playback unusable however strong the signal is.
 
 Diskless/data-mode Alpine is rejected because its RAM-backed root competes
-with video decoding. Raspberry Pi OS, other distributions, 32-bit userspace,
-the Pi 400/500, Compute Modules, the Pi 3 and Zero tiers, and every earlier
-board are rejected before installer mutation.
+with video decoding. The installer verifies the operating system, the
+architecture, the board model, and a persistent root filesystem before any
+mutation.
 
 Flash the official Alpine Raspberry Pi aarch64 image. The native deployer
 handles `setup-alpine` and the persistent `sys` install: connect as `root`
@@ -126,7 +117,6 @@ sudo password.
 Build the deployer for the current Linux or Windows host:
 
 ```bash
-make test-setup
 make build-deployer
 ```
 

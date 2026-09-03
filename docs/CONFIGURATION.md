@@ -107,15 +107,12 @@ installer owns a block in Alpine's active `usercfg.txt`. A forced value has
 the form `HDMI-A-1:1920x1080@60`. Connector/mode state is retained in
 `/etc/omt-client/installer.conf`.
 
-The managed block sets `dtoverlay=vc4-kms-v3d`, which is correct on every
-supported board — the firmware substitutes the Pi 5 variant itself. On the
-pre-Pi-5 boards it also sets `gpu_mem=64`: those boards still split RAM with
-the VideoCore, and under full KMS the V3D driver allocates from CMA instead, so
-the split is wasted RAM. The Pi 5 has no such split and the setting is omitted
-there rather than written and ignored.
-
-Single-output boards have no `HDMI-A-2`. The installer refuses a forced mode
-for it rather than writing a boot argument for a connector that never appears.
+The managed block sets `dtoverlay=vc4-kms-v3d`, which is correct on both
+supported boards — the firmware substitutes the Pi 5 variant itself. On the
+Pi 4 it also sets `gpu_mem=64`: that board still splits RAM with the VideoCore,
+and under full KMS the V3D driver allocates from CMA instead, so the split is
+wasted RAM. The Pi 5 has no such split and the setting is omitted there rather
+than written and ignored.
 
 ## Video limit
 

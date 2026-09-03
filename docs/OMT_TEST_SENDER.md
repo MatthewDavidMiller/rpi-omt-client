@@ -43,8 +43,7 @@ receiver. `make install` provisions the Rust target. The result is:
 A cross-built executable is deliberately not selected by the workstation's
 `current` symlink. Copy the single executable to the Pi and run it directly;
 it requires no shared C/C++, .NET, codec, or media-file runtime dependency.
-The supported Pi userspace is the project's 64-bit Alpine environment. A
-32-bit Pi OS installation is not compatible with the aarch64 artifact.
+The supported Pi userspace is the project's 64-bit Alpine environment.
 
 ## Firewall
 

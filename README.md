@@ -1,28 +1,18 @@
 # Raspberry Pi OMT Client
 
-> **Beta — not production ready.**
->
-> Every `0.9.x` release is a beta. Interfaces, defaults, the supported-board
-> matrix, and on-disk state may change between them without a migration path,
-> and some behaviour is verified only by unit tests rather than on hardware.
-> Run it on equipment you can physically reach, and do not put it in front of
-> an audience you cannot afford to disappoint. **Version 1.0 will be the first
-> production release.**
-
 Raspberry Pi OMT Client receives Open Media Transport (OMT) video and audio on
 a Raspberry Pi and presents it directly on HDMI. It combines a bounded
 Rust 2024 OMT receiver, direct DRM/KMS video output, ALSA audio, a hardened
 Rust HTTPS Web GUI, and a portable native deployment GUI.
 
 The supported appliance hosts are the Raspberry Pi 5 and Raspberry Pi 4
-Model B, each running Alpine Linux 3.24 aarch64 in persistent `sys` mode.
-Diskless Alpine, Raspberry Pi OS, 32-bit userspace, and every other board are
-not supported.
+Model B, each running Alpine Linux 3.24 aarch64 in persistent `sys` mode. The
+installer verifies the operating system, architecture, board model, and a
+persistent root filesystem before it changes anything.
 
-The appliance is 5 GHz Wi-Fi only. Real-world testing showed 2.4 GHz cannot
+On Wi-Fi the appliance is 5 GHz only. Real-world testing showed 2.4 GHz cannot
 carry an OMT stream: its packet loss makes playback unusable however strong the
-signal is. That is why boards with a 2.4 GHz-only radio — every Pi Zero, and
-the Pi 3 tier whose Model B has no 5 GHz radio — are not supported hosts.
+signal is.
 
 The receiver supports discovered source names and explicit `omt://host:port`
 targets. Because it decodes VMX in software, each board has its own decode
@@ -126,6 +116,7 @@ third-party notices on its About tab.
 - [Operations](docs/OPERATIONS.md)
 - [Testing](docs/TESTING.md)
 - [Diagnostics bundle](docs/DIAGNOSTICS_BUNDLE.md)
+- [OMT test sender](docs/OMT_TEST_SENDER.md)
 
 ## License
 

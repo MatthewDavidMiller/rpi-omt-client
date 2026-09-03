@@ -1,11 +1,5 @@
 # Operations
 
-> **Beta — not production ready.** Every `0.9.x` release is a beta. Treat an
-> appliance running one as equipment under evaluation: keep physical access to
-> it, expect behaviour to change between releases, and collect a diagnostics
-> bundle before reporting anything. **Version 1.0 will be the first production
-> release.**
-
 ## Web GUI layout
 
 Every page shares a sticky header holding the hostname, the primary navigation
@@ -47,9 +41,9 @@ Direct playback requires `omt://host:port`.
   installer source. An unchecked-by-default checkbox lets the operator opt
   into a validated raw PCAP for that download only.
 
-`/debug` is removed. Bundles are named `omt-diagnostics-<UTC>.zip`; capture
-metadata is always present, while raw PCAP data is absent unless explicitly
-requested and successfully validated.
+Bundles are named `omt-diagnostics-<UTC>.zip`; capture metadata is always
+present, while raw PCAP data is absent unless explicitly requested and
+successfully validated.
 
 ## About
 
@@ -176,11 +170,10 @@ receiver.
 - Waiting for HDMI: verify `/sys/class/drm/*/status` and the selected connector.
 - Unsupported format: the dashboard names this appliance's limit. Configure
   the sender within it, or raise it on `/system`. Limits are per board; see
-  the video limit table in [CONFIGURATION.md](CONFIGURATION.md). A display
-  that advertises no timing at the sender's size no longer reports this: the
-  picture is resampled into the closest mode instead. The message now only
-  appears for video over the board's limit, or for a display offering no
-  usable mode at all.
+  the video limit table in [CONFIGURATION.md](CONFIGURATION.md). This message
+  appears for video over the board's decode limit, or for a display offering
+  no usable mode at all. A display that advertises no timing at the sender's
+  size is a different case: the picture is resampled into the closest mode.
 - Picture is soft, or has black bars: the display's mode list carries nothing
   at the sender's size, so the frame is being resampled into the closest mode.
   The running detail on the dashboard names both sizes. Check the display's
@@ -222,12 +215,11 @@ receiver.
   `wpa_supplicant.conf` carries a `freq_list` of
   the US 5 GHz channels and nothing else, so a 2.4 GHz BSSID cannot be joined.
   This is deliberate — real-world testing showed
-  2.4 GHz packet loss makes OMT playback unusable — and it is why the Pi Zero
-  and Pi 3 tiers are no longer supported hosts. Move the SSID to 5 GHz or use
-  Ethernet.
-- Associated on 2.4 GHz after an upgrade: the restriction lands in
+  2.4 GHz packet loss makes OMT playback unusable. Move the SSID to 5 GHz or
+  use Ethernet.
+- Still associated on 2.4 GHz after a deploy: the restriction lands in
   `wpa_supplicant.conf` and takes effect at the next association, so a board
-  that was already on 2.4 GHz when it was upgraded stays there until it
+  that was already on 2.4 GHz when the installer ran stays there until it
   reassociates. The installer leaves that link connected on purpose — it is
   usually carrying the deployment's own SSH session — and prints a warning
   naming the frequency. Move the SSID to 5 GHz or attach Ethernet **before**
@@ -240,8 +232,7 @@ receiver.
   domain) and `iw phy phy0 info`, which lists no 5 GHz frequencies when the
   database is missing. `install.sh` installs the database and writes
   `country=` into `wpa_supplicant.conf`, defaulting to `US` when nothing
-  declares one; a board provisioned before that needs one more deploy. To
-  place the appliance in another domain, set `country=` in
+  declares one. To place the appliance in another domain, set `country=` in
   `/etc/wpa_supplicant/wpa_supplicant.conf` and redeploy — a declared country
   is preserved, never overwritten. Both supported boards use the CYW43455
   (802.11ac 1x1), which negotiates VHT80 at 433 MBit/s on 5 GHz.
@@ -268,32 +259,3 @@ receiver.
   volume. Per-boot state (lock, PID record, published status) lives on a tmpfs
   at `/run/omt/state` and is gone after a restart; the log is kept on the volume
   precisely so it survives one.
-
-### Locked out after installing: no SSH and no web UI, but ping still replies
-
-A Pi that answers ICMP while refusing both `22` and the web port has a
-conflicting nftables ruleset. Netfilter runs **every** base chain registered on
-the `input` hook, and an `accept` only ends the chain it appears in — it does
-not stop a later chain from dropping the packet. So an appliance rule that
-accepts SSH in its own table is still discarded by any other table whose input
-chain ends in `policy drop`, such as the one Alpine's `nftables` package ships.
-
-Versions before this fix installed exactly that arrangement. Recovery needs the
-console or the SD card, because no network path survives:
-
-```bash
-# On the Pi's console, as root:
-nft flush ruleset                       # restores access immediately
-rm -f /etc/nftables.d/omt-client.nft    # stops it coming back at boot
-rc-update del nftables boot
-```
-
-With the card in another machine, delete `etc/nftables.d/omt-client.nft` from
-the root filesystem and remove the `nftables` symlink under
-`etc/runlevels/boot/`, then boot the Pi normally and re-deploy.
-
-The installer now appends its accepts to the host's own `inet filter input`
-chain instead of creating a second table, so they are evaluated in the same
-chain as the `policy drop` that would otherwise override them.
-`tests/unit/test_firewall_reachability.sh` proves this with real connections in
-a network namespace rather than by inspecting the ruleset text.
