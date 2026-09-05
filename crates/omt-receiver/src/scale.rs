@@ -35,14 +35,14 @@ impl Placement {
         }
         // Compare the two aspect ratios by cross-multiplying, so the choice of
         // limiting axis never depends on a rounded floating-point ratio.
-        let source_ratio = (source_width as u64) * (mode_height as u64);
-        let mode_ratio = (mode_width as u64) * (source_height as u64);
+        let source_ratio = (source_width as u128) * (mode_height as u128);
+        let mode_ratio = (mode_width as u128) * (source_height as u128);
         let (width, height) = if source_ratio <= mode_ratio {
             // Taller than the mode, or the same shape: height is the limit.
-            let width = (source_width as u64) * (mode_height as u64) / (source_height as u64);
+            let width = source_ratio / (source_height as u128);
             (usize::try_from(width).ok()?.min(mode_width), mode_height)
         } else {
-            let height = (source_height as u64) * (mode_width as u64) / (source_width as u64);
+            let height = mode_ratio / (source_width as u128);
             (mode_width, usize::try_from(height).ok()?.min(mode_height))
         };
         // A source far narrower or shorter than one destination pixel per
@@ -75,7 +75,7 @@ pub struct Scaler {
     source_row_bytes: usize,
     /// Byte offset of each destination row's source row.
     rows: Vec<usize>,
-    /// Byte offset of each destination column within its source row.
+    /// Pixel index of each destination column within its source row.
     columns: Vec<usize>,
 }
 
@@ -94,7 +94,13 @@ impl Scaler {
         let source_row_bytes = source_width
             .checked_mul(4)
             .ok_or_else(|| "Video frame is too wide to scale".to_owned())?;
-        if source_width == 0 || source_height == 0 || source_stride < source_row_bytes {
+        if source_width == 0
+            || source_height == 0
+            || placement.width == 0
+            || placement.height == 0
+            || source_stride < source_row_bytes
+            || source_height.checked_mul(source_stride).is_none()
+        {
             return Err("Video frame geometry cannot be scaled".into());
         }
         let mut rows = Vec::new();
@@ -109,7 +115,7 @@ impl Scaler {
             .try_reserve_exact(placement.width)
             .map_err(|_| "Unable to reserve the scaler column table".to_owned())?;
         for x in 0..placement.width {
-            columns.push(sample(x, placement.width, source_width) * 4);
+            columns.push(sample(x, placement.width, source_width));
         }
         Ok(Self {
             placement,
@@ -170,15 +176,30 @@ impl Scaler {
             return Err(short());
         }
         let region = destination.get_mut(first..).ok_or_else(short)?;
+        let required = (self.placement.height - 1)
+            .checked_mul(destination_stride)
+            .and_then(|offset| offset.checked_add(row_bytes))
+            .ok_or_else(short)?;
+        if region.len() < required {
+            return Err(short());
+        }
 
         for (index, &source_offset) in self.rows.iter().enumerate() {
+            let start = index * destination_stride;
+            // Enlargement often samples the same source row more than once.
+            // Reuse the already resampled pixels without touching padding/bars.
+            if index > 0 && self.rows[index - 1] == source_offset {
+                let previous = start - destination_stride;
+                region.copy_within(previous..previous + row_bytes, start);
+                continue;
+            }
             let source_row = source
                 .get(source_offset..source_offset + self.source_row_bytes)
                 .ok_or_else(short)?;
-            let start = index * destination_stride;
+            let (source_pixels, _) = source_row.as_chunks::<4>();
             let destination_row = region.get_mut(start..start + row_bytes).ok_or_else(short)?;
             for (pixel, &column) in destination_row.chunks_exact_mut(4).zip(&self.columns) {
-                let sample = source_row.get(column..column + 4).ok_or_else(short)?;
+                let sample = source_pixels.get(column).ok_or_else(short)?;
                 pixel.copy_from_slice(sample);
             }
         }
@@ -190,8 +211,8 @@ impl Scaler {
 /// the destination pixel rather than its leading edge.
 fn sample(index: usize, destination: usize, source: usize) -> usize {
     debug_assert!(destination > 0 && source > 0);
-    let numerator = (2 * index as u64 + 1) * source as u64;
-    let coordinate = numerator / (2 * destination as u64);
+    let numerator = (2 * index as u128 + 1) * source as u128;
+    let coordinate = numerator / (2 * destination as u128);
     // usize on this target is 64-bit and `source` is bounded by the decoder's
     // maximum, so the clamp is what keeps the result in range rather than the
     // conversion.
@@ -360,5 +381,68 @@ mod tests {
         let source = vec![0_u8; 4 * 4 * 4];
         let mut destination = vec![0_u8; 4 * 4 * 4];
         assert!(scaler.render(&source, &mut destination, 15).is_err());
+    }
+
+    #[test]
+    fn enlargement_matches_reference_with_padding_and_bars() {
+        for source_size in [(2, 2), (3, 2), (4, 3)] {
+            for mode in [(7, 7), (11, 8), (2, 2)] {
+                let placement = placement_of(source_size, mode);
+                let source_stride = source_size.0 * 4 + 8;
+                let stride = mode.0 * 4 + 12;
+                let source: Vec<u8> = (0..source_stride * source_size.1)
+                    .map(|n| u8::try_from(n % 251).unwrap_or_default())
+                    .collect();
+                let mut destination = vec![0x55; stride * mode.1];
+                let mut expected = destination.clone();
+                for y in 0..placement.height {
+                    for x in 0..placement.width {
+                        let sy = ((2 * y + 1) * source_size.1) / (2 * placement.height);
+                        let sx = ((2 * x + 1) * source_size.0) / (2 * placement.width);
+                        let from = sy * source_stride + sx * 4;
+                        let to = (y + placement.y) * stride + (x + placement.x) * 4;
+                        expected[to..to + 4].copy_from_slice(&source[from..from + 4]);
+                    }
+                }
+                scaler_of(source_size, source_stride, placement)
+                    .render(&source, &mut destination, stride)
+                    .unwrap_or_else(|error| panic!("{error}"));
+                assert_eq!(destination, expected, "{source_size:?} into {mode:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn invalid_scaler_geometry_is_rejected_without_overflow() {
+        let placement = placement_of((4, 4), (4, 4));
+        assert!(Scaler::new((4, 4), usize::MAX, placement).is_err());
+        assert!(
+            Scaler::new(
+                (4, 4),
+                16,
+                Placement {
+                    width: 0,
+                    ..placement
+                }
+            )
+            .is_err()
+        );
+        assert!(
+            Scaler::new(
+                (4, 4),
+                16,
+                Placement {
+                    height: 0,
+                    ..placement
+                }
+            )
+            .is_err()
+        );
+        let scaler = scaler_of((4, 4), 16, placement);
+        assert!(scaler.render(&[0; 64], &mut [0; 64], usize::MAX).is_err());
+        assert_eq!(
+            Placement::fit((usize::MAX, usize::MAX), (4, 4)),
+            Some(placement)
+        );
     }
 }

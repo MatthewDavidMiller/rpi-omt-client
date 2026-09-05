@@ -10,6 +10,9 @@ Docker or Podman is the only thing the gates need from a workstation. Rust
 1.97.1 with rustfmt and Clippy, the Windows GNU and musl targets, cargo-deny,
 cargo-vet, Hadolint, ShellCheck, Trivy, mingw-w64, and the Python tooling all
 live inside `tools/toolbox/Dockerfile`; nothing is installed onto the host.
+The container build context excludes `target/`: these workstation artifacts
+are rebuilt inside the pinned builder and can otherwise add tens of GiB to
+every context upload after Linux and Windows validation.
 `scripts/toolbox.sh` runs each gate in that image and rebuilds it automatically
 when a pinned version changes, because the image tag is a content hash of the
 Dockerfile, the Python requirements, and the pinned installers.
@@ -99,6 +102,18 @@ require a display-path check on the board being qualified.
 network validation, state, legacy and current password hashes, persistent
 authentication, secure cookies, CSRF/rate limits, security headers, every
 authenticated page, diagnostics, and runtime adapters.
+
+Subprocess regressions cover Web deadlines after the direct child exits while a
+descendant retains its pipes, running-child timeouts, interrupted reads, and
+simultaneous output beyond both capture limits. The Web runner uses nonblocking
+reads without reader threads. Deployer tests ensure output is drained after the
+capture limit and cancellation remains active during post-exit pipe collection;
+its cancellable asynchronous readers are dropped with the operation.
+Malformed PBKDF2 digest tests reject empty, short, and overlong SHA-256 digests.
+
+Scaler tests compare enlargement and reduction against pixel-centre reference
+sampling with padded strides and untouched bars, including repeated output
+rows. Invalid placement sizes and overflowing strides must return errors.
 
 `make test-receiver` builds and tests the Rust receiver crates. It exercises
 shared target vectors, bounded wire parsing, CLI exit-status contracts, detail

@@ -12,8 +12,8 @@ getrandom.workspace = true
 hmac.workspace = true
 libc.workspace = true
 minijinja.workspace = true
-nix.workspace = true
-omt-protocol = { version = "1.0.0", path = "../omt-protocol" }
+nix = { workspace = true, features = ["fs"] }
+omt-protocol = { version = "1.0.1", path = "../omt-protocol" }
 pbkdf2.workspace = true
 quick-xml.workspace = true
 rustls.workspace = true

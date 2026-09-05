@@ -33,10 +33,11 @@ use std::collections::BTreeSet;
 use std::fs::{self, File};
 use std::io::{self, Read};
 use std::path::{Component, Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, mpsc};
-use std::thread;
+use tokio::io::{AsyncRead, AsyncReadExt};
+use tokio::process::Command;
 use zeroize::{Zeroize, Zeroizing};
 
 pub const OUTPUT_LIMIT: usize = 4 * 1024 * 1024;
@@ -456,13 +457,33 @@ pub fn run_process(
     env: &[(String, String)],
     cancelled: Arc<AtomicBool>,
 ) -> io::Result<ProcessResult> {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?
+        .block_on(run_process_async(program, args, directory, env, &cancelled))
+}
+
+async fn run_process_async(
+    program: &Path,
+    args: &[String],
+    directory: &Path,
+    env: &[(String, String)],
+    cancelled: &AtomicBool,
+) -> io::Result<ProcessResult> {
+    if cancelled.load(Ordering::Relaxed) {
+        return Err(io::Error::new(
+            io::ErrorKind::Interrupted,
+            "operation cancelled",
+        ));
+    }
     let mut command = Command::new(program);
     command
         .args(args)
         .current_dir(directory)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
     for (name, value) in env {
         command.env(name, value);
     }
@@ -480,52 +501,149 @@ pub fn run_process(
         .stderr
         .take()
         .ok_or_else(|| io::Error::other("missing stderr"))?;
-    let (tx, rx) = mpsc::channel();
-    spawn_reader(stdout, tx.clone());
-    spawn_reader(stderr, tx.clone());
-    drop(tx);
-    loop {
-        if cancelled.load(Ordering::Relaxed) {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(io::Error::new(
-                io::ErrorKind::Interrupted,
-                "operation cancelled",
-            ));
-        }
-        if let Some(status) = child.try_wait()? {
-            let mut output = Vec::new();
-            for part in rx {
-                output.extend_from_slice(
-                    &part[..part.len().min(OUTPUT_LIMIT.saturating_sub(output.len()))],
-                );
+    let outcome = tokio::select! {
+        result = async {
+            let (status, stdout, stderr) =
+                tokio::join!(child.wait(), read_output(stdout), read_output(stderr));
+            status.map(|status| (status, stdout, stderr))
+        } => result,
+        () = async {
+            while !cancelled.load(Ordering::Relaxed) {
+                tokio::time::sleep(std::time::Duration::from_millis(25)).await;
             }
-            return Ok(ProcessResult {
+        } => Err(io::Error::new(io::ErrorKind::Interrupted, "operation cancelled")),
+    };
+    match outcome {
+        Ok((status, mut stdout, stderr)) => {
+            stdout.extend_from_slice(
+                &stderr[..stderr.len().min(OUTPUT_LIMIT.saturating_sub(stdout.len()))],
+            );
+            Ok(ProcessResult {
                 exit_code: status.code().unwrap_or(1),
-                output: String::from_utf8_lossy(&output).into_owned(),
-            });
+                output: String::from_utf8_lossy(&stdout).into_owned(),
+            })
         }
-        thread::sleep(std::time::Duration::from_millis(25));
+        Err(error) => {
+            let _ = child.kill().await;
+            let _ = child.wait().await;
+            Err(error)
+        }
     }
 }
 
-fn spawn_reader(mut input: impl Read + Send + 'static, tx: mpsc::Sender<Vec<u8>>) {
-    thread::spawn(move || {
-        let mut bounded = Vec::new();
-        let mut chunk = [0_u8; 8192];
-        while bounded.len() < OUTPUT_LIMIT {
-            match input.read(&mut chunk) {
-                Ok(0) | Err(_) => break,
-                Ok(n) => bounded.extend_from_slice(&chunk[..n.min(OUTPUT_LIMIT - bounded.len())]),
-            }
+async fn read_output(mut input: impl AsyncRead + Unpin) -> Vec<u8> {
+    let mut bounded = Vec::new();
+    let mut chunk = [0_u8; 8192];
+    loop {
+        match input.read(&mut chunk).await {
+            Ok(0) => return bounded,
+            Ok(n) => bounded
+                .extend_from_slice(&chunk[..n.min(OUTPUT_LIMIT.saturating_sub(bounded.len()))]),
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+            // A broken pipe must not discard the exit status and the output
+            // read so far; treat any other read error as end of stream.
+            Err(_) => return bounded,
         }
-        let _ = tx.send(bounded);
-    });
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cancelled_process_is_not_spawned() {
+        let result = run_process(
+            Path::new("/nonexistent/omt-command-test"),
+            &[],
+            Path::new("."),
+            &[],
+            Arc::new(AtomicBool::new(true)),
+        );
+        assert!(matches!(result, Err(error) if error.kind() == io::ErrorKind::Interrupted));
+    }
+
+    #[tokio::test]
+    async fn output_limit_does_not_close_a_verbose_producers_pipe() {
+        use tokio::io::AsyncWriteExt;
+        let (mut writer, reader) = tokio::io::duplex(8192);
+        let produce = async move {
+            let bytes = vec![42; OUTPUT_LIMIT + 8192];
+            writer
+                .write_all(&bytes)
+                .await
+                .unwrap_or_else(|error| panic!("{error}"));
+        };
+        let ((), output) = tokio::join!(produce, read_output(reader));
+        assert_eq!(output, vec![42; OUTPUT_LIMIT]);
+    }
+
+    #[tokio::test]
+    async fn a_read_error_keeps_the_output_captured_so_far() {
+        struct FailsAfterOneChunk(bool);
+        impl AsyncRead for FailsAfterOneChunk {
+            fn poll_read(
+                mut self: std::pin::Pin<&mut Self>,
+                _context: &mut std::task::Context<'_>,
+                buffer: &mut tokio::io::ReadBuf<'_>,
+            ) -> std::task::Poll<io::Result<()>> {
+                if self.0 {
+                    return std::task::Poll::Ready(Err(io::ErrorKind::BrokenPipe.into()));
+                }
+                self.0 = true;
+                buffer.put_slice(b"partial");
+                std::task::Poll::Ready(Ok(()))
+            }
+        }
+        assert_eq!(
+            read_output(FailsAfterOneChunk(false)).await,
+            b"partial".to_vec()
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn cancellation_remains_live_after_the_direct_child_exits() {
+        let cancelled = AtomicBool::new(false);
+        let cancel = async {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            cancelled.store(true, Ordering::Relaxed);
+        };
+        let started = std::time::Instant::now();
+        // The finite descendant bounds fixture lifetime even if the test fails.
+        let args = ["-c".to_owned(), "sleep 2 & exit 0".to_owned()];
+        let ((), result) = tokio::join!(
+            cancel,
+            run_process_async(
+                Path::new("/bin/sh"),
+                &args,
+                Path::new("/tmp"),
+                &[],
+                &cancelled
+            )
+        );
+        assert!(matches!(result, Err(error) if error.kind() == io::ErrorKind::Interrupted));
+        assert!(started.elapsed() < std::time::Duration::from_secs(1));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn process_captures_both_streams_and_nonzero_exit() {
+        let result = run_process(
+            Path::new("/bin/sh"),
+            &[
+                "-c".to_owned(),
+                "printf out; printf err >&2; exit 7".to_owned(),
+            ],
+            Path::new("/tmp"),
+            &[],
+            Arc::new(AtomicBool::new(false)),
+        )
+        .unwrap_or_else(|error| panic!("{error}"));
+        assert_eq!(result.exit_code, 7);
+        assert_eq!(result.output, "outerr");
+    }
+
     #[test]
     fn validation_contract() {
         assert!(valid_host("pi.local"));

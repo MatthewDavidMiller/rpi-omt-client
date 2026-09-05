@@ -78,10 +78,14 @@ fn parse_password(value: String) -> Result<Password, String> {
             .ok()
             .filter(|number| *number > 0)
             .ok_or("invalid PBKDF2 iterations")?;
+        let digest = hex_decode(digest)?;
+        if digest.len() != 32 {
+            return Err("invalid PBKDF2 SHA-256 digest length".to_owned());
+        }
         return Ok(Password::Pbkdf2 {
             iterations,
             salt: salt.as_bytes().to_vec(),
-            digest: hex_decode(digest)?,
+            digest,
         });
     }
     if let Some(rest) = value.strip_prefix("scrypt:") {
@@ -433,6 +437,18 @@ mod tests {
         let scrypt_hash = parse_password("scrypt:32768:8:1$07kZLpT9$d12f4706055d4d0812a754b965a9150e8c843b0ce3672d8db291df10e0bf144bc268bb049c9c3f209ea4614d5309a759eba4e123a4bd12e08daa002f95ccfe97".to_owned()).unwrap_or_else(|error| panic!("{error}"));
         assert!(scrypt_hash.verify("password"));
         assert!(!scrypt_hash.verify("not-password"));
+    }
+
+    #[test]
+    fn malformed_pbkdf2_digests_are_rejected() {
+        for digest in [
+            String::new(),
+            "00".to_owned(),
+            "00".repeat(31),
+            "00".repeat(33),
+        ] {
+            assert!(parse_password(format!("pbkdf2:sha256:1$salt${digest}")).is_err());
+        }
     }
 
     #[test]

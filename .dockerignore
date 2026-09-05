@@ -16,6 +16,8 @@ scripts/*
 *.tar.gz
 output/
 build/
+# Cargo artifacts are rebuilt inside the pinned builder and can occupy tens of GiB.
+target/
 .build/
 work/
 env/

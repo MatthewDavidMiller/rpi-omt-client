@@ -142,6 +142,10 @@ filter the budget allows: the Pi 4 tier already spends 26.4 ms of its 33.3 ms
 interval decoding a 1080p frame, so a bilinear pass over the destination would
 not fit. It costs one intermediate frame of ordinary memory, at most 8 MiB
 against the 128 MiB container, and only for a session that needs it.
+When enlargement maps adjacent destination rows to the same source row, the
+scaler copies the already resampled pixels. It preserves padding and black bars
+and needs no additional buffer. Geometry and destination extent checks reject
+zero-sized placements and overflowing strides before rendering.
 
 HDMI audio is resolved rather than assumed. The Pi 4 and Pi 5 register one ALSA
 card per output, `vc4hdmi0` and `vc4hdmi1`. The receiver reads
@@ -364,6 +368,10 @@ invalid. Deploy leaves the existing credential in place unless that option is
 selected.
 Source state is one atomic schema-versioned record, not a pair of files. The
 installer never migrates state from any other installation.
+
+PBKDF2-SHA256 password records must contain a full 32-byte digest. Empty or
+truncated digests are rejected at load time rather than accepted as a shorter
+password comparison; valid existing PBKDF2 and legacy scrypt records still load.
 
 Per-boot state is kept off that volume. The control lock, PID record, and
 published playback status live in `$OMT_RUNTIME_DIR`, a size-capped tmpfs

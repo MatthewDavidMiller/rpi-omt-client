@@ -26,6 +26,9 @@ fail() {
 }
 bash -n "${BUILD}"
 
+grep -Fxq 'target/' "${ROOT}/.dockerignore" || \
+    fail "container build contexts must exclude the workstation Cargo target directory"
+
 grep -Eq 'gzip -9 -n' "${BUILD}" || \
     fail "the ARM64 archive must be gzip compressed, matching its .tar.gz name"
 # -n keeps the gzip header free of a name and timestamp, so an unchanged image

@@ -337,7 +337,7 @@ version = "0.3.2"
 criteria = "safe-to-deploy"
 
 [[exemptions.chacha20]]
-version = "0.10.1"
+version = "0.10.2"
 criteria = "safe-to-deploy"
 
 [[exemptions.chrono]]
@@ -2385,7 +2385,7 @@ version = "0.57.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.wnaf]]
-version = "0.14.0"
+version = "0.14.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.writeable]]
