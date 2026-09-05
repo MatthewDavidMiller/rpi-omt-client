@@ -55,9 +55,10 @@ def test_high_value_paths_are_documented():
 
 
 def test_file_maps_reference_existing_paths():
-    """The agent guides and the two architecture documents are the entry map for
-    humans and agents. Their file maps silently rotted through the v0.9.27 src/ +
-    deploy/ reorganisation; this keeps every backticked repo path honest.
+    """The agent guides, the development entry point, and the two architecture
+    documents are the map for humans and agents alike. Their file maps silently
+    rotted through the v0.9.27 src/ + deploy/ reorganisation; this keeps every
+    backticked repo path honest.
 
     CONFIGURATION.md and OPERATIONS.md are excluded: they name container runtime
     paths that deliberately do not exist in the repository."""
@@ -65,6 +66,7 @@ def test_file_maps_reference_existing_paths():
     guides = (
         REPO_ROOT / "AGENTS.md",
         REPO_ROOT / "CLAUDE.md",
+        REPO_ROOT / "docs" / "DEVELOPMENT.md",
         REPO_ROOT / "docs" / "CODEBASE_REFERENCE.md",
         REPO_ROOT / "docs" / "ARCHITECTURE.md",
     )

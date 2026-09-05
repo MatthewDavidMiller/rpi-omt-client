@@ -1,5 +1,7 @@
 # Testing
 
+## Workstation and toolbox
+
 Build the gate toolbox once:
 
 ```bash
@@ -76,17 +78,22 @@ for a check it did not run:
 
 Rebuild the toolbox with `make install` instead of narrowing the suite.
 
-Use the narrowest relevant gate:
+## Which gate to run
 
-```bash
-make test-web
-make test-receiver
-make test-deployer
-make build-windows-deployer
-make test-quick
-make test
-./scripts/toolbox.sh ./scripts/test-local.sh --full
-```
+Start with the narrowest gate that covers what changed, then broaden when the
+change crosses a boundary.
+
+| Changed | Run |
+|---|---|
+| `crates/omt-web/`, its templates or static assets | `make test-web`; `make test` when behavior changes materially |
+| Receiver crates, `omt-protocol`, `vmx-decoder`, or the status contract | `make test-receiver` **and** `make test-web` — both assert `tests/schema/playback-status-vectors.json` |
+| Deployer core, SSH, CLI, TUI, or the egui view | `make test-deployer` **and** `make build-windows-deployer` — one source set ships as two packages |
+| Shell scripts, installer, OpenRC, or HDMI configuration | `make test-quick` |
+| `deploy/Dockerfile`, entrypoint, or image contents | `make test`, or `./scripts/toolbox.sh ./scripts/test-local.sh --full` |
+| Anything spanning several of the above | `make test-quick`, then `make test` |
+| Documentation only | no test run; keep commands and paths accurate |
+
+## What each gate covers
 
 For full network, codec, audio, and real-Pi playback validation, build the
 first-party Rust sender with `make build-omt-sender`. Its source-scoped firewall

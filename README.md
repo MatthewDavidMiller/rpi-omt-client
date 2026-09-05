@@ -109,14 +109,20 @@ third-party notices on its About tab.
 
 ## Documentation
 
-- [Architecture](docs/ARCHITECTURE.md)
-- [Codebase reference](docs/CODEBASE_REFERENCE.md)
-- [Configuration](docs/CONFIGURATION.md)
-- [Setup](docs/SETUP.md)
-- [Operations](docs/OPERATIONS.md)
-- [Testing](docs/TESTING.md)
-- [Diagnostics bundle](docs/DIAGNOSTICS_BUNDLE.md)
-- [OMT test sender](docs/OMT_TEST_SENDER.md)
+Installing and running an appliance:
+
+- [Setup](docs/SETUP.md) — install, upgrade, uninstall, headless first boot
+- [Operations](docs/OPERATIONS.md) — dashboard, network, diagnostics, troubleshooting
+- [Configuration](docs/CONFIGURATION.md) — environment, persistent files, HDMI, decode ceilings
+- [Diagnostics bundle](docs/DIAGNOSTICS_BUNDLE.md) — support-bundle ZIP contract
+
+Changing it:
+
+- [Development](docs/DEVELOPMENT.md) — start here: layout, commands, invariants
+- [Architecture](docs/ARCHITECTURE.md) — runtime design and the reasoning behind each bound
+- [Codebase reference](docs/CODEBASE_REFERENCE.md) — file-to-responsibility map
+- [Testing](docs/TESTING.md) — gates, hooks, release pipeline, hardware tier
+- [OMT test sender](docs/OMT_TEST_SENDER.md) — first-party Rust test sender
 
 ## License
 
