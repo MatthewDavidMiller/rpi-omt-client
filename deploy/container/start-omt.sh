@@ -7,6 +7,7 @@ umask 077
 OMT_CONFIG_DIR="${OMT_CONFIG_DIR:-/etc/omt}"
 OMT_SOURCE_TARGET_FILE="${OMT_SOURCE_TARGET_FILE:-${OMT_CONFIG_DIR}/source_target.json}"
 OMT_VIDEO_CEILING_FILE="${OMT_VIDEO_CEILING_FILE:-${OMT_CONFIG_DIR}/video_ceiling.json}"
+OMT_PLAYOUT_DELAY_FILE="${OMT_PLAYOUT_DELAY_FILE:-${OMT_CONFIG_DIR}/playout_delay.json}"
 OMT_VIDEO_CEILING="${OMT_VIDEO_CEILING:-1920x1080@60}"
 OMT_RUNTIME_DIR="${OMT_RUNTIME_DIR:-${OMT_CONFIG_DIR}/run}"
 OMT_PLAYBACK_STATUS_FILE="${OMT_PLAYBACK_STATUS_FILE:-${OMT_RUNTIME_DIR}/playback-status.json}"
@@ -29,10 +30,15 @@ target="$(omt-web play-target "${OMT_SOURCE_TARGET_FILE}")"
 # one place rather than being restated by whoever builds the argument vector.
 ceiling="$(omt-web video-ceiling \
     "${OMT_VIDEO_CEILING_FILE}" "${OMT_VIDEO_CEILING}")"
+# The operator's playout delay, or the Wi-Fi default of 4 seconds. Same binary
+# as the System page so empty/auto/corrupt files mean one thing.
+delay="$(omt-web playout-delay \
+    "${OMT_PLAYOUT_DELAY_FILE}" 4)"
 
 mkdir -p "$(dirname -- "${OMT_PLAYBACK_STATUS_FILE}")"
 exec "${OMT_RECEIVER_COMMAND}" play \
     --target "${target}" \
     --connector "${OMT_HDMI_CONNECTOR}" \
     --status-file "${OMT_PLAYBACK_STATUS_FILE}" \
-    --video-ceiling "${ceiling}"
+    --video-ceiling "${ceiling}" \
+    --playout-delay "${delay}"

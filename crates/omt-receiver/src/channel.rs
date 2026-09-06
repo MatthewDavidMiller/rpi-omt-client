@@ -32,7 +32,15 @@ const MAX_ADDRESSES: usize = 16;
 /// So the slice bounds only the wait for a frame to *begin*. Once a byte is
 /// consumed the read runs on this budget instead, which still ends a sender
 /// that has genuinely stopped talking mid-frame.
-const BODY_BUDGET: Duration = Duration::from_secs(2);
+///
+/// Six seconds is above the 3.5 s Wi-Fi stalls measured against vMix, and
+/// still under the SIGTERM grace in `control-omt.sh`, so a mid-payload stall
+/// does not close the socket and a shutdown still wins.
+const BODY_BUDGET: Duration = Duration::from_secs(6);
+/// Kernel receive buffer matching libomtnet `NETWORK_RECEIVE_BUFFER`. LAN
+/// autotune sizes TCP for a tiny BDP; this is jitter capacity while the
+/// playout queue copies frames out, not a seconds-long store.
+const RECV_BUFFER: usize = 8 * 1024 * 1024;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Endpoint {
@@ -115,6 +123,12 @@ impl Channel {
         &self.frame
     }
 
+    /// Takes the current frame so the playout queue can own the payload.
+    #[must_use]
+    pub fn take_frame(&mut self) -> Frame {
+        std::mem::replace(&mut self.frame, Frame::new())
+    }
+
     fn close(&mut self) {
         if let Some(stream) = self.stream.take() {
             let _ = stream.shutdown(std::net::Shutdown::Both);
@@ -139,6 +153,7 @@ impl Channel {
             }
             match TcpStream::connect_timeout(&address, remaining) {
                 Ok(stream) => {
+                    let stream = sized_stream(stream);
                     stream.set_nodelay(true)?;
                     self.stream = Some(stream);
                     break;
@@ -316,6 +331,16 @@ fn positive(value: Duration) -> Duration {
     }
 }
 
+/// Applies [`RECV_BUFFER`] without `unsafe` in this crate: `socket2` is the
+/// safe wrapper around `SO_RCVBUF`. Linux may double the request internally.
+fn sized_stream(stream: TcpStream) -> TcpStream {
+    let socket = socket2::Socket::from(stream);
+    if let Err(error) = socket.set_recv_buffer_size(RECV_BUFFER) {
+        eprintln!("unable to set OMT receive buffer to {RECV_BUFFER} bytes: {error}");
+    }
+    socket.into()
+}
+
 fn ensure_payload(payload: &mut Vec<u8>, required: usize) -> io::Result<()> {
     // `try_reserve` takes an additional element count, not a target capacity.
     // Passing `required` while `len() == required` made the second frame
@@ -413,11 +438,13 @@ mod tests {
         assert_eq!(body_deadline(generous), generous);
 
         // Still bounded, and bounded by something concrete: `control-omt.sh`
-        // gives SIGTERM five seconds before SIGKILL, and a receiver killed
+        // gives SIGTERM eight seconds before SIGKILL, and a receiver killed
         // mid-frame still holds /dev/dri while the kernel tears it down. A
         // budget at or above that grace would turn a stalled sender into a
-        // failed restart.
-        assert!(BODY_BUDGET < Duration::from_secs(5));
+        // failed restart. Six seconds covers a 3.5 s vMix Wi-Fi stall.
+        assert!(BODY_BUDGET > Duration::from_secs(3));
+        assert!(BODY_BUDGET < Duration::from_secs(8));
+        assert_eq!(RECV_BUFFER, 8 * 1024 * 1024);
     }
 
     /// The failure the appliance actually showed: a 1080p payload takes tens of
@@ -529,6 +556,130 @@ mod tests {
         assert!(
             channel.connected(),
             "WouldBlock on an idle socket must not close the channel"
+        );
+
+        drop(channel);
+        let _ = sender.join();
+    }
+
+    /// A 3.5 s Wi-Fi stall mid-payload must finish rather than close the
+    /// session. That is the measured vMix stall this budget exists to cover.
+    #[test]
+    fn a_payload_paused_for_three_and_a_half_seconds_still_completes() {
+        use std::net::TcpListener;
+
+        let listener =
+            TcpListener::bind("127.0.0.1:0").unwrap_or_else(|error| panic!("bind: {error}"));
+        let port = listener
+            .local_addr()
+            .unwrap_or_else(|error| panic!("addr: {error}"))
+            .port();
+        let frame =
+            build_metadata("<OMTPayload/>", 7).unwrap_or_else(|error| panic!("build: {error:?}"));
+        let (header, payload) = frame.split_at(omt_protocol::HEADER_SIZE);
+        let (header, payload) = (header.to_vec(), payload.to_vec());
+
+        let sender = std::thread::spawn(move || {
+            let (mut stream, _) = listener
+                .accept()
+                .unwrap_or_else(|error| panic!("accept: {error}"));
+            stream
+                .write_all(&header)
+                .unwrap_or_else(|error| panic!("header: {error}"));
+            stream
+                .flush()
+                .unwrap_or_else(|error| panic!("flush: {error}"));
+            std::thread::sleep(Duration::from_millis(3500));
+            stream
+                .write_all(&payload)
+                .unwrap_or_else(|error| panic!("payload: {error}"));
+            stream
+                .flush()
+                .unwrap_or_else(|error| panic!("flush: {error}"));
+            std::thread::sleep(Duration::from_millis(200));
+        });
+
+        let mut channel = Channel::new();
+        channel
+            .connect(
+                &Endpoint {
+                    host: "127.0.0.1".into(),
+                    port,
+                },
+                FrameType::Metadata,
+                Instant::now() + Duration::from_secs(5),
+            )
+            .unwrap_or_else(|error| panic!("connect: {error}"));
+
+        let received = channel
+            .receive(Instant::now() + Duration::from_millis(50))
+            .unwrap_or_else(|error| panic!("receive: {error}"));
+        assert_eq!(received.payload, b"<OMTPayload/>");
+        assert!(
+            channel.connected(),
+            "a 3.5 s pause must not close the socket"
+        );
+
+        drop(channel);
+        let _ = sender.join();
+    }
+
+    /// A sender that starts a frame and never finishes still loses the
+    /// connection; the budget is a stall bound, not an infinite wait.
+    #[test]
+    fn a_body_that_never_finishes_is_still_truncated() {
+        use std::net::TcpListener;
+
+        let listener =
+            TcpListener::bind("127.0.0.1:0").unwrap_or_else(|error| panic!("bind: {error}"));
+        let port = listener
+            .local_addr()
+            .unwrap_or_else(|error| panic!("addr: {error}"))
+            .port();
+        let frame =
+            build_metadata("<OMTPayload/>", 7).unwrap_or_else(|error| panic!("build: {error:?}"));
+        let header = frame[..omt_protocol::HEADER_SIZE].to_vec();
+
+        let sender = std::thread::spawn(move || {
+            let (mut stream, _) = listener
+                .accept()
+                .unwrap_or_else(|error| panic!("accept: {error}"));
+            stream
+                .write_all(&header)
+                .unwrap_or_else(|error| panic!("header: {error}"));
+            stream
+                .write_all(b"x")
+                .unwrap_or_else(|error| panic!("byte: {error}"));
+            stream
+                .flush()
+                .unwrap_or_else(|error| panic!("flush: {error}"));
+            std::thread::sleep(BODY_BUDGET + Duration::from_secs(2));
+        });
+
+        let mut channel = Channel::new();
+        channel
+            .connect(
+                &Endpoint {
+                    host: "127.0.0.1".into(),
+                    port,
+                },
+                FrameType::Metadata,
+                Instant::now() + Duration::from_secs(5),
+            )
+            .unwrap_or_else(|error| panic!("connect: {error}"));
+
+        let error = channel
+            .receive(Instant::now() + Duration::from_millis(50))
+            .err()
+            .unwrap_or_else(|| panic!("a hung body must fail"));
+        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+        assert!(
+            error.to_string().contains("truncated by a timeout"),
+            "{error}"
+        );
+        assert!(
+            !channel.connected(),
+            "a truncated frame must close the socket"
         );
 
         drop(channel);

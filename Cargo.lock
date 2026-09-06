@@ -3436,7 +3436,7 @@ dependencies = [
 
 [[package]]
 name = "omt-deployer-core"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "getrandom 0.3.4",
  "hmac 0.12.1",
@@ -3455,7 +3455,7 @@ dependencies = [
 
 [[package]]
 name = "omt-protocol"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "serde",
  "serde_json",
@@ -3464,7 +3464,7 @@ dependencies = [
 
 [[package]]
 name = "omt-receiver"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "alsa",
  "async-io",
@@ -3476,13 +3476,14 @@ dependencies = [
  "serde",
  "serde_json",
  "signal-hook",
+ "socket2",
  "vmx-decoder",
  "zbus",
 ]
 
 [[package]]
 name = "omt-receiver-core"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "omt-protocol",
  "serde",
@@ -3491,14 +3492,14 @@ dependencies = [
 
 [[package]]
 name = "omt-test-sender"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "omt-protocol",
 ]
 
 [[package]]
 name = "omt-web"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "axum",
  "axum-server",
@@ -4211,7 +4212,7 @@ dependencies = [
 
 [[package]]
 name = "rpi-omt-deploy"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "clap",
  "omt-deployer-core",
@@ -4223,7 +4224,7 @@ dependencies = [
 
 [[package]]
 name = "rpi-omt-deploy-tui"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "crossterm",
  "omt-deployer-core",
@@ -4233,7 +4234,7 @@ dependencies = [
 
 [[package]]
 name = "rpi-omt-deployer"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "eframe",
  "egui",
@@ -5567,7 +5568,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "vmx-decoder"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "serde",
  "serde_json",

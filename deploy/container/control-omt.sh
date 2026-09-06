@@ -89,7 +89,7 @@ stop_locked() {
     fi
     read -r pid start_time <<< "${record}"
     kill "${pid}" 2>/dev/null || true
-    for attempt in $(seq 1 50); do
+    for attempt in $(seq 1 80); do
         if ! managed_process_is_valid "${pid}" "${start_time}"; then
             rm -f -- "${PID_FILE}" "${STATUS_FILE}"
             echo "Stopped OMT receiver"

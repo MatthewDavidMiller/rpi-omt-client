@@ -9,9 +9,12 @@ use crate::audio;
 use crate::channel::{Channel, Endpoint, remaining};
 use crate::connector::{self, Connector};
 use crate::discovery;
+use crate::jitter::{self, FillGate, Queue};
 use crate::video::{self, Present};
 use omt_protocol::FrameType;
 use omt_receiver_core::{AudioState, PlaybackStatus, VideoCeiling, VideoState, sanitize_detail};
+use std::fmt::Write;
+use std::io::ErrorKind;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
@@ -82,6 +85,12 @@ const RECOVER_BACKOFF: Duration = Duration::from_millis(250);
 /// blackholed SYN reaches it: three attempts that each wait the full timeout,
 /// plus the backoffs, is under four seconds of held frame.
 const RECOVER_TIMEOUT: Duration = Duration::from_secs(1);
+/// After one A/V queue has filled, wait this long for the other before
+/// starting alone. Missing audio must not block HDMI.
+const PEER_WAIT: Duration = Duration::from_secs(1);
+/// Tiny receive slice used to copy frames already in the kernel buffer
+/// without waiting, so a present deadline is not starved.
+const DRAIN_SLICE: Duration = Duration::from_millis(1);
 
 pub struct Options {
     pub target: String,
@@ -90,6 +99,9 @@ pub struct Options {
     /// What this board is allowed to attempt, from the installer's board
     /// profile or the operator's override.
     pub ceiling: VideoCeiling,
+    /// Operator playout delay. Zero is the official low-latency profile;
+    /// four seconds is the Wi-Fi default.
+    pub playout_delay: Duration,
 }
 
 /// Runs until `stop` is raised by a signal, then reports a stopped document.
@@ -176,11 +188,27 @@ fn session(
         )
         .map_err(|error| error.to_string())?;
 
-    let audio = AudioWorker::start(&endpoint, connector, status, stop);
+    let gate = FillGate::new();
+    let audio = AudioWorker::start(
+        &endpoint,
+        connector,
+        status,
+        stop,
+        options.playout_delay,
+        Arc::clone(&gate),
+    );
     let described = connector.describe();
+    let fill_detail = if options.playout_delay.is_zero() {
+        "Waiting for OMT media.".to_owned()
+    } else {
+        format!(
+            "Waiting for {} second playout buffer.",
+            options.playout_delay.as_secs()
+        )
+    };
     note_status(
         status_failed,
-        status.video(VideoState::Starting, "Waiting for OMT media.", &described),
+        status.video(VideoState::Starting, &fill_detail, &described),
     );
 
     // A fresh connection gets the same grace as one that has been delivering,
@@ -191,8 +219,14 @@ fn session(
     let mut failure = None;
     let mut reconnects = 0_u64;
     let mut skipped = 0_u64;
+    let mut underruns = 0_u64;
     let mut attempts = 0_u32;
     let mut running = RunningDetail::default();
+    let mut queue = Queue::video(options.playout_delay);
+    let mut playing = false;
+    let mut next_due = Instant::now();
+    let mut filled_at = None;
+    let mut frame_interval = None;
 
     while !stop.load(Ordering::Relaxed) {
         if Instant::now() >= next_connector_check {
@@ -202,23 +236,29 @@ fn session(
                 break;
             }
         }
-        let deadline = Instant::now() + RECEIVE_SLICE;
-        let outcome = next_video_frame(&mut video, deadline);
-        let frame = match outcome {
-            Ok(()) => {
-                // A frame arrived, so whatever the last outage was, it is over.
-                attempts = 0;
-                // The borrow of the channel ends with each receive, so the
-                // frame is re-read here for presentation.
-                video.frame()
+
+        let now = Instant::now();
+        let present_due = playing && now >= next_due;
+        let wait_until = if present_due {
+            now
+        } else if playing {
+            next_due.min(now + RECEIVE_SLICE)
+        } else {
+            now + RECEIVE_SLICE
+        };
+
+        match drain_video(&mut video, &mut queue, playing, wait_until) {
+            Ok(received) => {
+                if received {
+                    attempts = 0;
+                    last_frame = Instant::now() + MEDIA_GRACE;
+                    stalled = Instant::now() + MEDIA_STALL;
+                }
             }
             Err(error) => {
                 note_status(status_failed, status.heartbeat(&described));
                 if !video.connected() {
                     if attempts >= RECOVER_ATTEMPTS {
-                        // Naming the exhausted budget is what separates "the
-                        // link dropped once" from "this endpoint keeps
-                        // accepting and dropping us" in the operator's detail.
                         failure = Some(format!(
                             "{error}; {attempts} in-session video reconnects did not hold."
                         ));
@@ -228,9 +268,6 @@ fn session(
                         status_failed,
                         status.video(VideoState::Retrying, &sanitize_detail(&error), &described),
                     );
-                    // The first attempt is immediate, so the common case -- a
-                    // sender that restarted its socket -- costs one handshake
-                    // rather than a visible gap.
                     wait(
                         RECOVER_BACKOFF * attempts,
                         status,
@@ -243,14 +280,6 @@ fn session(
                     }
                     attempts += 1;
                     if let Err(error) = recover_video(&mut video, &endpoint) {
-                        // A refused connection spends an attempt like any other
-                        // failure, and spends it immediately: a reset comes back
-                        // as fast as the kernel can answer, so a shut port walks
-                        // the whole budget in the backoffs alone -- about eight
-                        // tenths of a second. That is the window a restarting
-                        // sender has to get its listener back up in; past it the
-                        // outer loop rebuilds. See RECOVER_BACKOFF for why the
-                        // window is deliberately that short.
                         if attempts >= RECOVER_ATTEMPTS {
                             failure = Some(format!(
                                 "{error}; {attempts} in-session video reconnects did not hold."
@@ -264,63 +293,104 @@ fn session(
                     stalled = Instant::now() + MEDIA_STALL;
                     continue;
                 }
-                // A socket that still calls itself connected but has stopped
-                // delivering is the one failure the reconnect budget above
-                // never sees, so it is bounded here instead.
-                if Instant::now() >= stalled {
-                    failure = Some(format!(
-                        "No video frames for {} seconds on a connected socket.",
-                        MEDIA_STALL.as_secs()
-                    ));
-                    break;
-                }
-                if Instant::now() >= last_frame {
-                    note_status(
-                        status_failed,
-                        status.video(
-                            VideoState::Retrying,
-                            "Waiting for video frames.",
-                            &described,
-                        ),
-                    );
-                }
-                continue;
             }
-        };
-        last_frame = Instant::now() + MEDIA_GRACE;
-        stalled = Instant::now() + MEDIA_STALL;
-        let interlaced = frame.video.as_ref().is_some_and(|v| v.flags & 1 != 0);
-        match output.present(frame) {
-            // A held frame is still a running session: the picture on screen is
-            // the sender's, audio never stopped, and the presenter bounds how
-            // long a run of them can last before it fails the session instead.
-            outcome @ (Present::Presented | Present::Skipped) => {
-                if outcome == Present::Skipped {
-                    skipped = skipped.saturating_add(1);
+        }
+
+        if queue.filled() {
+            gate.set_video(true);
+            let ready_since = filled_at.get_or_insert_with(Instant::now);
+            let peer_ok = options.playout_delay.is_zero() || gate.audio_ready();
+            let waited = Instant::now() >= *ready_since + PEER_WAIT;
+            if !playing && (peer_ok || waited) {
+                playing = true;
+                next_due = Instant::now();
+                if options.playout_delay.is_zero() {
+                    queue.keep_latest_only();
                 }
-                // The output owns this message: it is the only place that knows
-                // whether the display's mode carried the format natively or the
-                // frame had to be resampled into it.
-                let base = output.presentation_detail(interlaced);
+            }
+        }
+
+        if playing && Instant::now() >= next_due {
+            if let Some(frame) = queue.pop() {
+                if let Some(header) = frame.video.as_ref() {
+                    frame_interval = jitter::video_interval(header).or(frame_interval);
+                }
+                let interlaced = frame.video.as_ref().is_some_and(|v| v.flags & 1 != 0);
+                match output.present(&frame) {
+                    outcome @ (Present::Presented | Present::Skipped) => {
+                        if outcome == Present::Skipped {
+                            skipped = skipped.saturating_add(1);
+                        }
+                        next_due = next_due
+                            .checked_add(frame_interval.unwrap_or(Duration::from_millis(33)))
+                            .unwrap_or(next_due);
+                        let base = output.presentation_detail(interlaced);
+                        note_status(
+                            status_failed,
+                            status.video(
+                                VideoState::Running,
+                                running.detail(
+                                    base,
+                                    options.playout_delay,
+                                    queue.duration(),
+                                    reconnects,
+                                    skipped,
+                                    underruns,
+                                ),
+                                &described,
+                            ),
+                        );
+                    }
+                    Present::UnsupportedFormat(detail) => {
+                        note_status(
+                            status_failed,
+                            status.video(VideoState::UnsupportedFormat, &detail, &described),
+                        );
+                    }
+                    Present::Failed(detail) => {
+                        failure = Some(detail);
+                        break;
+                    }
+                }
+            } else {
+                underruns = underruns.saturating_add(1);
+                playing = false;
+                filled_at = None;
+                gate.set_video(false);
                 note_status(
                     status_failed,
                     status.video(
                         VideoState::Running,
-                        running.detail(base, reconnects, skipped),
+                        running.detail(
+                            output.presentation_detail(false),
+                            options.playout_delay,
+                            Duration::ZERO,
+                            reconnects,
+                            skipped,
+                            underruns,
+                        ),
                         &described,
                     ),
                 );
             }
-            Present::UnsupportedFormat(detail) => {
-                note_status(
-                    status_failed,
-                    status.video(VideoState::UnsupportedFormat, &detail, &described),
-                );
-            }
-            Present::Failed(detail) => {
-                failure = Some(detail);
-                break;
-            }
+        }
+
+        if queue.is_empty() && Instant::now() >= stalled {
+            failure = Some(format!(
+                "No video frames for {} seconds on a connected socket.",
+                MEDIA_STALL.as_secs()
+            ));
+            break;
+        }
+        if queue.is_empty() && !playing && Instant::now() >= last_frame {
+            note_status(
+                status_failed,
+                status.video(
+                    VideoState::Retrying,
+                    "Waiting for video frames.",
+                    &described,
+                ),
+            );
         }
     }
 
@@ -332,16 +402,101 @@ fn session(
     failure.map_or(Ok(()), Err)
 }
 
-/// Reads until a video frame arrives or the slice expires.
-fn next_video_frame(channel: &mut Channel, deadline: Instant) -> Result<(), String> {
-    while !remaining(deadline).is_zero() {
-        match channel.receive(deadline) {
-            Ok(frame) if frame.header.frame_type == FrameType::Video => return Ok(()),
-            Ok(_) => {}
+/// Copies every complete video frame the socket will give without stalling the
+/// accept path, then waits until `wait_until` for the next one if a present is
+/// not already due.
+fn drain_video(
+    channel: &mut Channel,
+    queue: &mut Queue,
+    playing: bool,
+    wait_until: Instant,
+) -> Result<bool, String> {
+    let mut received = false;
+    loop {
+        match channel.receive(Instant::now() + DRAIN_SLICE) {
+            Ok(frame) => {
+                if frame.header.frame_type == FrameType::Video {
+                    queue.push(channel.take_frame(), playing);
+                    received = true;
+                }
+            }
+            Err(error) if error.kind() == ErrorKind::WouldBlock => break,
             Err(error) => return Err(error.to_string()),
         }
     }
-    Err("OMT media deadline expired".into())
+    if remaining(wait_until).is_zero() {
+        return Ok(received);
+    }
+    match channel.receive(wait_until) {
+        Ok(frame) => {
+            if frame.header.frame_type == FrameType::Video {
+                queue.push(channel.take_frame(), playing);
+                received = true;
+            }
+            loop {
+                match channel.receive(Instant::now() + DRAIN_SLICE) {
+                    Ok(frame) => {
+                        if frame.header.frame_type == FrameType::Video {
+                            queue.push(channel.take_frame(), playing);
+                            received = true;
+                        }
+                    }
+                    Err(error) if error.kind() == ErrorKind::WouldBlock => break,
+                    Err(error) => return Err(error.to_string()),
+                }
+            }
+            Ok(received)
+        }
+        Err(error) if error.kind() == ErrorKind::WouldBlock => Ok(received),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+fn drain_audio(
+    channel: &mut Channel,
+    queue: &mut Queue,
+    playing: bool,
+    wait_until: Instant,
+) -> Result<bool, String> {
+    let mut received = false;
+    loop {
+        match channel.receive(Instant::now() + DRAIN_SLICE) {
+            Ok(frame) => {
+                if frame.header.frame_type == FrameType::Audio {
+                    queue.push(channel.take_frame(), playing);
+                    received = true;
+                }
+            }
+            Err(error) if error.kind() == ErrorKind::WouldBlock => break,
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+    if remaining(wait_until).is_zero() {
+        return Ok(received);
+    }
+    match channel.receive(wait_until) {
+        Ok(frame) => {
+            if frame.header.frame_type == FrameType::Audio {
+                queue.push(channel.take_frame(), playing);
+                received = true;
+            }
+            loop {
+                match channel.receive(Instant::now() + DRAIN_SLICE) {
+                    Ok(frame) => {
+                        if frame.header.frame_type == FrameType::Audio {
+                            queue.push(channel.take_frame(), playing);
+                            received = true;
+                        }
+                    }
+                    Err(error) if error.kind() == ErrorKind::WouldBlock => break,
+                    Err(error) => return Err(error.to_string()),
+                }
+            }
+            Ok(received)
+        }
+        Err(error) if error.kind() == ErrorKind::WouldBlock => Ok(received),
+        Err(error) => Err(error.to_string()),
+    }
 }
 
 /// One in-session reconnect to the endpoint this session already resolved.
@@ -358,42 +513,85 @@ fn recover_video(channel: &mut Channel, endpoint: &Endpoint) -> Result<(), Strin
         .map_err(|error| error.to_string())
 }
 
-/// The running message, with this session's reconnect and skip counts.
+/// The running message, with this session's delay, buffer, and counts.
 ///
 /// The playback loop republishes the running state for every frame it displays,
-/// so this is rebuilt only when a count moves or the presenter's sentence
-/// changes: a healthy session formats one string for its whole life.
+/// so this is rebuilt only when a count moves, the delay or buffered seconds
+/// change, or the presenter's sentence changes: a healthy session formats one
+/// string until something it names moves.
 #[derive(Default)]
 struct RunningDetail {
+    delay_secs: u64,
+    buffered_secs: u64,
     reconnects: u64,
     skipped: u64,
+    underruns: u64,
     base: String,
     text: String,
 }
 
 impl RunningDetail {
-    fn detail(&mut self, base: &str, reconnects: u64, skipped: u64) -> &str {
-        if self.reconnects != reconnects || self.skipped != skipped || self.base != base {
+    fn detail(
+        &mut self,
+        base: &str,
+        delay: Duration,
+        buffered: Duration,
+        reconnects: u64,
+        skipped: u64,
+        underruns: u64,
+    ) -> &str {
+        let delay_secs = delay.as_secs();
+        let buffered_secs = buffered.as_secs();
+        if self.reconnects != reconnects
+            || self.skipped != skipped
+            || self.underruns != underruns
+            || self.delay_secs != delay_secs
+            || self.buffered_secs != buffered_secs
+            || self.base != base
+        {
             self.reconnects = reconnects;
             self.skipped = skipped;
+            self.underruns = underruns;
+            self.delay_secs = delay_secs;
+            self.buffered_secs = buffered_secs;
             base.clone_into(&mut self.base);
-            self.text = describe_running(base, reconnects, skipped);
+            self.text = describe_running(base, delay, buffered, reconnects, skipped, underruns);
         }
         &self.text
     }
 }
 
-fn describe_running(base: &str, reconnects: u64, skipped: u64) -> String {
-    match (reconnects, skipped) {
-        (0, 0) => base.to_owned(),
-        (reconnects, 0) => {
-            format!("{base} {reconnects} video reconnect(s) in this session.")
-        }
-        (0, skipped) => format!("{base} {skipped} skipped frame(s) in this session."),
-        (reconnects, skipped) => format!(
-            "{base} {reconnects} video reconnect(s) and {skipped} skipped frame(s) in this session."
-        ),
+fn describe_running(
+    base: &str,
+    delay: Duration,
+    buffered: Duration,
+    reconnects: u64,
+    skipped: u64,
+    underruns: u64,
+) -> String {
+    let mut text = if delay.is_zero() {
+        base.to_owned()
+    } else {
+        format!(
+            "{base} {}s playout delay (~{}s buffered).",
+            delay.as_secs(),
+            buffered.as_secs()
+        )
+    };
+    if reconnects > 0 && skipped > 0 {
+        let _ = write!(
+            text,
+            " {reconnects} video reconnect(s) and {skipped} skipped frame(s) in this session."
+        );
+    } else if reconnects > 0 {
+        let _ = write!(text, " {reconnects} video reconnect(s) in this session.");
+    } else if skipped > 0 {
+        let _ = write!(text, " {skipped} skipped frame(s) in this session.");
     }
+    if underruns > 0 {
+        let _ = write!(text, " {underruns} buffer underrun(s) in this session.");
+    }
+    text
 }
 
 struct AudioWorker {
@@ -407,9 +605,12 @@ impl AudioWorker {
         connector: &Connector,
         status: &Arc<PlaybackStatus>,
         stop: &Arc<AtomicBool>,
+        delay: Duration,
+        gate: Arc<FillGate>,
     ) -> Self {
         let active = Arc::new(AtomicBool::new(true));
         let described = connector.describe();
+        let gate = Arc::clone(&gate);
         let context = AudioContext {
             endpoint: endpoint.clone(),
             device: connector.alsa_device.clone(),
@@ -417,6 +618,8 @@ impl AudioWorker {
             status: Arc::clone(status),
             active: Arc::clone(&active),
             stop: Arc::clone(stop),
+            delay,
+            gate: Arc::clone(&gate),
             status_failed: AtomicBool::new(false),
         };
         let spawned = thread::Builder::new()
@@ -425,6 +628,7 @@ impl AudioWorker {
             .spawn(move || audio_loop(&context));
         let Ok(handle) = spawned else {
             active.store(false, Ordering::Relaxed);
+            gate.set_audio_missing();
             // Best-effort: the audio worker never started, so a failed publish
             // here is still the first diagnostic the operator can see.
             if let Err(error) = status.audio(
@@ -460,6 +664,8 @@ struct AudioContext {
     status: Arc<PlaybackStatus>,
     active: Arc<AtomicBool>,
     stop: Arc<AtomicBool>,
+    delay: Duration,
+    gate: Arc<FillGate>,
     status_failed: AtomicBool,
 }
 
@@ -508,35 +714,62 @@ fn audio_loop(context: &AudioContext) {
             Instant::now() + CONNECT_TIMEOUT,
         ) {
             Ok(()) => {
-                // The running message is rebuilt only when the underrun count
-                // moves, so a healthy session formats one string for its whole
-                // life rather than one per audio frame.
                 let mut detail = describe_audio(0);
                 let mut reported = 0_u64;
-                // The same bound the video session keeps, for the same reason.
-                // Audio is worse off without it: the worker publishes `Running`
-                // only when a frame arrives, so a socket that goes quiet
-                // without closing leaves the last `Running` document standing
-                // and the dashboard reports healthy audio over silence.
                 let mut stalled = Instant::now() + MEDIA_STALL;
+                let mut queue = Queue::audio(context.delay);
+                let mut playing = false;
+                let mut next_due = Instant::now();
+                let mut filled_at = None;
+                let mut frame_interval = None;
                 while context.wanted() {
-                    // The same slice the video loop reads on. An audio frame
-                    // is a fraction of a video frame's size, but a read that
-                    // stalls after its first byte cannot be resumed and ends
-                    // the session, and on a link busy carrying this session's
-                    // own video the smaller frame is no less likely to stall.
-                    // A fifth of the budget was not a smaller need, it was a
-                    // fivefold better chance of tearing audio down; the cost
-                    // of the longer wait is a recoverable ALSA underrun.
-                    let deadline = Instant::now() + RECEIVE_SLICE;
-                    match channel.receive(deadline) {
-                        Ok(frame) if frame.header.frame_type == FrameType::Audio => {
-                            stalled = Instant::now() + MEDIA_STALL;
-                            let frame = channel.frame();
-                            if let Err(error) = output.write(frame, &context.device) {
+                    let now = Instant::now();
+                    let present_due = playing && now >= next_due;
+                    let wait_until = if present_due {
+                        now
+                    } else if playing {
+                        next_due.min(now + RECEIVE_SLICE)
+                    } else {
+                        now + RECEIVE_SLICE
+                    };
+                    match drain_audio(&mut channel, &mut queue, playing, wait_until) {
+                        Ok(received) => {
+                            if received {
+                                stalled = Instant::now() + MEDIA_STALL;
+                            }
+                        }
+                        Err(error) => {
+                            if !channel.connected() {
                                 failure = error;
                                 break;
                             }
+                        }
+                    }
+                    if queue.filled() {
+                        context.gate.set_audio(true);
+                        let ready_since = filled_at.get_or_insert_with(Instant::now);
+                        let peer_ok = context.delay.is_zero() || context.gate.video_ready();
+                        let waited = Instant::now() >= *ready_since + PEER_WAIT;
+                        if !playing && (peer_ok || waited) {
+                            playing = true;
+                            next_due = Instant::now();
+                            if context.delay.is_zero() {
+                                queue.keep_latest_only();
+                            }
+                        }
+                    }
+                    if playing && Instant::now() >= next_due {
+                        if let Some(frame) = queue.pop() {
+                            if let Some(header) = frame.audio.as_ref() {
+                                frame_interval = jitter::audio_interval(header).or(frame_interval);
+                            }
+                            if let Err(error) = output.write(&frame, &context.device) {
+                                failure = error;
+                                break;
+                            }
+                            next_due = next_due
+                                .checked_add(frame_interval.unwrap_or(Duration::from_millis(20)))
+                                .unwrap_or(next_due);
                             let underruns = output.underruns();
                             if underruns != reported {
                                 reported = underruns;
@@ -547,25 +780,25 @@ fn audio_loop(context: &AudioContext) {
                                 &detail,
                                 &context.connector,
                             ));
+                        } else {
+                            playing = false;
+                            filled_at = None;
+                            context.gate.set_audio(false);
                         }
-                        Ok(_) => {}
-                        Err(error) => {
-                            if !channel.connected() {
-                                failure = error.to_string();
-                                break;
-                            }
-                            if Instant::now() >= stalled {
-                                failure = format!(
-                                    "no audio frames for {} seconds on a connected socket",
-                                    MEDIA_STALL.as_secs()
-                                );
-                                break;
-                            }
-                        }
+                    }
+                    if queue.is_empty() && Instant::now() >= stalled {
+                        failure = format!(
+                            "no audio frames for {} seconds on a connected socket",
+                            MEDIA_STALL.as_secs()
+                        );
+                        break;
                     }
                 }
             }
-            Err(error) => failure = error.to_string(),
+            Err(error) => {
+                context.gate.set_audio_missing();
+                failure = error.to_string();
+            }
         }
         drop(output);
         if !context.wanted() {
@@ -670,32 +903,74 @@ mod tests {
     fn zero_running_counts_read_as_the_presenter_wrote_them() {
         let mut cache = RunningDetail::default();
         let base = "Playing OMT video.";
-        assert_eq!(cache.detail(base, 0, 0), base);
-        assert_eq!(describe_running(base, 0, 0), base);
+        assert_eq!(
+            cache.detail(base, Duration::ZERO, Duration::ZERO, 0, 0, 0),
+            base
+        );
+        assert_eq!(
+            describe_running(base, Duration::ZERO, Duration::ZERO, 0, 0, 0),
+            base
+        );
     }
 
     #[test]
     fn running_detail_names_reconnects_and_skips() {
         let base = "Playing OMT video.";
         assert_eq!(
-            describe_running(base, 2, 0),
+            describe_running(base, Duration::ZERO, Duration::ZERO, 2, 0, 0),
             "Playing OMT video. 2 video reconnect(s) in this session."
         );
         assert_eq!(
-            describe_running(base, 0, 3),
+            describe_running(base, Duration::ZERO, Duration::ZERO, 0, 3, 0),
             "Playing OMT video. 3 skipped frame(s) in this session."
         );
         assert_eq!(
-            describe_running(base, 2, 3),
+            describe_running(base, Duration::ZERO, Duration::ZERO, 2, 3, 0),
             "Playing OMT video. 2 video reconnect(s) and 3 skipped frame(s) in this session."
         );
         let scaled = "Playing OMT video. Scaled from 1920x1080 to the display's 1280x720 mode.";
         assert_eq!(
-            describe_running(scaled, 1, 0),
+            describe_running(scaled, Duration::ZERO, Duration::ZERO, 1, 0, 0),
             "Playing OMT video. Scaled from 1920x1080 to the display's 1280x720 mode. 1 video reconnect(s) in this session."
         );
-        assert!(describe_running(base, u64::MAX, 0).contains(&u64::MAX.to_string()));
+        assert!(
+            describe_running(base, Duration::ZERO, Duration::ZERO, u64::MAX, 0, 0)
+                .contains(&u64::MAX.to_string())
+        );
         assert_eq!(u64::MAX.saturating_add(1), u64::MAX);
+    }
+
+    #[test]
+    fn running_detail_names_delay_and_buffer_underruns() {
+        let base = "Playing OMT video.";
+        assert_eq!(
+            describe_running(
+                base,
+                Duration::from_secs(4),
+                Duration::from_secs(4),
+                0,
+                0,
+                0
+            ),
+            "Playing OMT video. 4s playout delay (~4s buffered)."
+        );
+        let with_underrun = describe_running(
+            base,
+            Duration::from_secs(4),
+            Duration::from_secs(1),
+            0,
+            0,
+            2,
+        );
+        assert!(
+            with_underrun.contains("4s playout delay"),
+            "{with_underrun}"
+        );
+        assert!(
+            with_underrun.contains("2 buffer underrun(s)"),
+            "{with_underrun}"
+        );
+        assert!(!with_underrun.contains("skipped frame"), "{with_underrun}");
     }
 
     /// The loop republishes this for every displayed frame, so an unchanged
@@ -704,17 +979,24 @@ mod tests {
     fn the_running_detail_is_reused_until_something_it_names_changes() {
         let mut cache = RunningDetail::default();
         let base = "Playing OMT video.";
-        let ptr = cache.detail(base, 2, 3).as_ptr();
-        assert_eq!(cache.detail(base, 2, 3).as_ptr(), ptr);
+        let ptr = cache
+            .detail(base, Duration::ZERO, Duration::ZERO, 2, 3, 0)
+            .as_ptr();
+        assert_eq!(
+            cache
+                .detail(base, Duration::ZERO, Duration::ZERO, 2, 3, 0)
+                .as_ptr(),
+            ptr
+        );
 
-        let rebuilt = cache.detail(base, 2, 4);
+        let rebuilt = cache.detail(base, Duration::ZERO, Duration::ZERO, 2, 4, 0);
         assert_ne!(rebuilt.as_ptr(), ptr);
         assert!(rebuilt.contains("4 skipped frame(s)"), "{rebuilt}");
 
         // A mid-session format change moves the presenter's own sentence, and
         // the interlaced and progressive sentences are never the same string.
         let interlaced = "Playing interlaced input progressively without deinterlacing.";
-        let switched = cache.detail(interlaced, 2, 4);
+        let switched = cache.detail(interlaced, Duration::ZERO, Duration::ZERO, 2, 4, 0);
         assert!(switched.starts_with(interlaced), "{switched}");
         assert!(switched.contains("4 skipped frame(s)"), "{switched}");
     }

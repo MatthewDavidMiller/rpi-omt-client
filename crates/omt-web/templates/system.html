@@ -40,6 +40,37 @@
         <button type="submit" class="button">Save video limit</button>
     </form>
 </section>
+<section class="card" aria-labelledby="playout-delay-heading">
+    <h2 id="playout-delay-heading">Playout delay</h2>
+    <p>Video and audio wait in a compressed queue before HDMI so a Wi-Fi stall
+       can play through from frames already received. The picture is this many
+       seconds behind the sender. The default is
+       <strong>{{ playout_delay.default_seconds }} seconds</strong>.</p>
+    {% if playout_delay.error %}
+    <p class="notice notice-warning" role="status">Saved playout delay is invalid: {{ playout_delay.error }}</p>
+    {% endif %}
+    {% if playout_delay.overridden %}
+    <p class="notice" role="status">
+        Overrides the default of {{ playout_delay.default_seconds }} seconds.
+        Current delay is {{ playout_delay.seconds }} second(s).
+    </p>
+    {% endif %}
+    <form method="POST" action="/system/playout-delay">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <div class="field">
+            <label for="playout_delay">Delay (seconds)</label>
+            <input id="playout_delay" name="playout_delay"
+                   type="number" min="0" max="8" step="1"
+                   aria-describedby="playout_delay_help"
+                   placeholder="{{ playout_delay.default_seconds }}"
+                   value="{{ playout_delay.seconds if playout_delay.overridden else '' }}">
+            <p class="field-help" id="playout_delay_help">Whole seconds from 0 to 8.
+               Keep 4 on Wi-Fi. Wired operators may use 0 or 1. Leave empty to
+               restore the default of {{ playout_delay.default_seconds }}.</p>
+        </div>
+        <button type="submit" class="button">Save playout delay</button>
+    </form>
+</section>
 <section class="card danger-zone" aria-labelledby="reboot-heading">
     <p class="eyebrow">Danger zone</p>
     <h2 id="reboot-heading">Reboot operating system</h2>

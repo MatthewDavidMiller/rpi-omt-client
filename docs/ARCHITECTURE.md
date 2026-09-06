@@ -74,8 +74,9 @@ disqualifies that card and the search continues to the next, because several
 cards can expose the same connector name and the attached display may be behind
 any of them.
 
-The runtime is capped at 128 MiB and 64 processes on every board. At 1080p it
-uses three DRM scanout buffers, bounded network frames, and a persistent pool of
+The runtime is capped at 512 MiB and 64 processes on every board. At 1080p it
+uses three DRM scanout buffers, a compressed playout queue of up to 256 MiB,
+bounded network frames, and a persistent pool of
 VMX workers with 128 KiB stacks (created once per decoder, not per frame).
 Each worker owns one slice of YUV scratch rather than every slice of the frame,
 and bitstream readers grow to the loaded payload instead of memset-ing the
@@ -141,7 +142,7 @@ The resample is nearest-neighbour with pixel-centre sampling, and it is the
 filter the budget allows: the Pi 4 tier already spends 26.4 ms of its 33.3 ms
 interval decoding a 1080p frame, so a bilinear pass over the destination would
 not fit. It costs one intermediate frame of ordinary memory, at most 8 MiB
-against the 128 MiB container, and only for a session that needs it.
+against the 512 MiB container, and only for a session that needs it.
 When enlargement maps adjacent destination rows to the same source row, the
 scaler copies the already resampled pixels. It preserves padding and black bars
 and needs no additional buffer. Geometry and destination extent checks reject
@@ -194,8 +195,24 @@ cannot be resumed, the channel closed, the session ended, and video, audio, and
 the DRM output all restarted behind the retry backoff. Nothing had stalled. The
 budget was being measured from the wrong instant, and the appliance reported it
 as `OMT frame was truncated by a timeout` several times a minute on 2.4 GHz.
-The first byte consumed now switches the read onto its own frame budget, which
-still ends a sender that genuinely stops talking mid-frame.
+The first byte consumed now switches the read onto its own frame budget of six
+seconds, which still ends a sender that genuinely stops talking mid-frame and
+covers the 3.5 s Wi-Fi stalls measured against vMix. `control-omt.sh` waits
+eight seconds after SIGTERM so that budget cannot outlive a shutdown.
+
+TCP reads stay greedy: OMT requires the receiver never block when accepting
+data. Delay lives only in a compressed playout queue (`crates/omt-receiver/src/jitter.rs`),
+default four seconds, operator-configurable from 0 to 8 on the System page.
+Zero is the official `omtplayer` profile (present as soon as a frame arrives).
+Four seconds is the Wi-Fi default: HDMI and ALSA start after both queues hold
+that depth, then pace at the announced frame and sample rates. The queue stores
+VMX and FPA1, not decoded frames, and is capped at 256 MiB of video payload and
+the configured delay plus 0.5 s. vMix drops in-flight extras when its send pool
+fills, so after a stall the Pi plays through frames already queued and then
+jumps to live — a pre-roll cushion, not a catch-up reel. If the stall lasts
+longer than the remaining buffer the last DRM frame is held, a buffer underrun
+is counted, and the TCP session stays up while the queue refills. Kernel
+`SO_RCVBUF` is 8 MiB, matching libomtnet `NETWORK_RECEIVE_BUFFER`.
 
 A closed video socket no longer tears down HDMI and audio with it. The play
 loop publishes `retrying`, then reconnects to the endpoint this session already

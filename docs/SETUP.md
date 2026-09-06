@@ -395,7 +395,7 @@ The installer then:
    nftables, inotify, `wpa_supplicant`, and zram support;
 2. applies kernel/network sysctls, SSH forwarding/session safeguards, bounded
    Docker logs, daemon no-new-privileges, BPF JIT constant blinding, zram swap,
-   a 128 MiB container cap, a 64-PID cap, and bounded file descriptors, shared
+   a 512 MiB container cap, a 64-PID cap, and bounded file descriptors, shared
    memory, and tmpfs mounts. SSH logins are limited to `root` (keys only) and
    members of the administrative `wheel` group. IPv4 reverse-path filtering is
    pinned, IPv6 router advertisements and SLAAC are refused, apk repositories are

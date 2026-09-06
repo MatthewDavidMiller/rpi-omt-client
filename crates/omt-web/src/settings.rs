@@ -52,6 +52,7 @@ pub struct Settings {
     pub source_cache_ttl: Duration,
     pub source_target_file: PathBuf,
     pub video_ceiling_file: PathBuf,
+    pub playout_delay_file: PathBuf,
     pub board_label: String,
     pub board_video_ceiling: String,
     pub playback_status_file: PathBuf,
@@ -182,7 +183,7 @@ impl Settings {
                 "OMT_RECEIVER_COMMAND",
                 PathBuf::from("/usr/local/bin/omt-receiver"),
             ),
-            control_timeout: seconds("OMT_CONTROL_TIMEOUT_SECONDS", 8.0, false)?,
+            control_timeout: seconds("OMT_CONTROL_TIMEOUT_SECONDS", 15.0, false)?,
             source_cache_ttl: seconds("OMT_SOURCE_CACHE_TTL_SECONDS", 5.0, true)?,
             source_target_file: path(
                 "OMT_SOURCE_TARGET_FILE",
@@ -191,6 +192,10 @@ impl Settings {
             video_ceiling_file: path(
                 "OMT_VIDEO_CEILING_FILE",
                 config_dir.join("video_ceiling.json"),
+            ),
+            playout_delay_file: path(
+                "OMT_PLAYOUT_DELAY_FILE",
+                config_dir.join("playout_delay.json"),
             ),
             board_label: value("OMT_BOARD_LABEL", "Raspberry Pi"),
             board_video_ceiling: value("OMT_VIDEO_CEILING", "1920x1080@60"),

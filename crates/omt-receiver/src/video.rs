@@ -97,7 +97,7 @@ struct Surface {
 /// selected mode is not the video's size, with the frame it decodes into.
 ///
 /// The intermediate costs one full frame of ordinary memory -- 8 MiB at the
-/// 1920x1080 maximum, against the appliance's 128 MiB container -- and it is
+/// 1920x1080 maximum, against the appliance's 512 MiB container -- and it is
 /// only allocated for a session that actually needs scaling. It also puts the
 /// decoder's writes back on cached memory; only the resample's output crosses
 /// into the write-combined scanout mapping.

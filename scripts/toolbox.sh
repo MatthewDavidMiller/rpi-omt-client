@@ -174,6 +174,18 @@ main() {
         -w "${PROJECT_ROOT}"
         -e HOME=/cargo
     )
+
+    # The same CPU budget the image builds take, for the compiling and linting
+    # the gate does in here. This caps only this container: the image builds a
+    # gate starts are handed to the host engine through the socket below and
+    # land outside this cgroup, which is why they carry the limit themselves.
+    local -a cpu_args=()
+    mapfile -t cpu_args < <(container_engine_cpu_limit_args)
+    engine_args+=("${cpu_args[@]}")
+
+    # Forwarded so a nested gate inherits the budget rather than recomputing it
+    # from the container's view of the host's cores.
+    engine_args+=(-e "OMT_BUILD_CPUS=$(container_engine_cpus)")
     # CONTAINER_ENGINE is deliberately not forwarded. scripts/docker-test-env.sh
     # treats it as an explicit request that overrides detection, and
     # tests/unit/test_container_engine.sh proves that detection by building

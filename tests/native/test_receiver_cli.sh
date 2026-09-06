@@ -72,6 +72,8 @@ expect_status 2 "play with a retry below its range" \
     "${receiver}" play --target Camera --retry-seconds 0 --status-file /tmp/omt-cli-test.json
 expect_status 2 "play with a retry above its range" \
     "${receiver}" play --target Camera --retry-seconds 31 --status-file /tmp/omt-cli-test.json
+expect_status 2 "play with a playout delay above its range" \
+    "${receiver}" play --target Camera --status-file /tmp/omt-cli-test.json --playout-delay 9
 expect_status 2 "play with a diagnostics-only option" \
     "${receiver}" play --target Camera --status-file /tmp/omt-cli-test.json --json
 

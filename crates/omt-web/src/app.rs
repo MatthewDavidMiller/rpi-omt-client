@@ -181,6 +181,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/diagnostics/download", post(diagnostics_download))
         .route("/system", get(system_get))
         .route("/system/video-limit", post(video_limit))
+        .route("/system/playout-delay", post(playout_delay))
         .route("/system/reboot", get(reboot_get).post(reboot_post))
         .route("/about", get(about))
         .route("/static/style.css", get(style))
@@ -696,6 +697,10 @@ async fn system_get(State(state): State<Arc<AppState>>, headers: HeaderMap) -> R
         "video_limit".to_owned(),
         json!(state.playback.video_limit()),
     );
+    context.insert(
+        "playout_delay".to_owned(),
+        json!(state.playback.playout_delay()),
+    );
     state.render(
         "system.html",
         context,
@@ -714,6 +719,19 @@ async fn video_limit(
         state
             .playback
             .save_video_limit(values.get("video_limit").map_or("", String::as_str)),
+    )
+}
+async fn playout_delay(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    let (_, values) = authenticated_post!(state, headers, body);
+    state.flash_redirect(
+        "/system",
+        state
+            .playback
+            .save_playout_delay(values.get("playout_delay").map_or("", String::as_str)),
     )
 }
 async fn reboot_get(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
@@ -919,6 +937,7 @@ mod tests {
             source_cache_ttl: Duration::ZERO,
             source_target_file: root.join("source_target.json"),
             video_ceiling_file: root.join("video_ceiling.json"),
+            playout_delay_file: root.join("playout_delay.json"),
             board_label: "Test Pi".to_owned(),
             board_video_ceiling: "1920x1080@60".to_owned(),
             playback_status_file: root.join("run/playback-status.json"),

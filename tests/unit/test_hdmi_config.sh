@@ -154,7 +154,7 @@ expect_equal "repeated runs of the same forced mode do not duplicate it" \
 
 # The Raspberry Pi firmware injects cgroup_disable=memory on every boot, which
 # removes the memory controller from /proc/cgroups and silently turns the
-# appliance's advertised 128 MiB container cap into no cap at all.
+# appliance's advertised 512 MiB container cap into no cap at all.
 expect_equal "the firmware's cgroup_disable=memory is replaced, not argued with" \
     "root=/dev/mmcblk0p2 quiet cgroup_enable=memory" \
     "$(host_cmdline_memory_cgroup "root=/dev/mmcblk0p2 cgroup_disable=memory quiet")"

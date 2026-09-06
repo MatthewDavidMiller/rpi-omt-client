@@ -65,6 +65,16 @@ change restarts playback. Raising the limit past the board default is allowed
 and is flagged on the page: a board that cannot decode the format drops frames
 instead of refusing it, which on the dashboard looks like a network fault.
 
+## Playout delay
+
+`/system` also shows the playout delay. Video and audio wait in a compressed
+queue before HDMI so a multi-second Wi-Fi stall can play through from frames
+already received. The picture is that many seconds behind vMix, by design.
+POST `/system/playout-delay` with a whole number of seconds from 0 to 8, or an
+empty value to restore the default of 4; the change restarts playback. Keep 4
+on Wi-Fi. Wired operators may set 0 or 1. Zero is the low-latency profile:
+present as soon as a frame arrives, matching official `omtplayer`.
+
 ## Reboot OS
 
 Open `/system`, choose Reboot OS, review `/system/reboot`, and press Confirm
@@ -184,8 +194,10 @@ receiver.
 - Video without audio: inspect ALSA devices and ELD; video remains degraded.
 - Video is choppy and keeps dropping out, with the dashboard cycling through
   `retrying`: read the detail. `OMT frame was truncated by a timeout` means a
-  frame started arriving and did not finish inside the receiver's budget, which
-  on this appliance almost always means the link cannot carry the stream. The
+  frame started arriving and did not finish inside six seconds, which on this
+  appliance is a stall **beyond** the 3.5 s Wi-Fi blips the playout queue is
+  sized for. A 3.5 s stall should play through from the 4 s default buffer
+  with no session rebuild. The
   receiver first reconnects the video TCP session only, up to three times: the
   last picture stays on screen and audio keeps playing throughout, for about
   eight tenths of a second against a sender whose port is shut, and under four
@@ -202,6 +214,12 @@ receiver.
   the phy reports no channels above 5 GHz, or `regulatory.db absent`, the radio
   is in the world domain rather than genuinely single-band — see the regulatory
   entry below.
+- The picture is a few seconds behind the sender, and the running detail names
+  a playout delay: that is the configured queue, default 4 s for Wi-Fi. Wired
+  operators set 0 or 1 on System. Buffer underruns in that detail mean the
+  stall lasted longer than the remaining queue; the last picture was held and
+  the TCP session stayed up. Those are not ALSA underruns (gaps in the sound)
+  and not skipped frames (VMX decoder rejections).
 - The picture freezes for a moment while audio keeps playing, and the playing
   detail names skipped frames: those are VMX bodies the decoder rejected, not
   packet loss — TCP does not deliver flipped codec bytes, so the frame arrived

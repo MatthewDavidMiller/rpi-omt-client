@@ -20,7 +20,7 @@
 | `OMT_LOGIN_RATE_LIMIT` | `5 per minute` |
 | `OMT_RECEIVER_COMMAND` | `/usr/local/bin/omt-receiver` |
 | `OMT_CONTROL_COMMAND` | `/usr/local/bin/control-omt.sh` |
-| `OMT_CONTROL_TIMEOUT_SECONDS` | `8` |
+| `OMT_CONTROL_TIMEOUT_SECONDS` | `15` |
 | `OMT_SOURCE_CACHE_TTL_SECONDS` | `5` |
 | `OMT_SOURCE_TARGET_FILE` | `$OMT_CONFIG_DIR/source_target.json` |
 | `OMT_PLAYBACK_STATUS_FILE` | `$OMT_RUNTIME_DIR/playback-status.json` |
@@ -29,6 +29,7 @@
 | `OMT_BOARD_LABEL` | Detected board, written by the installer; defaults to `Raspberry Pi` |
 | `OMT_VIDEO_CEILING` | The board's decode ceiling, written by the installer; defaults to `1920x1080@60` |
 | `OMT_VIDEO_CEILING_FILE` | `$OMT_CONFIG_DIR/video_ceiling.json`, the operator's override of `OMT_VIDEO_CEILING` |
+| `OMT_PLAYOUT_DELAY_FILE` | `$OMT_CONFIG_DIR/playout_delay.json`, the operator's override of the 4 second Wi-Fi playout delay |
 | `OMT_DIAGNOSTICS_HOST_REPORT_FILE` | `/host-diagnostics/host-report.txt` |
 | `OMT_DIAGNOSTICS_HOST_REQUEST_FILE` | `/host-diagnostics/request` |
 | `OMT_DIAGNOSTICS_HOST_PCAP_FILE` | `/host-diagnostics/host-network.pcap` |
@@ -67,6 +68,8 @@ startup instead of silently enabling the diagnostics receive probe.
 | `web_password` | Mode 0600 PBKDF2-SHA256 password hash. The deployer can rotate it atomically from a 12-128 byte password and restarts the service, invalidating existing sessions. Rotation is off by default; the desktop Deploy view has an explicit enable option. Legacy Werkzeug PBKDF2 and scrypt hashes remain accepted. |
 | `web_sessions.json` | Schema 2 bounded HMAC-digested session registry |
 | `source_target.json` | Schema 1; either `{"kind":"discovered","name":...}` or `{"kind":"direct","uri":"omt://..."}` |
+| `video_ceiling.json` | Schema 1 operator override of the board decode ceiling |
+| `playout_delay.json` | Schema 1 operator override of the playout delay in whole seconds (0–8); absent restores 4 |
 | `omt/settings.xml` | `<Settings>` with at most one `<DiscoveryServer>` |
 | `ssl/key.pem`, `ssl/cert.pem` | Entrypoint-managed HTTPS key/certificate |
 | `receiver.log` | Appended receiver stdout/stderr; kept here so it outlives a restart |

@@ -217,3 +217,32 @@ def test_pcap_memory_ceiling_agrees_between_host_and_web():
     assert web is not None, "diagnostics.rs no longer pins PCAP_MAX_BYTES"
     assert int(host.group(1)) == int(web.group(1)) * 1024 * 1024
     assert int(host.group(1)) == 8 * 1024 * 1024
+
+
+def test_body_budget_is_shorter_than_sigterm_grace():
+    """A mid-frame read must finish inside SIGTERM's wait, or SIGKILL tears
+    the receiver down while it still holds /dev/dri."""
+    channel = (REPO_ROOT / "crates" / "omt-receiver" / "src" / "channel.rs").read_text(
+        encoding="utf-8"
+    )
+    control = (REPO_ROOT / "deploy" / "container" / "control-omt.sh").read_text(encoding="utf-8")
+    budget = re.search(
+        r"const BODY_BUDGET: Duration = Duration::from_secs\((\d+)\)",
+        channel,
+    )
+    term = re.search(
+        r'kill "\$\{pid\}".*?for attempt in \$\(seq 1 (\d+)\); do',
+        control,
+        re.DOTALL,
+    )
+    assert budget is not None, "channel.rs no longer pins BODY_BUDGET"
+    assert term is not None, "control-omt.sh no longer waits after SIGTERM"
+    grace_seconds = int(term.group(1)) / 10
+    assert int(budget.group(1)) < grace_seconds
+    assert int(budget.group(1)) >= 6
+    timeout = re.search(
+        r'seconds\("OMT_CONTROL_TIMEOUT_SECONDS", ([0-9.]+), false\)',
+        WEB_SETTINGS.read_text(encoding="utf-8"),
+    )
+    assert timeout is not None, "settings.rs no longer pins the control timeout"
+    assert float(timeout.group(1)) > grace_seconds

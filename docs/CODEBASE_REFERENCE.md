@@ -12,6 +12,7 @@
 | Direct KMS scanout and mode selection | `crates/omt-receiver/src/video.rs` |
 | Aspect-preserving resample into a mode that is not the video's size | `crates/omt-receiver/src/scale.rs` |
 | HDMI audio through ALSA | `crates/omt-receiver/src/audio.rs` |
+| Compressed A/V playout queue | `crates/omt-receiver/src/jitter.rs` |
 | Playback supervisor, retry, and audio worker | `crates/omt-receiver/src/play.rs` |
 | OMT wire transport and validation | `crates/omt-protocol/src/lib.rs` |
 | Status projection and atomic publication | `crates/omt-receiver-core/src/lib.rs` |
@@ -30,7 +31,7 @@
 | Source discovery, playback, and status projection | `crates/omt-web/src/playback.rs` |
 | Diagnostics, support archives, PCAP validation, and host actions | `crates/omt-web/src/diagnostics.rs` |
 | Safe bounded/atomic I/O | `crates/omt-web/src/io.rs` |
-| Persistent source and video-limit state | `crates/omt-web/src/state.rs` |
+| Persistent source, video-limit, and playout-delay state | `crates/omt-web/src/state.rs` |
 | OMT discovery-server XML | `crates/omt-web/src/network.rs` |
 | Validated runtime configuration | `crates/omt-web/src/settings.rs` |
 | Bounded subprocess execution | `crates/omt-web/src/command.rs` |
@@ -84,7 +85,7 @@ Public routes are `/login`, `/logout`, `/`, `/sources/select`,
 `/sources/refresh`, `/playback/restart`, `/playback/clear`,
 `/settings/network`, `/settings/direct-source`, `/diagnostics`,
 `/diagnostics/discovery`, `/diagnostics/runtime`, `/diagnostics/direct`,
-`/diagnostics/download`, `/system`, `/system/video-limit`, `/system/reboot`, and `/about`.
+`/diagnostics/download`, `/system`, `/system/video-limit`, `/system/playout-delay`, `/system/reboot`, and `/about`.
 All routes other than login require a current persistent session. Mutations
 are POST and CSRF protected.
 

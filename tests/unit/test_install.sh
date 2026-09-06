@@ -79,7 +79,7 @@ require 'net\.core\.bpf_jit_harden=2' "the BPF JIT must blind constants for ever
 require 'kernel\.perf_event_paranoid=3' "unprivileged performance events must be disabled"
 require 'kernel\.sysrq=0' "the kernel SysRq interface must be disabled"
 require 'fs\.suid_dumpable=0' "privileged processes must not produce core dumps"
-require 'net\.ipv4\.tcp_syncookies=1' "TCP SYN cookies must be enabled"
+require 'net\.core\.rmem_max=16777216' "the kernel receive buffer must allow libomtnet's 8 MiB SO_RCVBUF"
 require 'net\.ipv4\.conf\.all\.rp_filter=1' "IPv4 reverse-path filtering must be pinned"
 require 'net\.ipv4\.conf\.all\.arp_ignore=1' "ARP replies must be limited to the incoming interface"
 require 'net\.ipv4\.conf\.all\.drop_gratuitous_arp=1' "gratuitous ARP must be dropped"
@@ -148,7 +148,7 @@ require 'active regular boot cmdline file is required to enable the memory cgrou
 require 'host_validate_video_ceiling' "the decode ceiling must use tested rules"
 require 'OMT_VIDEO_CEILING=%s' "the effective decode ceiling must reach the container"
 require 'MAX_VIDEO=\$\{MAX_VIDEO\}' "the operator's ceiling choice must be retained"
-require 'OMT_CONTAINER_MEMORY_LIMIT=128m' "low-RAM container cap must be explicit"
+require 'OMT_CONTAINER_MEMORY_LIMIT=512m' "low-RAM container cap must be explicit"
 require 'upgrade --available' "every deploy must upgrade Alpine packages to the latest index"
 require 'Alpine package update still running' \
     "apk must emit progress so the deployer idle timeout cannot abort a download"

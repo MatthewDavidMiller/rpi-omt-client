@@ -312,7 +312,7 @@ decode throughput, so a pass on one is not evidence for another:
    mirrors must verify.
    Confirm the memory cgroup is live after the reboot (`grep -qw memory
    /sys/fs/cgroup/cgroup.controllers` on the shipped cgroup-v2 host, then check
-   that the container's `memory.max` is `134217728`): the Pi firmware injects
+   that the container's `memory.max` is `536870912`): the Pi firmware injects
    `cgroup_disable=memory`, and without the installer's
    `cgroup_enable=memory` the advertised container memory cap is silently not
    enforced. `/proc/cgroups` is only the fallback check for a cgroup-v1 host;
@@ -328,7 +328,7 @@ decode throughput, so a pass on one is not evidence for another:
    fallback: the unit suite drives it against a fake sysfs tree, but selecting
    the second physical connector after the first card's attributes fail to read
    is not reproducible off the board;
-4. verify zram, the 128 MiB memory limit, 64 PID limit, bounded Docker logs,
+4. verify zram, the 512 MiB memory limit, 64 PID limit, bounded Docker logs,
    and stable operation under memory pressure;
 5. verify discovery/direct playback, support bundle correlation/PCAP opt-in,
    Wi-Fi mutation, and a Web-acknowledged reboot;
@@ -385,11 +385,21 @@ decode throughput, so a pass on one is not evidence for another:
      returns `WouldBlock`, and the reconnect budget is never armed, because it
      is armed only by a channel that reports itself disconnected. This is the
      shape a firewall, a NAT timeout, or an access point that forgets the
-     association produces. The detail must read `Waiting for video frames.`
-     while audio keeps playing, and then, within `MEDIA_STALL`, the session
-     must fail with `No video frames for 15 seconds on a connected socket.`
+     association produces — and the same shape as a 3.5 s Wi-Fi HOL stall
+     against vMix. With the default 4 s playout delay, induce ~3.5 s of delay
+     on the video port (or equivalent Wi-Fi latency) and confirm: picture and
+     sound continue from the queue, no `OMT frame was truncated by a timeout`,
+     no session rebuild, and the dashboard names ~4 s of buffer. The picture
+     is 4 s behind the sender by design. A stall longer than the remaining
+     buffer holds the last DRM frame, counts a buffer underrun, and keeps TCP
+     up while the queue refills; vMix will have dropped in-flight extras, so
+     the next frames are live rather than a catch-up burst. Only after the
+     queue is empty and the socket stays quiet for `MEDIA_STALL` must the
+     session fail with `No video frames for 15 seconds on a connected socket.`
      and rebuild. A session that sits in `Waiting for video frames.`
-     indefinitely is the regression this step exists to catch;
+     indefinitely is the regression this step exists to catch. Jitter-buffer
+     checks must use a shape the board can decode: Pi 4 is 1080p30 or 720p60,
+     and 1080p60 must still report `unsupported-format`;
 10. confirm a held frame on damaged input. Nothing off the board proves that a
     skipped frame leaves the previous picture scanning out: the unit tests
     cover only which decoder faults are allowed to skip and how long a run is

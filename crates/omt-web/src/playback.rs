@@ -81,6 +81,14 @@ pub struct VideoLimit {
     pub above_board_default: bool,
 }
 
+#[derive(Clone, Debug, Serialize)]
+pub struct PlayoutDelay {
+    pub seconds: u64,
+    pub default_seconds: u64,
+    pub overridden: bool,
+    pub error: String,
+}
+
 #[derive(Deserialize)]
 struct DiscoveryEntry {
     name: String,
@@ -322,6 +330,59 @@ impl Playback {
                 "Video limit set to {}",
                 state::describe_video_ceiling(requested)
             )
+        };
+        let restarted = self.control("restart");
+        if restarted.returncode == Some(0) {
+            ActionResult::success(format!("{label} and playback restarted."))
+        } else {
+            ActionResult::failure(format!(
+                "{label}, but playback could not be restarted. {}",
+                restarted.failure_detail()
+            ))
+        }
+    }
+
+    pub fn playout_delay(&self) -> PlayoutDelay {
+        match state::effective_playout_delay(&self.settings.playout_delay_file, "4") {
+            Ok(seconds) => PlayoutDelay {
+                overridden: seconds != state::DEFAULT_PLAYOUT_DELAY_SECS,
+                seconds,
+                default_seconds: state::DEFAULT_PLAYOUT_DELAY_SECS,
+                error: String::new(),
+            },
+            Err(error) => PlayoutDelay {
+                seconds: state::DEFAULT_PLAYOUT_DELAY_SECS,
+                default_seconds: state::DEFAULT_PLAYOUT_DELAY_SECS,
+                overridden: false,
+                error,
+            },
+        }
+    }
+
+    pub fn save_playout_delay(&self, value: &str) -> ActionResult {
+        let requested = value.trim();
+        let parsed = match state::parse_playout_delay(requested) {
+            Ok(seconds) => seconds,
+            Err(error) => return ActionResult::failure(error),
+        };
+        let persist = if requested.is_empty()
+            || requested.eq_ignore_ascii_case("auto")
+            || parsed == state::DEFAULT_PLAYOUT_DELAY_SECS
+        {
+            None
+        } else {
+            Some(parsed)
+        };
+        if let Err(error) = state::save_playout_delay(&self.settings.playout_delay_file, persist) {
+            return ActionResult::failure(error);
+        }
+        let label = if persist.is_none() {
+            format!(
+                "Playout delay restored to {} seconds",
+                state::DEFAULT_PLAYOUT_DELAY_SECS
+            )
+        } else {
+            format!("Playout delay set to {parsed} second(s)")
         };
         let restarted = self.control("restart");
         if restarted.returncode == Some(0) {

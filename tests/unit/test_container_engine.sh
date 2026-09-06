@@ -20,6 +20,13 @@ fail() { echo -e "${RED}FAIL${NC}: $1"; FAIL=$((FAIL + 1)); }
 TEST_TMPDIR="$(mktemp -d)"
 trap 'rm -rf "${TEST_TMPDIR}"' EXIT
 
+# Lift the CPU budget for the cases that assert on an engine command line.
+# Left at its default the flags are derived from this host's core count, so the
+# expected argv would differ between an 8-core workstation and a 2-core CI box
+# and the cases would be asserting on the machine rather than on the helper.
+# The budget has cases of its own at the end of this file.
+export OMT_BUILD_CPUS=0
+
 # A fake engine reports whatever FAKE_<NAME>_VERSION says, so a case can build
 # the client the real world ships: podman-docker's /usr/bin/docker, which is
 # named for Docker and answers as Podman. Left unset it prints nothing, which
@@ -333,6 +340,70 @@ if (
     pass "Unsupported explicit container engines fail closed"
 else
     fail "Unsupported explicit container engines should fail closed"
+fi
+
+# An emulated ARM64 build takes every core it is offered, and a workstation with
+# no cores left over stops meeting its own deadlines -- an editor whose renderer
+# misses a watchdog ping has that renderer killed. The budget is what keeps the
+# machine usable through a commit, so it has to reach the engine.
+case_dir="${TEST_TMPDIR}/cpu-budget"
+make_fake_engine "${case_dir}/bin" podman
+if (
+    export ENGINE_TEST_LOG="${case_dir}/calls"
+    export CONTAINER_ENGINE="${case_dir}/bin/podman"
+    unset CONTAINER_ENGINE_KIND CONTAINER_ENGINE_ANNOUNCED OMT_ENGINE_SERVER_KIND
+    export OMT_BUILD_CPUS=6
+    # shellcheck disable=SC1090
+    source "${HELPER}"
+    ensure_test_container_engine
+    container_engine_build -t test-image .
+    # 100000us of quota per 100000us period buys one whole CPU, so six cores is
+    # 600000 -- the pair, not --cpus, because `build` has no such flag and the
+    # cpuset controller is not delegated to rootless users.
+    [[ "$(engine_calls_without_probes "${case_dir}/calls" | sed -n '2p')" == \
+       "podman:build --format docker --cpu-period 100000 --cpu-quota 600000 -t test-image ." ]]
+); then
+    pass "A configured CPU budget reaches the engine as a CFS quota"
+else
+    fail "A configured CPU budget should reach the engine as a CFS quota"
+fi
+
+# A machine with fewer cores than the reserve would otherwise compute a cap of
+# zero or below, which reads as "no limit" in one direction and stalls the build
+# outright in the other.
+if (
+    unset OMT_BUILD_CPUS
+    # shellcheck disable=SC1090
+    source "${HELPER}"
+    nproc() { echo 2; }
+    export -f nproc
+    [[ "$(container_engine_cpus)" == "1" ]]
+); then
+    pass "The derived budget never falls below one CPU"
+else
+    fail "The derived budget should never fall below one CPU"
+fi
+
+# Explicitly lifting the cap has to produce no flags at all, rather than a
+# quota of zero -- which the CFS reads as "no CPU time" and would hang the gate.
+case_dir="${TEST_TMPDIR}/cpu-budget-off"
+make_fake_engine "${case_dir}/bin" podman
+if (
+    export ENGINE_TEST_LOG="${case_dir}/calls"
+    export CONTAINER_ENGINE="${case_dir}/bin/podman"
+    unset CONTAINER_ENGINE_KIND CONTAINER_ENGINE_ANNOUNCED OMT_ENGINE_SERVER_KIND
+    export OMT_BUILD_CPUS=0
+    # shellcheck disable=SC1090
+    source "${HELPER}"
+    ensure_test_container_engine
+    [[ -z "$(container_engine_cpu_limit_args)" ]]
+    container_engine_build -t test-image .
+    [[ "$(engine_calls_without_probes "${case_dir}/calls" | sed -n '2p')" == \
+       "podman:build --format docker -t test-image ." ]]
+); then
+    pass "OMT_BUILD_CPUS=0 lifts the cap instead of setting a zero quota"
+else
+    fail "OMT_BUILD_CPUS=0 should lift the cap entirely"
 fi
 
 echo ""

@@ -10,6 +10,7 @@ mod channel;
 mod cli;
 mod connector;
 mod discovery;
+mod jitter;
 mod mdns;
 mod play;
 mod scale;
@@ -225,6 +226,7 @@ fn play(options: &Options) -> Result<i32, String> {
         "--status-file",
         "--retry-seconds",
         "--video-ceiling",
+        "--playout-delay",
     ])?;
     let target = options.required("--target")?.to_owned();
     let path = PathBuf::from(options.required("--status-file")?);
@@ -234,6 +236,7 @@ fn play(options: &Options) -> Result<i32, String> {
     // ceiling for the detected board, so this only applies to a hand-run
     // receiver, where silently capping below the hardware would be surprising.
     let ceiling = VideoCeiling::parse(options.value("--video-ceiling").unwrap_or("1920x1080@60"))?;
+    let playout_delay = options.number("--playout-delay", 4, 0, 8)?;
     if !is_valid_target(&target) || !matches!(preference.as_str(), "auto" | "HDMI-A-1" | "HDMI-A-2")
     {
         return Err("Invalid play options.".into());
@@ -254,6 +257,7 @@ fn play(options: &Options) -> Result<i32, String> {
             preference,
             retry: Duration::from_secs(retry),
             ceiling,
+            playout_delay: Duration::from_secs(playout_delay),
         },
         &status,
         &stop,

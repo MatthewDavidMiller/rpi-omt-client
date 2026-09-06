@@ -79,13 +79,59 @@ container_engine_volume() {
     fi
 }
 
+# How many whole CPUs a gate build may use. Empty means "decide from nproc".
+#
+# An emulated ARM64 build runs every rustc under qemu and will take every core
+# it is given: a commit here drove the load average past 10 on an 8-core
+# workstation. Nothing runs out of memory, but a desktop starved of CPU stops
+# meeting its own deadlines -- an editor whose renderer misses a watchdog ping
+# gets that renderer killed, which is what made VS Code and Cursor die during
+# commits. Leaving cores unclaimed is what keeps the workstation usable while a
+# gate runs; the gate is slow either way.
+#
+# Set to 0 to lift the cap. Tests that assert on the engine command line do
+# that, so their expectations stay independent of the host's core count.
+OMT_BUILD_CPUS="${OMT_BUILD_CPUS:-}"
+
+container_engine_cpus() {
+    local cpus="${OMT_BUILD_CPUS:-}" total
+
+    if [[ -z "${cpus}" ]]; then
+        total="$(nproc 2>/dev/null || echo 1)"
+        # Two cores held back, never dropping below one: enough for a compositor
+        # and an editor to stay responsive, and on a 1- or 2-core machine the
+        # cap would otherwise reach zero and stall the build outright.
+        cpus=$((total - 2))
+        ((cpus < 1)) && cpus=1
+    fi
+
+    printf '%s\n' "${cpus}"
+}
+
+# The CFS quota/period pair that expresses that budget, one argument per line.
+#
+# Deliberately not --cpuset-cpus, which pins to named cores and would be the
+# better fit: the cpuset controller is not delegated to rootless users, so only
+# `cpu` -- and therefore only quota and period -- is actually available here.
+# Deliberately not --cpus either; that spelling exists on `run` but not on
+# `build`, which is where the emulated compile actually happens.
+container_engine_cpu_limit_args() {
+    local cpus period=100000
+    cpus="$(container_engine_cpus)"
+    [[ "${cpus}" == "0" ]] && return 0
+    printf '%s\n' --cpu-period "${period}" --cpu-quota "$((period * cpus))"
+}
+
 container_engine_build() {
+    local -a cpu_args=()
+    mapfile -t cpu_args < <(container_engine_cpu_limit_args)
+
     if [[ "${CONTAINER_ENGINE_KIND}" == "podman" ]]; then
         # Podman defaults to OCI image metadata, which ignores Dockerfile SHELL
         # instructions. Docker format preserves the Docker build contract.
-        "${CONTAINER_ENGINE}" build --format docker "$@"
+        "${CONTAINER_ENGINE}" build --format docker "${cpu_args[@]}" "$@"
     else
-        "${CONTAINER_ENGINE}" build "$@"
+        "${CONTAINER_ENGINE}" build "${cpu_args[@]}" "$@"
     fi
 }
 

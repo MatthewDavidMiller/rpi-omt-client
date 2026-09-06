@@ -57,6 +57,32 @@ printf '%s\n' '{"schema":1,"ceiling":"1280x720@30"}' \
 OMT_VIDEO_CEILING='1920x1080@60' run_start auto |
     grep -Fq '<--video-ceiling><1280x720@30>'
 
+# ─── Playout delay ───────────────────────────────────────────────────────────
+
+# No saved override: the Wi-Fi default of 4 seconds reaches the receiver.
+run_start auto | grep -Fq '<--playout-delay><4>'
+
+# A saved override replaces the default.
+printf '%s\n' '{"schema":1,"seconds":0}' \
+    > "${CASE_DIR}/config/playout_delay.json"
+run_start auto | grep -Fq '<--playout-delay><0>'
+
+# A corrupt override fails the launch rather than falling back to a delay
+# nobody chose.
+printf '%s\n' '{"schema":1,"seconds":9}' \
+    > "${CASE_DIR}/config/playout_delay.json"
+if run_start auto >/dev/null 2>&1; then
+    echo "out-of-range saved playout delay was accepted" >&2
+    exit 1
+fi
+printf '%s\n' '{"schema":2,"seconds":1}' \
+    > "${CASE_DIR}/config/playout_delay.json"
+if run_start auto >/dev/null 2>&1; then
+    echo "invalid playout delay schema was accepted" >&2
+    exit 1
+fi
+rm -f "${CASE_DIR}/config/playout_delay.json"
+
 # A corrupt override fails the launch rather than falling back to a ceiling
 # nobody chose: the same rule the source record already follows.
 printf '%s\n' '{"schema":1,"ceiling":"3840x2160@60"}' \

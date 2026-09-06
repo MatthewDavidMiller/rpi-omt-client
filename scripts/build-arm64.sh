@@ -60,6 +60,12 @@ trap cleanup EXIT
 ensure_test_container_engine || exit 1
 "${PROJECT_ROOT}/scripts/check-arm64-emulation.sh"
 echo "Building ARM64 image..."
+# This build does not route through container_engine_build -- it needs the
+# archive export each engine spells differently -- so it applies the same CPU
+# budget itself. It is the longest and hungriest build in the repository, and
+# therefore the one that most needs to leave the workstation some cores.
+declare -a cpu_args=()
+mapfile -t cpu_args < <(container_engine_cpu_limit_args)
 if [[ "${CONTAINER_ENGINE_KIND}" == "podman" ]]; then
     # Podman has no buildx `--output type=docker`, so the archive is exported in
     # a second step. `--format docker` keeps the Dockerfile SHELL contract that
@@ -71,6 +77,7 @@ if [[ "${CONTAINER_ENGINE_KIND}" == "podman" ]]; then
     # makes Docker normalize it straight back to a bare `omt-client:latest`.
     podman_reference="docker.io/library/${IMAGE_NAME}:latest"
     "${CONTAINER_ENGINE}" build --format docker --platform linux/arm64 \
+        "${cpu_args[@]}" \
         --file "${PROJECT_ROOT}/deploy/Dockerfile" \
         --build-arg "RPI_OMT_CLIENT_VERSION=${RPI_OMT_CLIENT_VERSION}" \
         --build-arg "RECEIVER_SOURCE_FINGERPRINT=${RECEIVER_SOURCE_FINGERPRINT}" \
@@ -91,6 +98,7 @@ else
         output_destination="$(cygpath -m "${staged_artifact}")"
     fi
     "${CONTAINER_ENGINE}" buildx build --platform linux/arm64 \
+        "${cpu_args[@]}" \
         --file "${PROJECT_ROOT}/deploy/Dockerfile" \
         --build-arg "RPI_OMT_CLIENT_VERSION=${RPI_OMT_CLIENT_VERSION}" \
         --build-arg "RECEIVER_SOURCE_FINGERPRINT=${RECEIVER_SOURCE_FINGERPRINT}" \

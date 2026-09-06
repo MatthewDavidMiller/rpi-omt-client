@@ -80,10 +80,19 @@ async fn main() -> ExitCode {
                 Err(error) => return fail(&error),
             }
         }
+        [command, path, default] if command == "playout-delay" => {
+            match state::effective_playout_delay(path.as_ref(), default) {
+                Ok(value) => {
+                    println!("{value}");
+                    return ExitCode::SUCCESS;
+                }
+                Err(error) => return fail(&error),
+            }
+        }
         [] => {}
         _ => {
             return fail(
-                "usage: omt-web [initialize | set-password | play-target PATH | video-ceiling PATH BOARD_DEFAULT]",
+                "usage: omt-web [initialize | set-password | play-target PATH | video-ceiling PATH BOARD_DEFAULT | playout-delay PATH DEFAULT]",
             );
         }
     }

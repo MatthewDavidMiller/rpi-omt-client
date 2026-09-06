@@ -546,6 +546,9 @@ net.ipv4.conf.default.arp_ignore=1
 net.ipv4.conf.default.arp_announce=2
 net.ipv4.conf.all.drop_gratuitous_arp=1
 net.ipv4.tcp_fastopen=3
+# libomtnet NETWORK_RECEIVE_BUFFER is 8 MiB; Linux doubles SO_RCVBUF for
+# bookkeeping, so the max must be 16 MiB or the request is silently capped.
+net.core.rmem_max=16777216
 net.ipv6.conf.all.accept_ra=0
 net.ipv6.conf.default.accept_ra=0
 net.ipv6.conf.all.autoconf=0
@@ -878,7 +881,7 @@ COMPOSE_ENV_TMP="$(mktemp "${COMPOSE_ENV_FILE}.tmp.XXXXXX")"
     printf 'OMT_HDMI_CONNECTOR=%s\n' "${OMT_HDMI_CONNECTOR}"
     printf 'OMT_BOARD_LABEL=%s\n' "${BOARD_LABEL}"
     printf 'OMT_VIDEO_CEILING=%s\n' "${OMT_VIDEO_CEILING}"
-    printf 'OMT_CONTAINER_MEMORY_LIMIT=128m\n'
+    printf 'OMT_CONTAINER_MEMORY_LIMIT=512m\n'
 } > "${COMPOSE_ENV_TMP}"
 chmod 0600 "${COMPOSE_ENV_TMP}"
 mv -fT "${COMPOSE_ENV_TMP}" "${COMPOSE_ENV_FILE}"
@@ -1085,7 +1088,7 @@ echo "Web UI:   https://${IP_ADDR}:${WEB_PORT}$([[ "${STARTUP_DEFERRED}" == true
 echo "HDMI:     ${HDMI_VIDEO_MODE} (${BOARD_HDMI_CONNECTORS} output(s))"
 echo "Video:    up to ${OMT_VIDEO_CEILING}"
 echo "Security: nftables, SSH safeguards, kernel hardening, bounded Docker logs"
-echo "Memory:   ${ZRAM_MIB} MiB zram swap, 128 MiB container cap, bounded tmpfs"
+echo "Memory:   ${ZRAM_MIB} MiB zram swap, 512 MiB container cap, bounded tmpfs"
 echo "Packages: Alpine apk update and upgrade --available applied"
 echo
 echo "Password: after startup, run:"

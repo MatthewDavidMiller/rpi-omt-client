@@ -193,6 +193,76 @@ pub fn save_video_ceiling(path: &Path, ceiling: Option<&str>) -> Result<(), Stri
     atomic_replace(path, &data, CEILING_LIMIT)
 }
 
+const DELAY_LIMIT: usize = 64;
+pub const DEFAULT_PLAYOUT_DELAY_SECS: u64 = 4;
+pub const MAX_PLAYOUT_DELAY_SECS: u64 = 8;
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct SavedDelay {
+    schema: u8,
+    seconds: u64,
+}
+
+pub fn parse_playout_delay(value: &str) -> Result<u64, String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("auto") {
+        return Ok(DEFAULT_PLAYOUT_DELAY_SECS);
+    }
+    let parsed = trimmed.parse::<u64>().map_err(|_| {
+        format!(
+            "Invalid playout delay: {trimmed}. Expected a whole number of seconds from 0 to {MAX_PLAYOUT_DELAY_SECS}."
+        )
+    })?;
+    if parsed > MAX_PLAYOUT_DELAY_SECS {
+        return Err(format!(
+            "Playout delay {parsed} is outside 0-{MAX_PLAYOUT_DELAY_SECS}."
+        ));
+    }
+    Ok(parsed)
+}
+
+pub fn read_playout_delay(path: &Path) -> Result<Option<u64>, String> {
+    let Some(data) = read_bounded(path, DELAY_LIMIT)? else {
+        return Ok(None);
+    };
+    let saved: SavedDelay = json::from_slice(&data)
+        .map_err(|error| format!("saved playout delay is invalid JSON: {error}"))?;
+    if saved.schema != 1 {
+        return Err("saved playout delay has an invalid schema".to_owned());
+    }
+    if saved.seconds > MAX_PLAYOUT_DELAY_SECS {
+        return Err(format!(
+            "Playout delay {} is outside 0-{MAX_PLAYOUT_DELAY_SECS}.",
+            saved.seconds
+        ));
+    }
+    Ok(Some(saved.seconds))
+}
+
+pub fn effective_playout_delay(path: &Path, default: &str) -> Result<u64, String> {
+    let default = parse_playout_delay(default)?;
+    read_playout_delay(path).map(|override_value| override_value.unwrap_or(default))
+}
+
+pub fn save_playout_delay(path: &Path, seconds: Option<u64>) -> Result<(), String> {
+    let Some(seconds) = seconds else {
+        return remove_file_durable(path);
+    };
+    if seconds > MAX_PLAYOUT_DELAY_SECS {
+        return Err(format!(
+            "Playout delay {seconds} is outside 0-{MAX_PLAYOUT_DELAY_SECS}."
+        ));
+    }
+    if seconds == DEFAULT_PLAYOUT_DELAY_SECS {
+        return remove_file_durable(path);
+    }
+    let saved = SavedDelay { schema: 1, seconds };
+    let mut data = serde_json::to_vec(&saved).map_err(|error| error.to_string())?;
+    data.push(b'\n');
+    atomic_replace(path, &data, DELAY_LIMIT)
+}
+
 pub fn pixel_rate(value: &str) -> u64 {
     value
         .split(',')
@@ -225,5 +295,16 @@ mod tests {
             describe_video_ceiling("1920x1080@30,1280x720@60"),
             "1920x1080 at 30 fps, or 1280x720 at 60 fps"
         );
+    }
+
+    #[test]
+    fn playout_delay_parses_empty_auto_and_bounds() {
+        assert_eq!(parse_playout_delay(""), Ok(4));
+        assert_eq!(parse_playout_delay("auto"), Ok(4));
+        assert_eq!(parse_playout_delay("0"), Ok(0));
+        assert_eq!(parse_playout_delay("8"), Ok(8));
+        assert!(parse_playout_delay("9").is_err());
+        assert!(parse_playout_delay("-1").is_err());
+        assert!(parse_playout_delay("1.5").is_err());
     }
 }
