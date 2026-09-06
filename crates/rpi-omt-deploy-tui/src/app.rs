@@ -9,9 +9,9 @@
 //! Rendering lives in `ui`; this module never draws.
 
 use omt_deployer_core::{
-    AuthMethod, Connection, DeployOptions, Job, JobRequest, ManagementAction, SdCardSettings,
-    Secret, WorkerEvent, run_job, valid_appliance_hostname, validate_connection,
-    validate_sd_card_settings,
+    Connection, ConnectionFields, DeployOptions, Job, JobRequest, ManagementAction, SdCardSettings,
+    Secret, WorkerEvent, connection_from_fields, run_job, valid_appliance_hostname,
+    valid_remote_directory, validate_os_password, validate_sd_card_settings,
 };
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -281,13 +281,23 @@ impl Slot {
     }
 }
 
-/// A destructive action waiting for a yes.
+/// What answering a confirmation yes will do.
+#[derive(Clone, Copy)]
+pub enum Intent {
+    Start(Job),
+    Quit,
+}
+
+/// A destructive intent waiting for a yes.
 ///
-/// Restart and Reboot interrupt a running appliance, so they are confirmed the
-/// same way the egui application confirms them rather than firing on a
-/// keystroke that could have been a mistyped tab.
+/// Enter advances between text fields, and the last row of a view is its
+/// button, so walking a form with Enter arrives at one press away from running
+/// it. The Alpine install erases the boot disk; Restart and Reboot interrupt a
+/// running appliance; quitting abandons a worker that may be mid-transaction.
+/// None of them may fire on a keystroke that could have been a mistyped tab,
+/// which is why the egui application confirms its own destructive actions too.
 pub struct Pending {
-    pub action: ManagementAction,
+    pub intent: Intent,
     pub prompt: String,
 }
 
@@ -586,46 +596,22 @@ impl App {
     }
 
     /// Build the connection the remote jobs share.
+    ///
+    /// The rules live in the core, so the egui application builds the same
+    /// connection from the same fields: an always-present SSH password
+    /// (untouched factory Alpine answers root with an empty one), optional
+    /// sudo and `known_hosts`, and the Alpine view's root password as the
+    /// bootstrap secret the CLI calls `bootstrap_root_password`.
     fn connection(&self) -> Result<Connection, String> {
-        // The terminal deployer supports password authentication only, so the
-        // field is always an explicit credential. An empty string is distinct
-        // from a missing credential: untouched factory Alpine accepts root
-        // with an empty SSH password, and the shared SSH adapter deliberately
-        // tries none, password, and keyboard-interactive for that case.
-        let password =
-            Some(Secret::new((*self.password).clone()).map_err(|error| error.to_string())?);
-        let sudo_password = if self.sudo_password.is_empty() {
-            None
-        } else {
-            Some(Secret::new((*self.sudo_password).clone()).map_err(|error| error.to_string())?)
-        };
-        let known_hosts_path = if self.known_hosts.trim().is_empty() {
-            None
-        } else {
-            Some(PathBuf::from(self.known_hosts.trim()))
-        };
-        // The Alpine view's root password doubles as the bootstrap secret for
-        // a first deployment onto a factory image whose SSH account is not
-        // root, matching the CLI's bootstrap_root_password.
-        let bootstrap_root_password = if self.os_root_password.is_empty() {
-            None
-        } else {
-            Some(Secret::new((*self.os_root_password).clone()).map_err(|error| error.to_string())?)
-        };
-        let connection = Connection {
-            host: self.host.trim().to_owned(),
-            username: self.user.trim().to_owned(),
-            port: 22,
-            auth: AuthMethod::Password,
-            password,
-            key_path: None,
-            key_passphrase: None,
-            known_hosts_path,
-            sudo_password,
-            bootstrap_root_password,
-        };
-        validate_connection(&connection).map_err(|error| error.to_string())?;
-        Ok(connection)
+        connection_from_fields(&ConnectionFields {
+            host: &self.host,
+            username: &self.user,
+            password: &self.password,
+            sudo_password: &self.sudo_password,
+            known_hosts: &self.known_hosts,
+            bootstrap_root_password: &self.os_root_password,
+        })
+        .map_err(|error| error.to_string())
     }
 
     /// Reject what the operator can still fix before anything reaches the Pi.
@@ -654,12 +640,27 @@ impl App {
                 if *self.os_pi_password != *self.os_pi_confirm {
                     return Err("pi password confirmation does not match".into());
                 }
+                // The same policy the egui application's button gate applies,
+                // so a short password is refused here rather than after the
+                // job has started and connected.
+                for password in [&self.os_root_password, &self.os_pi_password] {
+                    let password =
+                        Secret::new((**password).clone()).map_err(|error| error.to_string())?;
+                    validate_os_password(&password).map_err(|error| error.to_string())?;
+                }
                 if !self.wifi_ssid.trim().is_empty() && self.wifi_password.is_empty() {
                     return Err("A Wi-Fi SSID needs a Wi-Fi password".into());
                 }
                 Ok(())
             }
             Job::Deploy => {
+                if !valid_remote_directory(self.remote_directory.trim()) {
+                    return Err(
+                        "Remote directory must be a normalized absolute path, such as \
+                         /opt/omt-client"
+                            .into(),
+                    );
+                }
                 if self.rotate_web_password && *self.web_password != *self.web_confirm {
                     return Err("Web GUI password confirmation does not match".into());
                 }
@@ -771,22 +772,24 @@ impl App {
         match slot {
             Slot::TestButton => self.start(Job::Test),
             Slot::PrepareSdButton => self.start(Job::PrepareSd),
-            Slot::AlpineButton => self.start(Job::Alpine),
+            // Confirmed, in the same words the egui application uses: this
+            // erases the disk the Pi boots from.
+            Slot::AlpineButton => self.confirm(
+                Job::Alpine,
+                "Erase the boot disk and install Alpine in persistent sys mode? \
+                 The Pi reboots when it finishes.",
+            ),
             Slot::DeployButton => self.start(Job::Deploy),
             Slot::StatusButton => self.start(Job::Manage(ManagementAction::Status)),
             Slot::LogsButton => self.start(Job::Manage(ManagementAction::Logs)),
-            Slot::RestartButton => {
-                self.pending = Some(Pending {
-                    action: ManagementAction::Restart,
-                    prompt: "Restart the appliance container now?".into(),
-                });
-            }
-            Slot::RebootButton => {
-                self.pending = Some(Pending {
-                    action: ManagementAction::Reboot,
-                    prompt: "Reboot the Raspberry Pi now?".into(),
-                });
-            }
+            Slot::RestartButton => self.confirm(
+                Job::Manage(ManagementAction::Restart),
+                "Restart the appliance container now?",
+            ),
+            Slot::RebootButton => self.confirm(
+                Job::Manage(ManagementAction::Reboot),
+                "Reboot the Raspberry Pi now?",
+            ),
             Slot::HostnameButton => self.start(Job::Hostname),
             Slot::WebPasswordButton => self.start(Job::WebPassword),
             Slot::WifiButton => self.start(Job::Wifi),
@@ -794,14 +797,45 @@ impl App {
         }
     }
 
+    /// Hold `job` until the operator answers `prompt`.
+    fn confirm(&mut self, job: Job, prompt: &str) {
+        self.confirm_intent(Intent::Start(job), prompt);
+    }
+
+    fn confirm_intent(&mut self, intent: Intent, prompt: &str) {
+        self.pending = Some(Pending {
+            intent,
+            prompt: prompt.to_owned(),
+        });
+    }
+
+    /// Quit, or ask first when that would abandon a running job.
+    ///
+    /// A worker is detached, so quitting drops the receiver and the deployment
+    /// keeps running on the Pi with nobody reading its result. Cancel first
+    /// (Esc or Ctrl+C) if it should be stopped.
+    pub fn request_quit(&mut self) {
+        if self.busy() {
+            self.confirm_intent(
+                Intent::Quit,
+                "A job is still running. Quit and stop watching it?",
+            );
+        } else {
+            self.should_quit = true;
+        }
+    }
+
     pub fn confirm_pending(&mut self, accepted: bool) {
         let Some(pending) = self.pending.take() else {
             return;
         };
-        if accepted {
-            self.start(Job::Manage(pending.action));
-        } else {
+        if !accepted {
             self.status = "Cancelled.".into();
+            return;
+        }
+        match pending.intent {
+            Intent::Start(job) => self.start(job),
+            Intent::Quit => self.should_quit = true,
         }
     }
 
@@ -918,6 +952,94 @@ mod tests {
             .as_ref()
             .unwrap_or_else(|| panic!("empty factory password was dropped"));
         assert_eq!(password.expose(), "");
+    }
+
+    /// Enter walks a form, and the Alpine view's last row is the button that
+    /// erases the Pi's boot disk. Pressing it must ask first.
+    #[test]
+    fn the_alpine_install_is_confirmed_before_anything_starts() {
+        let mut app = App::default();
+        app.press(Slot::AlpineButton);
+        let pending = app
+            .pending
+            .as_ref()
+            .unwrap_or_else(|| panic!("the disk-erasing install started unconfirmed"));
+        assert!(pending.prompt.contains("Erase the boot disk"));
+        assert!(matches!(pending.intent, Intent::Start(Job::Alpine)));
+        assert!(!app.busy());
+
+        app.confirm_pending(false);
+        assert!(app.pending.is_none());
+        assert!(!app.busy());
+        assert_eq!(app.status, "Cancelled.");
+    }
+
+    /// The non-destructive buttons keep firing on the first press: a
+    /// confirmation on every action is one nobody reads.
+    #[test]
+    fn reading_status_is_not_confirmed() {
+        let mut app = App::default();
+        app.press(Slot::StatusButton);
+        assert!(app.pending.is_none());
+    }
+
+    /// Quitting drops the receiver while the worker keeps going, so it asks
+    /// while a job is running and quits immediately when none is.
+    #[test]
+    fn quitting_asks_only_while_a_job_is_running() {
+        let mut app = App::default();
+        app.request_quit();
+        assert!(app.should_quit);
+
+        let (_tx, rx) = channel();
+        let mut busy = App {
+            events: Some(rx),
+            ..App::default()
+        };
+        busy.request_quit();
+        assert!(!busy.should_quit);
+        assert!(busy.pending.is_some());
+        busy.confirm_pending(true);
+        assert!(busy.should_quit);
+    }
+
+    /// The Alpine view's own password policy, applied before the job starts
+    /// rather than after it has connected -- what the egui application's
+    /// disabled button expresses.
+    #[test]
+    fn a_short_host_password_is_refused_by_the_precheck() {
+        let ready = App {
+            os_root_password: Zeroizing::new("rootpass1".into()),
+            os_root_confirm: Zeroizing::new("rootpass1".into()),
+            os_pi_password: Zeroizing::new("pipassword".into()),
+            os_pi_confirm: Zeroizing::new("pipassword".into()),
+            ..App::default()
+        };
+        assert!(ready.precheck(Job::Alpine).is_ok());
+
+        let short = App {
+            os_pi_password: Zeroizing::new("short".into()),
+            os_pi_confirm: Zeroizing::new("short".into()),
+            ..ready
+        };
+        assert!(short.precheck(Job::Alpine).is_err());
+    }
+
+    /// The remote directory reaches `validate_options` either way; checking it
+    /// here is what turns a failed job into a message before one starts.
+    #[test]
+    fn deploy_refuses_a_remote_directory_the_core_would_reject() {
+        assert!(App::default().precheck(Job::Deploy).is_ok());
+        for rejected in ["", "opt/omt-client", "/opt/omt-client/", "/opt/../etc"] {
+            let app = App {
+                remote_directory: rejected.into(),
+                ..App::default()
+            };
+            assert!(
+                app.precheck(Job::Deploy).is_err(),
+                "accepted remote directory: {rejected}"
+            );
+        }
     }
 
     #[test]

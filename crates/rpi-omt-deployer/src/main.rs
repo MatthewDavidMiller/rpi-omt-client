@@ -13,8 +13,9 @@
 #[cfg_attr(not(feature = "desktop"), allow(dead_code))]
 mod gates {
     use omt_deployer_core::{
-        SdCardSettings, Secret, WifiSettings, valid_appliance_hostname, valid_host, valid_username,
-        validate_os_password, validate_sd_card_settings, validate_web_password, validate_wifi,
+        SdCardSettings, Secret, WifiSettings, valid_appliance_hostname, valid_host,
+        valid_remote_directory, valid_username, validate_os_password, validate_sd_card_settings,
+        validate_web_password, validate_wifi,
     };
 
     /// The connection and deployment fields as the operator has typed them.
@@ -38,9 +39,15 @@ mod gates {
         pub wifi_password: &'a str,
         pub wifi_connect: bool,
         pub wifi_preserve_existing_profiles: bool,
+        pub remote_directory: &'a str,
         pub rotate_web_password: bool,
         pub web_password: &'a str,
         pub web_password_confirmation: &'a str,
+        /// Manage's own rotation pair. Separate from Deploy's for the same
+        /// reason `manage_hostname` is separate from `hostname`: a value left
+        /// on one view must not be what a button on another submits.
+        pub manage_web_password: &'a str,
+        pub manage_web_password_confirmation: &'a str,
     }
 
     impl Form<'_> {
@@ -48,16 +55,23 @@ mod gates {
         ///
         /// An empty SSH password is valid: a factory Alpine image answers as
         /// root with no password until Alpine setup has run.
+        ///
+        /// Trimmed, because `connection_from_fields` trims: a host pasted with
+        /// a trailing space is one the connection will accept, and a button
+        /// disabled for it reports a problem that no longer exists.
         pub fn can_connect(&self) -> bool {
-            valid_host(self.host)
-                && valid_username(self.user)
+            valid_host(self.host.trim())
+                && valid_username(self.user.trim())
                 && Secret::new(self.password.to_owned()).is_ok()
         }
 
-        /// A deployment needs no local files, so the connection is all there
-        /// is to check: the capsule it uploads is part of this program.
+        /// A deployment needs no local files, so the connection and where it
+        /// lands are all there is to check: the capsule it uploads is part of
+        /// this program.
         pub fn can_deploy(&self) -> bool {
-            self.can_connect() && (!self.rotate_web_password || self.web_password_is_ready())
+            self.can_connect()
+                && valid_remote_directory(self.remote_directory.trim())
+                && (!self.rotate_web_password || self.web_password_is_ready())
         }
 
         pub fn can_prepare_sd(&self) -> bool {
@@ -93,7 +107,11 @@ mod gates {
         }
 
         pub fn can_change_web_password(&self) -> bool {
-            self.can_connect() && self.web_password_is_ready()
+            self.can_connect()
+                && Self::ready(
+                    self.manage_web_password,
+                    self.manage_web_password_confirmation,
+                )
         }
 
         pub fn can_set_hostname(&self) -> bool {
@@ -101,9 +119,7 @@ mod gates {
         }
 
         fn web_password_is_ready(&self) -> bool {
-            self.web_password == self.web_password_confirmation
-                && Secret::new(self.web_password.to_owned())
-                    .is_ok_and(|password| validate_web_password(&password).is_ok())
+            Self::ready(self.web_password, self.web_password_confirmation)
         }
 
         fn os_passwords_are_ready(&self) -> bool {
@@ -113,6 +129,14 @@ mod gates {
                     .is_ok_and(|password| validate_os_password(&password).is_ok())
                 && Secret::new(self.os_pi_password.to_owned())
                     .is_ok_and(|password| validate_os_password(&password).is_ok())
+        }
+
+        /// One rotation pair, confirmed and inside the appliance's policy.
+        /// Shared by Deploy's and Manage's, which are otherwise separate.
+        fn ready(password: &str, confirmation: &str) -> bool {
+            password == confirmation
+                && Secret::new(password.to_owned())
+                    .is_ok_and(|password| validate_web_password(&password).is_ok())
         }
 
         fn alpine_wifi_is_ready(&self) -> bool {
@@ -152,9 +176,12 @@ mod gates {
                 wifi_password,
                 wifi_connect: true,
                 wifi_preserve_existing_profiles: true,
+                remote_directory: "/opt/omt-client",
                 rotate_web_password: false,
                 web_password: "correct horse battery staple",
                 web_password_confirmation: "correct horse battery staple",
+                manage_web_password: "correct horse battery staple",
+                manage_web_password_confirmation: "correct horse battery staple",
             }
         }
 
@@ -259,18 +286,77 @@ mod gates {
             assert!(form("", "").can_change_web_password());
             assert!(
                 !Form {
-                    web_password: "too-short",
-                    web_password_confirmation: "too-short",
+                    manage_web_password: "too-short",
+                    manage_web_password_confirmation: "too-short",
                     ..form("", "")
                 }
                 .can_change_web_password()
             );
             assert!(
                 !Form {
-                    web_password_confirmation: "a different secure password",
+                    manage_web_password_confirmation: "a different secure password",
                     ..form("", "")
                 }
                 .can_change_web_password()
+            );
+        }
+
+        /// Manage's rotation and Deploy's are separate fields, for the same
+        /// reason the rename is separate from the Alpine hostname: a password
+        /// typed on one view must not be what a button on the other submits.
+        #[test]
+        fn the_two_web_password_rotations_do_not_read_each_other() {
+            // A Manage pair that is ready cannot arm a Deploy rotation.
+            assert!(
+                !Form {
+                    rotate_web_password: true,
+                    web_password: "",
+                    web_password_confirmation: "",
+                    ..form("", "")
+                }
+                .can_deploy()
+            );
+            // A Deploy pair that is ready cannot arm the Manage button.
+            assert!(
+                !Form {
+                    manage_web_password: "",
+                    manage_web_password_confirmation: "",
+                    ..form("", "")
+                }
+                .can_change_web_password()
+            );
+        }
+
+        /// `validate_options` rejects a remote directory that is not a
+        /// normalized absolute path, so an enabled Deploy button that leads
+        /// straight to that error is a gate this module exists to close.
+        #[test]
+        fn deploying_needs_a_remote_directory_the_core_accepts() {
+            assert!(form("", "").can_deploy());
+            for rejected in ["", "opt/omt-client", "/opt/omt-client/", "/opt/../etc", "/"] {
+                assert!(
+                    !Form {
+                        remote_directory: rejected,
+                        ..form("", "")
+                    }
+                    .can_deploy(),
+                    "accepted remote directory: {rejected}"
+                );
+            }
+        }
+
+        /// The builder trims, so the gate has to: a host pasted with a
+        /// trailing space connects, and a button disabled for it reports a
+        /// problem that no longer exists.
+        #[test]
+        fn surrounding_whitespace_does_not_disable_the_connection() {
+            assert!(
+                Form {
+                    host: " pi.local ",
+                    user: " root ",
+                    ..form("", "")
+                }
+                .can_connect()
             );
         }
 
@@ -782,8 +868,8 @@ mod desktop {
     // here: the terminal deployer runs the same jobs, and a deployment must
     // not mean something different depending on which frontend started it.
     use omt_deployer_core::{
-        AuthMethod, Connection, DeployOptions, IMAGE_MEMBER, Job, JobRequest, ManagementAction,
-        Secret, WorkerEvent, embedded_image, run_job,
+        Connection, ConnectionFields, DeployOptions, IMAGE_MEMBER, Job, JobRequest,
+        ManagementAction, WorkerEvent, connection_from_fields, embedded_image, run_job,
     };
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
@@ -841,6 +927,11 @@ mod desktop {
         rotate_web_password: bool,
         web_password: Zeroizing<String>,
         web_password_confirmation: Zeroizing<String>,
+        /// Manage's rotation, kept apart from Deploy's so a password typed on
+        /// one view cannot be submitted from the other: a value left in the
+        /// Manage box was otherwise what a rotating Deploy installed.
+        manage_web_password: Zeroizing<String>,
+        manage_web_password_confirmation: Zeroizing<String>,
         wifi_connect: bool,
         wifi_preserve_existing_profiles: bool,
         remote_directory: String,
@@ -849,6 +940,9 @@ mod desktop {
         cancel: Arc<AtomicBool>,
         events: Option<Receiver<WorkerEvent>>,
         picker: Option<(Picking, Receiver<Option<PathBuf>>)>,
+        /// The last answer from the SD card view's filesystem probe, or `None`
+        /// when one of the fields it depends on has changed since.
+        sd_card_ready: Option<bool>,
         fit: Fit,
         pending_confirmation: Option<ManagementAction>,
         pending_alpine_confirm: bool,
@@ -896,6 +990,8 @@ mod desktop {
                 rotate_web_password: false,
                 web_password: Zeroizing::new(String::new()),
                 web_password_confirmation: Zeroizing::new(String::new()),
+                manage_web_password: Zeroizing::new(String::new()),
+                manage_web_password_confirmation: Zeroizing::new(String::new()),
                 wifi_connect: true,
                 wifi_preserve_existing_profiles: true,
                 remote_directory: "/opt/omt-client".into(),
@@ -904,6 +1000,7 @@ mod desktop {
                 cancel: Arc::new(AtomicBool::new(false)),
                 events: None,
                 picker: None,
+                sd_card_ready: None,
                 fit: Fit::Pending {
                     started: None,
                     origin: None,
@@ -973,53 +1070,49 @@ mod desktop {
                 wifi_password: &self.wifi_password,
                 wifi_connect: self.wifi_connect,
                 wifi_preserve_existing_profiles: self.wifi_preserve_existing_profiles,
+                remote_directory: &self.remote_directory,
                 rotate_web_password: self.rotate_web_password,
                 web_password: &self.web_password,
                 web_password_confirmation: &self.web_password_confirmation,
+                manage_web_password: &self.manage_web_password,
+                manage_web_password_confirmation: &self.manage_web_password_confirmation,
             }
         }
 
+        /// Whether the SD card view's fields describe a real Alpine boot
+        /// partition, answered from the last probe.
+        ///
+        /// `can_prepare_sd` stats four paths on a removable disk. Asked on
+        /// every frame, as a button's enabled state is, that is a filesystem
+        /// probe of a mounted SD card sixty times a second for as long as the
+        /// view is open, so the answer is kept until one of the fields it
+        /// depends on changes.
+        fn sd_card_is_ready(&mut self) -> bool {
+            if let Some(ready) = self.sd_card_ready {
+                return ready;
+            }
+            let ready = self.form().can_prepare_sd();
+            self.sd_card_ready = Some(ready);
+            ready
+        }
+
+        /// The connection the remote jobs share.
+        ///
+        /// The rules live in the core so that this application and the
+        /// terminal one build the same connection from the same fields. Among
+        /// them: Alpine's root password is the bootstrap secret first Deploy
+        /// uses once through `su` to install bash and sudo when the SSH
+        /// account is not root, so Connection does not ask for it separately.
         fn connection(&self) -> Result<Connection, String> {
-            let password =
-                Secret::new((*self.password).clone()).map_err(|error| error.to_string())?;
-            let sudo_password = if self.sudo_password.is_empty() {
-                None
-            } else {
-                Some(
-                    Secret::new((*self.sudo_password).clone())
-                        .map_err(|error| error.to_string())?,
-                )
-            };
-            // Alpine's root password is the bootstrap secret: first Deploy
-            // uses it once through `su` to install bash/sudo when the SSH
-            // account is not root. Connection no longer asks for it separately.
-            let bootstrap_root_password = if self.os_root_password.is_empty() {
-                None
-            } else {
-                Some(
-                    Secret::new((*self.os_root_password).clone())
-                        .map_err(|error| error.to_string())?,
-                )
-            };
-            let connection = Connection {
-                host: self.host.clone(),
-                username: self.user.clone(),
-                port: 22,
-                auth: AuthMethod::Password,
-                password: Some(password),
-                key_path: None,
-                key_passphrase: None,
-                known_hosts_path: if self.known_hosts.is_empty() {
-                    None
-                } else {
-                    Some(PathBuf::from(&self.known_hosts))
-                },
-                sudo_password,
-                bootstrap_root_password,
-            };
-            omt_deployer_core::validate_connection(&connection)
-                .map_err(|error| error.to_string())?;
-            Ok(connection)
+            connection_from_fields(&ConnectionFields {
+                host: &self.host,
+                username: &self.user,
+                password: &self.password,
+                sudo_password: &self.sudo_password,
+                known_hosts: &self.known_hosts,
+                bootstrap_root_password: &self.os_root_password,
+            })
+            .map_err(|error| error.to_string())
         }
 
         fn start_job(&mut self, job: Job) {
@@ -1038,9 +1131,15 @@ mod desktop {
                     }
                 }
             };
-            let changes_web_password = matches!(job, Job::WebPassword)
-                || (matches!(job, Job::Deploy) && self.rotate_web_password);
+            let rotates_after_deploy = matches!(job, Job::Deploy) && self.rotate_web_password;
             self.apply_alpine_login = matches!(job, Job::Alpine);
+            // Manage rotates its own field; a Deploy rotation takes the one
+            // typed beside its checkbox. Neither view can submit the other's.
+            let web_password = if matches!(job, Job::WebPassword) {
+                self.manage_web_password.clone()
+            } else {
+                self.web_password.clone()
+            };
             let request = JobRequest {
                 job,
                 connection,
@@ -1056,9 +1155,13 @@ mod desktop {
                 os_root_password: self.os_root_password.clone(),
                 os_pi_password: self.os_pi_password.clone(),
                 rotate_web_password: self.rotate_web_password,
-                web_password: self.web_password.clone(),
+                web_password,
             };
-            if changes_web_password {
+            // Clear the pair that was just submitted, and only that pair.
+            if matches!(job, Job::WebPassword) {
+                self.manage_web_password.clear();
+                self.manage_web_password_confirmation.clear();
+            } else if rotates_after_deploy {
                 self.web_password.clear();
                 self.web_password_confirmation.clear();
             }
@@ -1144,7 +1247,10 @@ mod desktop {
                         let chosen = path.display().to_string();
                         match target {
                             Picking::KnownHosts => self.known_hosts = chosen,
-                            Picking::BootDirectory => self.boot_directory = chosen,
+                            Picking::BootDirectory => {
+                                self.boot_directory = chosen;
+                                self.sd_card_ready = None;
+                            }
                         }
                     }
                 }
@@ -1162,10 +1268,22 @@ mod desktop {
                 return;
             };
             let mut finished = None;
-            while let Ok(event) = events.try_recv() {
-                match event {
-                    WorkerEvent::Line(line) => self.activity.push(line),
-                    WorkerEvent::Finished(result) => finished = Some(result),
+            loop {
+                match events.try_recv() {
+                    Ok(WorkerEvent::Line(line)) => self.activity.push(line),
+                    Ok(WorkerEvent::Finished(result)) => {
+                        finished = Some(result);
+                        break;
+                    }
+                    // A worker that died without reporting is still an end to
+                    // the job. Treating only `Finished` as one left `events`
+                    // set for the rest of the session, and with it every
+                    // button in the application disabled.
+                    Err(mpsc::TryRecvError::Disconnected) => {
+                        finished = Some(Err("the worker stopped without reporting".to_owned()));
+                        break;
+                    }
+                    Err(mpsc::TryRecvError::Empty) => break,
                 }
             }
             if let Some(result) = finished {
@@ -1390,29 +1508,47 @@ mod desktop {
 
     /// A text field that fills the column rather than the window.
     fn text_field(ui: &mut egui::Ui, text: &mut String, secret: bool) {
+        edited_text_field(ui, text, secret);
+    }
+
+    /// The same field, reporting whether this frame edited it. Used where a
+    /// gate is too expensive to answer on every frame and is cached instead.
+    fn edited_text_field(ui: &mut egui::Ui, text: &mut String, secret: bool) -> bool {
         ui.add(
             egui::TextEdit::singleline(text)
                 .password(secret)
                 .desired_width(f32::INFINITY),
-        );
+        )
+        .changed()
     }
 
-    /// A path field with a dialog button beside it. True when it was clicked.
+    /// What a path row's widgets did this frame.
+    struct PathEdit {
+        browse: bool,
+        changed: bool,
+    }
+
+    /// A path field with a dialog button beside it.
     ///
     /// Laid out right to left so the button takes the width it needs and the
     /// field fills whatever is left. Placing the field first and asking for
     /// `f32::INFINITY` claims the whole row and pushes the button out of a
     /// narrow window, which is the size this application is expected to run at.
-    fn path_field(ui: &mut egui::Ui, text: &mut String, enabled: bool) -> bool {
-        let mut browse = false;
+    fn path_field(ui: &mut egui::Ui, text: &mut String, enabled: bool) -> PathEdit {
+        let mut edit = PathEdit {
+            browse: false,
+            changed: false,
+        };
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            browse = ui
+            edit.browse = ui
                 .add_enabled(enabled, egui::Button::new("Browse..."))
                 .on_hover_text("Choose this on disk instead of typing the path")
                 .clicked();
-            ui.add(egui::TextEdit::singleline(text).desired_width(f32::INFINITY));
+            edit.changed = ui
+                .add(egui::TextEdit::singleline(text).desired_width(f32::INFINITY))
+                .changed();
         });
-        browse
+        edit
     }
 
     impl eframe::App for App {
@@ -1435,6 +1571,13 @@ mod desktop {
                     ] {
                         if ui.selectable_label(self.view == view, name).clicked() {
                             self.view = view;
+                            // The card may have been mounted, unmounted, or
+                            // swapped since the last probe, and arriving on
+                            // the view is when the operator expects an answer
+                            // about the one that is in the reader now.
+                            if view == View::SdCard {
+                                self.sd_card_ready = None;
+                            }
                         }
                     }
                 });
@@ -1465,7 +1608,7 @@ mod desktop {
                         });
                         let idle = !self.running() && self.picker.is_none();
                         field(ui, "known_hosts (optional)", |ui| {
-                            browse = path_field(ui, &mut self.known_hosts, idle);
+                            browse = path_field(ui, &mut self.known_hosts, idle).browse;
                         });
                         ui.checkbox(&mut self.reveal, "Reveal secrets");
                         ui.add_space(ui.spacing().item_spacing.y);
@@ -1495,17 +1638,23 @@ mod desktop {
                         );
                         ui.add_space(ui.spacing().item_spacing.y);
                         let idle = !self.running() && self.picker.is_none();
+                        // Every field the boot-partition probe reads reports
+                        // its own edits, so the probe runs when one of them
+                        // changes rather than on every frame of the view.
+                        let mut edited = false;
                         field(ui, "Alpine boot partition", |ui| {
-                            browse = path_field(ui, &mut self.boot_directory, idle);
+                            let edit = path_field(ui, &mut self.boot_directory, idle);
+                            browse = edit.browse;
+                            edited |= edit.changed;
                         });
                         field(ui, "Wi-Fi country", |ui| {
-                            text_field(ui, &mut self.wifi_country, false);
+                            edited |= edited_text_field(ui, &mut self.wifi_country, false);
                         });
                         field(ui, "Wi-Fi SSID", |ui| {
-                            text_field(ui, &mut self.wifi_ssid, false);
+                            edited |= edited_text_field(ui, &mut self.wifi_ssid, false);
                         });
                         field(ui, "Wi-Fi password", |ui| {
-                            text_field(ui, &mut self.wifi_password, !self.reveal);
+                            edited |= edited_text_field(ui, &mut self.wifi_password, !self.reveal);
                         });
                         ui.checkbox(&mut self.reveal, "Reveal secrets");
                         ui.label(
@@ -1514,11 +1663,12 @@ mod desktop {
                             )
                             .italics(),
                         );
+                        if edited {
+                            self.sd_card_ready = None;
+                        }
+                        let ready = self.sd_card_is_ready();
                         prepare = ui
-                            .add_enabled(
-                                self.form().can_prepare_sd() && !self.running(),
-                                egui::Button::new("Prepare SD card"),
-                            )
+                            .add_enabled(ready && !self.running(), egui::Button::new("Prepare SD card"))
                             .clicked();
                     });
                     if browse {
@@ -1723,10 +1873,10 @@ mod desktop {
                         "Optional. Set a 12-128 byte password. Changing it restarts the appliance and signs out every Web session.",
                     );
                     field(ui, "New password", |ui| {
-                        text_field(ui, &mut self.web_password, !self.reveal);
+                        text_field(ui, &mut self.manage_web_password, !self.reveal);
                     });
                     field(ui, "Confirm password", |ui| {
-                        text_field(ui, &mut self.web_password_confirmation, !self.reveal);
+                        text_field(ui, &mut self.manage_web_password_confirmation, !self.reveal);
                     });
                     ui.checkbox(&mut self.reveal, "Reveal secrets");
                     if ui
@@ -1863,8 +2013,13 @@ mod desktop {
     mod tests {
         use super::*;
 
+        /// The field-to-`Connection` rules themselves are the core's, and are
+        /// tested there against both frontends. What this asserts is that this
+        /// application hands the core the fields it means to: the Alpine
+        /// view's root password as the bootstrap secret, and never the SSH or
+        /// sudo credential in its place.
         #[test]
-        fn connection_keeps_ssh_and_sudo_credentials_separate() {
+        fn the_alpine_root_password_is_handed_over_as_the_bootstrap_secret() {
             let app = App {
                 user: "pi".into(),
                 password: Zeroizing::new("ssh-password".into()),
@@ -1875,28 +2030,30 @@ mod desktop {
 
             let connection = app.connection().unwrap_or_else(|error| panic!("{error}"));
             assert_eq!(
-                connection.password.as_ref().map(Secret::expose),
+                connection
+                    .password
+                    .as_ref()
+                    .map(omt_deployer_core::Secret::expose),
                 Some("ssh-password")
             );
             assert_eq!(
-                connection.sudo_password.as_ref().map(Secret::expose),
+                connection
+                    .sudo_password
+                    .as_ref()
+                    .map(omt_deployer_core::Secret::expose),
                 Some("sudo-password")
             );
             assert_eq!(
                 connection
                     .bootstrap_root_password
                     .as_ref()
-                    .map(Secret::expose),
+                    .map(omt_deployer_core::Secret::expose),
                 Some("root-password")
             );
-        }
 
-        #[test]
-        fn alpine_root_password_is_the_bootstrap_secret() {
             let without_root = App {
-                user: "pi".into(),
-                password: Zeroizing::new("ssh-password".into()),
-                ..App::default()
+                os_root_password: Zeroizing::new(String::new()),
+                ..app
             };
             assert!(
                 without_root
@@ -1905,6 +2062,23 @@ mod desktop {
                     .bootstrap_root_password
                     .is_none()
             );
+        }
+
+        /// A worker that dies without reporting used to leave `events` set for
+        /// the rest of the session, and with it every button disabled.
+        #[test]
+        fn a_worker_that_vanishes_still_ends_the_job() {
+            let mut app = App::default();
+            let (tx, rx) = mpsc::channel();
+            app.events = Some(rx);
+            assert!(app.running());
+
+            drop(tx);
+            let context = egui::Context::default();
+            app.poll_worker(&context);
+
+            assert!(!app.running());
+            assert_eq!(app.activity.line_count(), 1);
         }
 
         #[test]

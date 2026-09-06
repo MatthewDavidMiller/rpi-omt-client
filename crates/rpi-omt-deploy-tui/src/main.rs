@@ -20,6 +20,7 @@ mod app;
 mod ui;
 
 use app::{App, View};
+use crossterm::cursor::Show;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use crossterm::execute;
 use crossterm::terminal::{
@@ -38,6 +39,7 @@ use std::time::Duration;
 const TICK: Duration = Duration::from_millis(100);
 
 fn main() -> io::Result<()> {
+    install_panic_hook();
     let mut terminal = enter()?;
     let outcome = run(&mut terminal);
     // Restore the terminal even when the loop failed: leaving a console in raw
@@ -45,6 +47,22 @@ fn main() -> io::Result<()> {
     // unusable, which is a worse outcome than whatever went wrong.
     let restored = leave(&mut terminal);
     outcome.and(restored)
+}
+
+/// Restore the terminal before a panic reaches the operator.
+///
+/// The `Err` path above cannot cover this one: the release profile aborts on
+/// panic, so without a hook the process dies with raw mode and the alternate
+/// screen still active and the panic message painted somewhere the shell will
+/// never show again. The hook runs before the abort, and chaining to the
+/// previous one keeps the message itself.
+fn install_panic_hook() {
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let _ = disable_raw_mode();
+        let _ = execute!(io::stdout(), LeaveAlternateScreen, Show);
+        previous(info);
+    }));
 }
 
 fn enter() -> io::Result<Terminal<CrosstermBackend<Stdout>>> {
@@ -91,7 +109,9 @@ fn handle_key(app: &mut App, key: KeyEvent) {
 
     let control = key.modifiers.contains(KeyModifiers::CONTROL);
     match key.code {
-        KeyCode::Char('q') if control => app.should_quit = true,
+        // Quitting with a job running abandons a worker that may be
+        // mid-transaction, so it is confirmed rather than immediate.
+        KeyCode::Char('q') if control => app.request_quit(),
         KeyCode::Char('c') if control => {
             // Ctrl+C stops the job rather than the program while one is
             // running: a half-finished deployment should be told to stop.
@@ -164,6 +184,13 @@ fn scroll(app: &mut App, direction: isize) {
 
 fn scroll_log(app: &mut App, direction: isize) {
     if direction < 0 {
+        // Leaving the tail starts from the tail. `log_scroll` is not tracked
+        // while the view follows, so paging up from a following view used to
+        // move from zero and land on the oldest line of the run -- the
+        // opposite end of the log from the one being read.
+        if app.follow_log {
+            app.log_scroll = app.log.len().saturating_sub(1);
+        }
         app.follow_log = false;
         app.log_scroll = app.log_scroll.saturating_sub(10);
     } else {
@@ -173,5 +200,64 @@ fn scroll_log(app: &mut App, direction: isize) {
         if app.log_scroll >= app.log.len() {
             app.follow_log = true;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{App, scroll_log};
+
+    fn with_log(lines: usize) -> App {
+        let mut app = App::default();
+        for index in 0..lines {
+            app.push_log(index.to_string());
+        }
+        app
+    }
+
+    /// A deployment scrolls past hundreds of lines, and the reason to page up
+    /// is always something just above the tail. Paging up used to move from a
+    /// `log_scroll` that had never left zero, so the first press jumped to the
+    /// oldest line of the run and getting back took a press per ten lines.
+    #[test]
+    fn paging_up_leaves_the_tail_rather_than_the_beginning() {
+        let mut app = with_log(500);
+        assert!(app.follow_log);
+
+        scroll_log(&mut app, -1);
+
+        assert!(!app.follow_log);
+        assert_eq!(app.log_scroll, 489);
+    }
+
+    /// Paging back down returns to following, from one page rather than fifty.
+    #[test]
+    fn paging_back_down_resumes_following() {
+        let mut app = with_log(500);
+        scroll_log(&mut app, -1);
+        scroll_log(&mut app, 1);
+        assert_eq!(app.log_scroll, 499);
+
+        scroll_log(&mut app, 1);
+        assert!(app.follow_log);
+    }
+
+    /// Repeated pages still reach the oldest line, and stop there.
+    #[test]
+    fn paging_up_stops_at_the_start_of_the_log() {
+        let mut app = with_log(30);
+        for _ in 0..10 {
+            scroll_log(&mut app, -1);
+        }
+        assert_eq!(app.log_scroll, 0);
+        assert!(!app.follow_log);
+    }
+
+    /// An empty log has no tail to leave.
+    #[test]
+    fn paging_an_empty_log_is_harmless() {
+        let mut app = with_log(0);
+        scroll_log(&mut app, -1);
+        assert_eq!(app.log_scroll, 0);
     }
 }

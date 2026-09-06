@@ -89,18 +89,37 @@ fn draw_tabs(frame: &mut Frame, area: Rect, app: &App) {
 }
 
 /// One row per slot: label on the left, value or control on the right.
+///
+/// Only the rows that fit are drawn, and the window follows the focus. Every
+/// row used to be laid out unconditionally, which on a view with more slots
+/// than the terminal has lines gave the surplus rows a height of zero: they
+/// vanished while remaining focusable, so on a short terminal the Alpine view
+/// offered an invisible button that erases the Pi's disk.
 fn draw_form(frame: &mut Frame, area: Rect, app: &App, view: View) {
     let slots = view.slots();
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(format!(" {} ", view.title()));
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
+    let inner = Block::default().borders(Borders::ALL).inner(area);
+    let visible = usize::from(inner.height).max(1).min(slots.len());
+    let first = first_visible_slot(app.focus, slots.len(), visible);
+    let shown = &slots[first..(first + visible).min(slots.len())];
+
+    let mut title = format!(" {} ", view.title());
+    if visible < slots.len() {
+        // The same report `draw_activity` makes: a view that is showing part
+        // of itself has to say so, or the missing rows read as absent ones.
+        title = format!(
+            " {} (fields {}-{} of {}) ",
+            view.title(),
+            first + 1,
+            first + visible,
+            slots.len()
+        );
+    }
+    frame.render_widget(Block::default().borders(Borders::ALL).title(title), area);
 
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints(
-            slots
+            shown
                 .iter()
                 .map(|_| Constraint::Length(1))
                 .chain(std::iter::once(Constraint::Min(0)))
@@ -108,33 +127,76 @@ fn draw_form(frame: &mut Frame, area: Rect, app: &App, view: View) {
         )
         .split(inner);
 
-    for (index, slot) in slots.iter().enumerate() {
-        let Some(row) = rows.get(index) else { continue };
+    let gutter = label_width(inner.width);
+    let value_columns = usize::from(inner.width).saturating_sub(gutter);
+    for (offset, slot) in shown.iter().enumerate() {
+        let Some(row) = rows.get(offset) else {
+            continue;
+        };
+        let index = first + offset;
         let focused = index == app.focus;
-        frame.render_widget(Paragraph::new(row_line(app, *slot, focused)), *row);
+        let scroll = if focused {
+            value_scroll(app.cursor, value_columns)
+        } else {
+            0
+        };
+        frame.render_widget(
+            Paragraph::new(row_line(app, *slot, focused, gutter, scroll)),
+            *row,
+        );
 
         // Put the real terminal cursor where the edit will land, so the
         // operator's own terminal shows the insertion point.
         if focused && matches!(slot.kind(), Kind::Text | Kind::Secret) {
-            let prefix = clamp_u16(label_width(*slot) + app.cursor);
+            let prefix = clamp_u16(gutter + app.cursor.saturating_sub(scroll));
             frame.set_cursor_position((row.x.saturating_add(prefix), row.y));
         }
     }
 }
 
-fn label_width(slot: Slot) -> usize {
-    // A fixed gutter keeps the values aligned down the view rather than
-    // stepping in and out with the length of each label.
-    let _ = slot;
-    32
+/// The first slot of the window of `visible` rows that contains `focus`.
+///
+/// Paged rather than line-by-line at the ends: the focus is kept on screen,
+/// and the last page is full rather than trailing off past the final slot.
+fn first_visible_slot(focus: usize, count: usize, visible: usize) -> usize {
+    let last_page = count.saturating_sub(visible);
+    focus
+        .saturating_sub(visible.saturating_sub(1))
+        .min(last_page)
 }
 
-fn row_line(app: &App, slot: Slot, focused: bool) -> Line<'static> {
+/// How many characters of a value to skip so the cursor stays on screen.
+fn value_scroll(cursor: usize, columns: usize) -> usize {
+    cursor.saturating_sub(columns.saturating_sub(1))
+}
+
+/// The label gutter for a view this wide.
+///
+/// Proportional rather than a fixed 32 columns, which at the narrowest
+/// supported width left six columns for the value: a path or a host name was
+/// then unreadable in the field being typed into.
+fn label_width(width: u16) -> usize {
+    (usize::from(width) / 2).clamp(12, 32)
+}
+
+/// `text` cut to `width` characters, with an ellipsis when it does not fit.
+fn truncate(text: &str, width: usize) -> String {
+    if text.chars().count() <= width {
+        return text.to_owned();
+    }
+    let mut cut: String = text.chars().take(width.saturating_sub(1)).collect();
+    cut.push('~');
+    cut
+}
+
+fn row_line(app: &App, slot: Slot, focused: bool, gutter: usize, scroll: usize) -> Line<'static> {
     let marker = if focused { "> " } else { "  " };
+    // Truncated to the gutter so a long label cannot push its value out of
+    // line with every other row, or past the cursor the edit is drawn at.
     let label = format!(
         "{marker}{:<width$}",
-        slot.label(),
-        width = label_width(slot) - 2
+        truncate(slot.label(), gutter - 2),
+        width = gutter - 2
     );
     let style = if focused { FOCUS } else { Style::default() };
 
@@ -163,6 +225,7 @@ fn row_line(app: &App, slot: Slot, focused: bool) -> Line<'static> {
             }
         }
     };
+    let value: String = value.chars().skip(scroll).collect();
     Line::from(vec![Span::styled(label, style), Span::raw(value)])
 }
 
@@ -227,11 +290,12 @@ fn about_text(width: usize) -> Vec<String> {
         "  F1-F8 / Ctrl+Left / Ctrl+Right   switch view".to_owned(),
         "  Tab / Shift+Tab                  move between fields".to_owned(),
         "  Enter                            toggle, or run the focused action".to_owned(),
+        "  y / n                            answer a confirmation".to_owned(),
         "  Ctrl+R                           reveal or hide secrets".to_owned(),
         "  Esc                              cancel a running job".to_owned(),
         "  PageUp / PageDown / Up / Down    scroll Activity and About".to_owned(),
         "  Home / End                       jump to the ends of this view".to_owned(),
-        "  Ctrl+Q                           quit".to_owned(),
+        "  Ctrl+Q                           quit, asking while a job runs".to_owned(),
     ]
     .join("\n");
 
@@ -469,11 +533,99 @@ mod tests {
 
     /// What a terminal would show, as text.
     fn render(app: &App) -> String {
-        let backend = TestBackend::new(80, 30);
+        render_at(app, 80, 30)
+    }
+
+    fn render_at(app: &App, width: u16, height: u16) -> String {
+        let backend = TestBackend::new(width, height);
         let mut terminal = Terminal::new(backend).unwrap_or_else(|error| panic!("{error}"));
         terminal
             .draw(|frame| draw(frame, app))
             .unwrap_or_else(|error| panic!("{error}"));
         terminal.backend().to_string()
+    }
+
+    /// A row that cannot be drawn is still focusable, so on a terminal too
+    /// short for the whole form the view has to move to the focus. The Alpine
+    /// view's ninth row runs a disk-erasing install; offering it invisibly is
+    /// how an operator presses Enter on something they cannot see.
+    #[test]
+    fn a_short_terminal_scrolls_the_form_to_the_focused_row() {
+        let mut app = App::default();
+        app.select_view(View::Alpine);
+        let slots = View::Alpine.slots().len();
+        assert!(slots > 5, "this test needs a form taller than the window");
+
+        // 14 rows: 3 header, 3 status, 2 borders, 6 for nine fields.
+        let top = render_at(&app, 80, 14);
+        assert!(top.contains("Appliance hostname"), "{top}");
+        assert!(!top.contains("Run Alpine setup"), "{top}");
+
+        app.focus = slots - 1;
+        let bottom = render_at(&app, 80, 14);
+        assert!(bottom.contains("Run Alpine setup"), "{bottom}");
+        assert!(bottom.contains("fields"), "the view must say it is partial");
+    }
+
+    /// The whole form still fits when there is room, and says nothing about
+    /// scrolling.
+    #[test]
+    fn a_tall_terminal_shows_every_row_at_once() {
+        let mut app = App::default();
+        app.select_view(View::Alpine);
+        let full = render_at(&app, 80, 30);
+        assert!(full.contains("Appliance hostname"), "{full}");
+        assert!(full.contains("Run Alpine setup"), "{full}");
+        assert!(!full.contains("fields 1-"), "{full}");
+    }
+
+    /// At the narrowest supported width a fixed 32-column gutter left six
+    /// columns for the value, so the field being typed into showed nothing
+    /// useful. The gutter follows the width, and the value follows the cursor.
+    #[test]
+    fn a_narrow_terminal_shows_the_end_of_the_value_being_typed() {
+        let mut app = App::default();
+        app.select_view(View::SdCard);
+        app.focus = 0;
+        let path = "/run/media/operator/ALPINE-BOOT-PARTITION";
+        app.boot_directory = path.into();
+        app.cursor = path.chars().count();
+
+        let narrow = render_at(&app, 40, 20);
+        assert!(
+            narrow.contains("PARTITION"),
+            "the cursor end of the value is off screen: {narrow}"
+        );
+    }
+
+    /// The gutter never takes so much of a row that nothing is left for the
+    /// value, and never grows past the width the labels were written for.
+    #[test]
+    fn the_label_gutter_leaves_room_for_a_value() {
+        for width in [38, 40, 60, 80, 200] {
+            let gutter = label_width(width);
+            assert!((12..=32).contains(&gutter), "{width}: {gutter}");
+            assert!(gutter < usize::from(width), "{width}: {gutter}");
+        }
+        assert_eq!(truncate("short", 10), "short");
+        assert_eq!(truncate("far too long to fit", 10), "far too l~");
+    }
+
+    /// The window is paged and clamped: the focus is always inside it, and the
+    /// last page is full rather than trailing off past the final row.
+    #[test]
+    fn the_visible_window_always_contains_the_focus() {
+        for count in 1_usize..12 {
+            for visible in 1..=count {
+                for focus in 0..count {
+                    let first = first_visible_slot(focus, count, visible);
+                    assert!(first + visible <= count, "{count}/{visible}/{focus}");
+                    assert!(
+                        (first..first + visible).contains(&focus),
+                        "{count}/{visible}/{focus}: window started at {first}"
+                    );
+                }
+            }
+        }
     }
 }

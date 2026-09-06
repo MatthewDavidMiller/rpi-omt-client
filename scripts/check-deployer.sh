@@ -28,8 +28,15 @@ rustup target list --installed 2>/dev/null | grep -Fxq "${TARGET}" || {
     exit 1
 }
 
+# The egui deployer is in this test set even though its binary is a Windows
+# artifact built elsewhere. Its `gates`, `layout`, and `activity` modules are
+# deliberately outside the `desktop` feature -- a disabled button is a
+# validation rule, and restating the core's rules in a view is how the Wi-Fi
+# button once accepted a passphrase `validate_wifi` refused -- so they compile
+# and run here with no eframe and no display. Only the tests inside the
+# `desktop` module itself are left to the cross build's Clippy pass.
 RPI_OMT_CLIENT_VERSION="${VERSION}" cargo test --locked \
-    -p omt-deployer-core -p rpi-omt-deploy -p rpi-omt-deploy-tui
+    -p omt-deployer-core -p rpi-omt-deploy -p rpi-omt-deploy-tui -p rpi-omt-deployer
 
 # .cargo/config.toml turns crt-static *off* for both musl targets, because the
 # receiver links Alpine's alsa-lib and there is no libasound.a to link against.

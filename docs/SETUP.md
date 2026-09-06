@@ -222,7 +222,9 @@ The Alpine view runs `setup-alpine` equivalent configuration and a persistent
 `sys` install: hostname, optional Wi-Fi (a blank SSID keeps an existing
 boot-partition association), DHCP for IPv4, user `pi` in `wheel`,
 root and `pi` passwords, and US HTTPS apk mirrors. It erases the boot disk and
-reboots. Deploy uploads, verifies, and installs the embedded capsule, naming
+reboots, so both deployers confirm it before it starts: the GUI with a
+**Confirm Alpine install** button, the terminal application with a `y`/`n`
+prompt. Deploy uploads, verifies, and installs the embedded capsule, naming
 the archive it carries before it sends it; the only field is the remote
 directory. Web GUI password
 rotation is off by default; enable **Rotate the Web GUI password after deploy**
@@ -253,6 +255,14 @@ running it. The GUI puts each text behind a collapsing header; the terminal
 application has no such widget, so About is one document there -- version,
 capsule digest, keys, license, notices -- scrolled with PageUp/PageDown,
 Up/Down, Home, and End.
+
+The terminal application fits itself to the window it is given rather than
+requiring a large one. A view with more fields than the terminal has lines
+scrolls to whichever field is focused and says which of them are on screen, and
+a narrow terminal shortens the label column and scrolls the value being typed
+so the cursor stays visible. `Ctrl+Q` quits, asking first when a job is still
+running: quitting stops watching a deployment rather than stopping it, so
+cancel with `Esc` or `Ctrl+C` first if it should not finish.
 
 The application does not otherwise rely on the working directory it happens to
 inherit from a shell or a desktop shortcut, and it reads no file beside itself:

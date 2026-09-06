@@ -8,7 +8,7 @@ mod ssh;
 mod tools;
 
 pub use capsule::{CapsuleMember, IMAGE_MEMBER, embedded_image, embedded_member, embedded_members};
-pub use jobs::{Job, JobRequest, WorkerEvent, run_job};
+pub use jobs::{ConnectionFields, Job, JobRequest, WorkerEvent, connection_from_fields, run_job};
 pub use ops::{
     alpine_setup, apply_wifi, change_web_password, connect, deploy, manage, set_hostname,
     test_connection,
