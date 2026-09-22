@@ -29,7 +29,7 @@
 | `OMT_BOARD_LABEL` | Detected board, written by the installer; defaults to `Raspberry Pi` |
 | `OMT_VIDEO_CEILING` | The board's decode ceiling, written by the installer; defaults to `1920x1080@60` |
 | `OMT_VIDEO_CEILING_FILE` | `$OMT_CONFIG_DIR/video_ceiling.json`, the operator's override of `OMT_VIDEO_CEILING` |
-| `OMT_PLAYOUT_DELAY_FILE` | `$OMT_CONFIG_DIR/playout_delay.json`, the operator's override of the 4 second Wi-Fi playout delay |
+| `OMT_PLAYOUT_DELAY_FILE` | `$OMT_CONFIG_DIR/playout_delay.json`, the operator's playout delay in milliseconds; absent means 0 |
 | `OMT_DIAGNOSTICS_HOST_REPORT_FILE` | `/host-diagnostics/host-report.txt` |
 | `OMT_DIAGNOSTICS_HOST_REQUEST_FILE` | `/host-diagnostics/request` |
 | `OMT_DIAGNOSTICS_HOST_PCAP_FILE` | `/host-diagnostics/host-network.pcap` |
@@ -69,7 +69,7 @@ startup instead of silently enabling the diagnostics receive probe.
 | `web_sessions.json` | Schema 2 bounded HMAC-digested session registry |
 | `source_target.json` | Schema 1; either `{"kind":"discovered","name":...}` or `{"kind":"direct","uri":"omt://..."}` |
 | `video_ceiling.json` | Schema 1 operator override of the board decode ceiling |
-| `playout_delay.json` | Schema 1 operator override of the playout delay in whole seconds (0–8); absent restores 4 |
+| `playout_delay.json` | Schema 2 `{"schema":2,"milliseconds":N}` operator playout delay (0–8000 ms); absent means 0. A schema 1 file (whole seconds, from earlier releases) is ignored |
 | `omt/settings.xml` | `<Settings>` with at most one `<DiscoveryServer>` |
 | `ssl/key.pem`, `ssl/cert.pem` | Entrypoint-managed HTTPS key/certificate |
 | `receiver.log` | Appended receiver stdout/stderr; kept here so it outlives a restart |

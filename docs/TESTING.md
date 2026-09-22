@@ -386,11 +386,11 @@ decode throughput, so a pass on one is not evidence for another:
      is armed only by a channel that reports itself disconnected. This is the
      shape a firewall, a NAT timeout, or an access point that forgets the
      association produces — and the same shape as a 3.5 s Wi-Fi HOL stall
-     against vMix. With the default 4 s playout delay, induce ~3.5 s of delay
-     on the video port (or equivalent Wi-Fi latency) and confirm: picture and
-     sound continue from the queue, no `OMT frame was truncated by a timeout`,
-     no session rebuild, and the dashboard names ~4 s of buffer. The picture
-     is 4 s behind the sender by design. A stall longer than the remaining
+     against vMix. With the playout delay set to 4000 ms, induce ~3.5 s of
+     delay on the video port (or equivalent Wi-Fi latency) and confirm:
+     picture and sound continue from the queue, no `OMT frame was truncated
+     by a timeout`, no session rebuild, and the dashboard names ~4000 ms of
+     buffer. The picture is 4 s behind the sender by design. A stall longer than the remaining
      buffer holds the last DRM frame, counts a buffer underrun, and keeps TCP
      up while the queue refills; vMix will have dropped in-flight extras, so
      the next frames are live rather than a catch-up burst. Only after the

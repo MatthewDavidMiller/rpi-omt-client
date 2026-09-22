@@ -77,6 +77,16 @@ pub struct Scaler {
     rows: Vec<usize>,
     /// Pixel index of each destination column within its source row.
     columns: Vec<usize>,
+    /// One destination row, gathered in cached memory.
+    ///
+    /// The destination is a DRM dumb buffer, which the CPU maps
+    /// write-combined: stores to it are cheap when they are wide and
+    /// sequential, and every load from it bypasses the cache and stalls. So a
+    /// row is gathered here pixel by pixel and reaches the scanout buffer as
+    /// one contiguous copy, and a source row that several destination rows
+    /// sample is gathered once and copied again from here rather than read
+    /// back out of the scanout buffer.
+    row: Vec<u8>,
 }
 
 impl Scaler {
@@ -117,12 +127,21 @@ impl Scaler {
         for x in 0..placement.width {
             columns.push(sample(x, placement.width, source_width));
         }
+        let row_bytes = placement
+            .width
+            .checked_mul(4)
+            .ok_or_else(|| "Video mode is too wide to scale into".to_owned())?;
+        let mut row = Vec::new();
+        row.try_reserve_exact(row_bytes)
+            .map_err(|_| "Unable to reserve the scaler row buffer".to_owned())?;
+        row.resize(row_bytes, 0);
         Ok(Self {
             placement,
             source_stride,
             source_row_bytes,
             rows,
             columns,
+            row,
         })
     }
 
@@ -149,7 +168,7 @@ impl Scaler {
     /// scaler was built for. Both are sized by this process, so a failure here
     /// is a bug rather than something the stream can provoke.
     pub fn render(
-        &self,
+        &mut self,
         source: &[u8],
         destination: &mut [u8],
         destination_stride: usize,
@@ -184,24 +203,37 @@ impl Scaler {
             return Err(short());
         }
 
-        for (index, &source_offset) in self.rows.iter().enumerate() {
+        let Self {
+            rows,
+            columns,
+            row,
+            source_row_bytes,
+            ..
+        } = self;
+        if row.len() != row_bytes {
+            return Err(short());
+        }
+        // Enlargement samples the same source row for several destination
+        // rows in a run, so the gathered row is reused until the source row
+        // changes.
+        let mut gathered = None;
+        for (index, &source_offset) in rows.iter().enumerate() {
+            if gathered != Some(source_offset) {
+                let source_row = source
+                    .get(source_offset..source_offset + *source_row_bytes)
+                    .ok_or_else(short)?;
+                let (source_pixels, _) = source_row.as_chunks::<4>();
+                for (pixel, &column) in row.chunks_exact_mut(4).zip(columns.iter()) {
+                    let sample = source_pixels.get(column).ok_or_else(short)?;
+                    pixel.copy_from_slice(sample);
+                }
+                gathered = Some(source_offset);
+            }
             let start = index * destination_stride;
-            // Enlargement often samples the same source row more than once.
-            // Reuse the already resampled pixels without touching padding/bars.
-            if index > 0 && self.rows[index - 1] == source_offset {
-                let previous = start - destination_stride;
-                region.copy_within(previous..previous + row_bytes, start);
-                continue;
-            }
-            let source_row = source
-                .get(source_offset..source_offset + self.source_row_bytes)
-                .ok_or_else(short)?;
-            let (source_pixels, _) = source_row.as_chunks::<4>();
-            let destination_row = region.get_mut(start..start + row_bytes).ok_or_else(short)?;
-            for (pixel, &column) in destination_row.chunks_exact_mut(4).zip(&self.columns) {
-                let sample = source_pixels.get(column).ok_or_else(short)?;
-                pixel.copy_from_slice(sample);
-            }
+            region
+                .get_mut(start..start + row_bytes)
+                .ok_or_else(short)?
+                .copy_from_slice(row);
         }
         Ok(())
     }
@@ -317,7 +349,7 @@ mod tests {
     fn an_unscaled_placement_copies_the_frame() {
         let source: Vec<u8> = (0..64_u8).collect();
         let placement = placement_of((4, 4), (4, 4));
-        let scaler = scaler_of((4, 4), 16, placement);
+        let mut scaler = scaler_of((4, 4), 16, placement);
         let mut destination = vec![0_u8; 16 * 4];
         scaler
             .render(&source, &mut destination, 16)
@@ -344,7 +376,7 @@ mod tests {
             width: 2,
             height: 1,
         };
-        let scaler = scaler_of((4, 2), 16, placement);
+        let mut scaler = scaler_of((4, 2), 16, placement);
         let mut destination = vec![0_u8; 4 * 4];
         scaler
             .render(&source, &mut destination, 16)
@@ -363,7 +395,7 @@ mod tests {
     #[test]
     fn an_undersized_buffer_is_an_error_not_a_panic() {
         let placement = placement_of((4, 4), (4, 4));
-        let scaler = scaler_of((4, 4), 16, placement);
+        let mut scaler = scaler_of((4, 4), 16, placement);
         let source = vec![0_u8; 4 * 4 * 4];
         let mut destination = vec![0_u8; 16];
         assert!(scaler.render(&source, &mut destination, 16).is_err());
@@ -375,7 +407,7 @@ mod tests {
         let placement = placement_of((4, 4), (4, 4));
         assert!(Scaler::new((4, 4), 15, placement).is_err());
         assert!(Scaler::new((0, 4), 16, placement).is_err());
-        let scaler = scaler_of((4, 4), 16, placement);
+        let mut scaler = scaler_of((4, 4), 16, placement);
         assert_eq!(scaler.source_stride(), 16);
         assert_eq!(scaler.placement(), placement);
         let source = vec![0_u8; 4 * 4 * 4];
@@ -438,7 +470,7 @@ mod tests {
             )
             .is_err()
         );
-        let scaler = scaler_of((4, 4), 16, placement);
+        let mut scaler = scaler_of((4, 4), 16, placement);
         assert!(scaler.render(&[0; 64], &mut [0; 64], usize::MAX).is_err());
         assert_eq!(
             Placement::fit((usize::MAX, usize::MAX), (4, 4)),

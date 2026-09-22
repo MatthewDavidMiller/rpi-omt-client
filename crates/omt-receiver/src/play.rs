@@ -88,6 +88,12 @@ const RECOVER_TIMEOUT: Duration = Duration::from_secs(1);
 /// After one A/V queue has filled, wait this long for the other before
 /// starting alone. Missing audio must not block HDMI.
 const PEER_WAIT: Duration = Duration::from_secs(1);
+/// Granularity of the buffered time in the running detail.
+const BUFFERED_STEP: Duration = Duration::from_millis(100);
+/// How long the audio worker waits on its socket while the ALSA ring is at
+/// its fill target and frames are queued: about one ALSA period, so the ring
+/// is topped up as the device drains it.
+const AUDIO_FEED: Duration = Duration::from_millis(20);
 /// Tiny receive slice used to copy frames already in the kernel buffer
 /// without waiting, so a present deadline is not starved.
 const DRAIN_SLICE: Duration = Duration::from_millis(1);
@@ -99,8 +105,8 @@ pub struct Options {
     /// What this board is allowed to attempt, from the installer's board
     /// profile or the operator's override.
     pub ceiling: VideoCeiling,
-    /// Operator playout delay. Zero is the official low-latency profile;
-    /// four seconds is the Wi-Fi default.
+    /// Operator playout delay, 0 to 8000 ms. Zero, the default, is the
+    /// low-latency profile; a few seconds rides out Wi-Fi stalls.
     pub playout_delay: Duration,
 }
 
@@ -202,8 +208,8 @@ fn session(
         "Waiting for OMT media.".to_owned()
     } else {
         format!(
-            "Waiting for {} second playout buffer.",
-            options.playout_delay.as_secs()
+            "Waiting for {} ms playout buffer.",
+            options.playout_delay.as_millis()
         )
     };
     note_status(
@@ -247,7 +253,13 @@ fn session(
             now + RECEIVE_SLICE
         };
 
-        match drain_video(&mut video, &mut queue, playing, wait_until) {
+        match drain(
+            &mut video,
+            &mut queue,
+            FrameType::Video,
+            playing,
+            wait_until,
+        ) {
             Ok(received) => {
                 if received {
                     attempts = 0;
@@ -352,6 +364,7 @@ fn session(
                         break;
                     }
                 }
+                queue.recycle(frame.payload);
             } else {
                 underruns = underruns.saturating_add(1);
                 playing = false;
@@ -402,49 +415,24 @@ fn session(
     failure.map_or(Ok(()), Err)
 }
 
-/// Copies every complete video frame the socket will give without stalling the
-/// accept path, then waits until `wait_until` for the next one if a present is
-/// not already due.
-fn drain_video(
+/// Copies every complete frame of `kind` the socket will give without
+/// stalling the accept path, then waits until `wait_until` for the next one if
+/// nothing is already due.
+fn drain(
     channel: &mut Channel,
     queue: &mut Queue,
+    kind: FrameType,
     playing: bool,
     wait_until: Instant,
 ) -> Result<bool, String> {
-    let mut received = false;
-    loop {
-        match channel.receive(Instant::now() + DRAIN_SLICE) {
-            Ok(frame) => {
-                if frame.header.frame_type == FrameType::Video {
-                    queue.push(channel.take_frame(), playing);
-                    received = true;
-                }
-            }
-            Err(error) if error.kind() == ErrorKind::WouldBlock => break,
-            Err(error) => return Err(error.to_string()),
-        }
-    }
+    let mut received = drain_ready(channel, queue, kind, playing)?;
     if remaining(wait_until).is_zero() {
         return Ok(received);
     }
     match channel.receive(wait_until) {
-        Ok(frame) => {
-            if frame.header.frame_type == FrameType::Video {
-                queue.push(channel.take_frame(), playing);
-                received = true;
-            }
-            loop {
-                match channel.receive(Instant::now() + DRAIN_SLICE) {
-                    Ok(frame) => {
-                        if frame.header.frame_type == FrameType::Video {
-                            queue.push(channel.take_frame(), playing);
-                            received = true;
-                        }
-                    }
-                    Err(error) if error.kind() == ErrorKind::WouldBlock => break,
-                    Err(error) => return Err(error.to_string()),
-                }
-            }
+        Ok(_) => {
+            received |= accept(channel, queue, kind, playing);
+            received |= drain_ready(channel, queue, kind, playing)?;
             Ok(received)
         }
         Err(error) if error.kind() == ErrorKind::WouldBlock => Ok(received),
@@ -452,51 +440,32 @@ fn drain_video(
     }
 }
 
-fn drain_audio(
+/// Reads frames already in the kernel buffer, each on a [`DRAIN_SLICE`].
+fn drain_ready(
     channel: &mut Channel,
     queue: &mut Queue,
+    kind: FrameType,
     playing: bool,
-    wait_until: Instant,
 ) -> Result<bool, String> {
     let mut received = false;
     loop {
         match channel.receive(Instant::now() + DRAIN_SLICE) {
-            Ok(frame) => {
-                if frame.header.frame_type == FrameType::Audio {
-                    queue.push(channel.take_frame(), playing);
-                    received = true;
-                }
-            }
-            Err(error) if error.kind() == ErrorKind::WouldBlock => break,
+            Ok(_) => received |= accept(channel, queue, kind, playing),
+            Err(error) if error.kind() == ErrorKind::WouldBlock => return Ok(received),
             Err(error) => return Err(error.to_string()),
         }
     }
-    if remaining(wait_until).is_zero() {
-        return Ok(received);
+}
+
+/// Moves the frame just received into the queue when it is the wanted kind,
+/// handing the channel a recycled buffer to read the next one into.
+fn accept(channel: &mut Channel, queue: &mut Queue, kind: FrameType, playing: bool) -> bool {
+    if channel.frame().header.frame_type != kind {
+        return false;
     }
-    match channel.receive(wait_until) {
-        Ok(frame) => {
-            if frame.header.frame_type == FrameType::Audio {
-                queue.push(channel.take_frame(), playing);
-                received = true;
-            }
-            loop {
-                match channel.receive(Instant::now() + DRAIN_SLICE) {
-                    Ok(frame) => {
-                        if frame.header.frame_type == FrameType::Audio {
-                            queue.push(channel.take_frame(), playing);
-                            received = true;
-                        }
-                    }
-                    Err(error) if error.kind() == ErrorKind::WouldBlock => break,
-                    Err(error) => return Err(error.to_string()),
-                }
-            }
-            Ok(received)
-        }
-        Err(error) if error.kind() == ErrorKind::WouldBlock => Ok(received),
-        Err(error) => Err(error.to_string()),
-    }
+    let spare = queue.spare();
+    queue.push(channel.take_frame(spare), playing);
+    true
 }
 
 /// One in-session reconnect to the endpoint this session already resolved.
@@ -516,13 +485,15 @@ fn recover_video(channel: &mut Channel, endpoint: &Endpoint) -> Result<(), Strin
 /// The running message, with this session's delay, buffer, and counts.
 ///
 /// The playback loop republishes the running state for every frame it displays,
-/// so this is rebuilt only when a count moves, the delay or buffered seconds
-/// change, or the presenter's sentence changes: a healthy session formats one
-/// string until something it names moves.
+/// so this is rebuilt only when a count moves, the delay or the buffered time
+/// (to [`BUFFERED_STEP`]) changes, or the presenter's sentence changes: a
+/// healthy session formats one string until something it names moves. Every
+/// rebuild is a changed status document and so a status-file write, which is
+/// why the buffered time is coarse rather than per frame.
 #[derive(Default)]
 struct RunningDetail {
-    delay_secs: u64,
-    buffered_secs: u64,
+    delay_ms: u128,
+    buffered_steps: u128,
     reconnects: u64,
     skipped: u64,
     underruns: u64,
@@ -540,20 +511,20 @@ impl RunningDetail {
         skipped: u64,
         underruns: u64,
     ) -> &str {
-        let delay_secs = delay.as_secs();
-        let buffered_secs = buffered.as_secs();
+        let delay_ms = delay.as_millis();
+        let buffered_steps = buffered.as_millis() / BUFFERED_STEP.as_millis();
         if self.reconnects != reconnects
             || self.skipped != skipped
             || self.underruns != underruns
-            || self.delay_secs != delay_secs
-            || self.buffered_secs != buffered_secs
+            || self.delay_ms != delay_ms
+            || self.buffered_steps != buffered_steps
             || self.base != base
         {
             self.reconnects = reconnects;
             self.skipped = skipped;
             self.underruns = underruns;
-            self.delay_secs = delay_secs;
-            self.buffered_secs = buffered_secs;
+            self.delay_ms = delay_ms;
+            self.buffered_steps = buffered_steps;
             base.clone_into(&mut self.base);
             self.text = describe_running(base, delay, buffered, reconnects, skipped, underruns);
         }
@@ -572,10 +543,11 @@ fn describe_running(
     let mut text = if delay.is_zero() {
         base.to_owned()
     } else {
+        let step = BUFFERED_STEP.as_millis();
         format!(
-            "{base} {}s playout delay (~{}s buffered).",
-            delay.as_secs(),
-            buffered.as_secs()
+            "{base} {} ms playout delay (~{} ms buffered).",
+            delay.as_millis(),
+            buffered.as_millis() / step * step
         )
     };
     if reconnects > 0 && skipped > 0 {
@@ -719,20 +691,21 @@ fn audio_loop(context: &AudioContext) {
                 let mut stalled = Instant::now() + MEDIA_STALL;
                 let mut queue = Queue::audio(context.delay);
                 let mut playing = false;
-                let mut next_due = Instant::now();
                 let mut filled_at = None;
-                let mut frame_interval = None;
                 while context.wanted() {
-                    let now = Instant::now();
-                    let present_due = playing && now >= next_due;
-                    let wait_until = if present_due {
-                        now
-                    } else if playing {
-                        next_due.min(now + RECEIVE_SLICE)
-                    } else {
-                        now + RECEIVE_SLICE
-                    };
-                    match drain_audio(&mut channel, &mut queue, playing, wait_until) {
+                    // Paced by the device, not the wall clock: while there is
+                    // audio queued and the ring is full, wake once a period
+                    // to top it up; otherwise sleep on the socket.
+                    let feeding = playing && !queue.is_empty();
+                    let wait_until =
+                        Instant::now() + if feeding { AUDIO_FEED } else { RECEIVE_SLICE };
+                    match drain(
+                        &mut channel,
+                        &mut queue,
+                        FrameType::Audio,
+                        playing,
+                        wait_until,
+                    ) {
                         Ok(received) => {
                             if received {
                                 stalled = Instant::now() + MEDIA_STALL;
@@ -745,46 +718,54 @@ fn audio_loop(context: &AudioContext) {
                             }
                         }
                     }
-                    if queue.filled() {
+                    if !playing && queue.filled() {
                         context.gate.set_audio(true);
                         let ready_since = filled_at.get_or_insert_with(Instant::now);
                         let peer_ok = context.delay.is_zero() || context.gate.video_ready();
                         let waited = Instant::now() >= *ready_since + PEER_WAIT;
-                        if !playing && (peer_ok || waited) {
+                        if peer_ok || waited {
                             playing = true;
-                            next_due = Instant::now();
-                            if context.delay.is_zero() {
-                                queue.keep_latest_only();
-                            }
                         }
                     }
-                    if playing && Instant::now() >= next_due {
-                        if let Some(frame) = queue.pop() {
-                            if let Some(header) = frame.audio.as_ref() {
-                                frame_interval = jitter::audio_interval(header).or(frame_interval);
-                            }
-                            if let Err(error) = output.write(&frame, &context.device) {
-                                failure = error;
-                                break;
-                            }
-                            next_due = next_due
-                                .checked_add(frame_interval.unwrap_or(Duration::from_millis(20)))
-                                .unwrap_or(next_due);
-                            let underruns = output.underruns();
-                            if underruns != reported {
-                                reported = underruns;
-                                detail = describe_audio(underruns);
-                            }
-                            context.note_status(context.status.audio(
-                                AudioState::Running,
-                                &detail,
-                                &context.connector,
-                            ));
-                        } else {
+                    // An empty queue while playing is the steady state, not an
+                    // underrun: what was queued is in the ring. The underrun
+                    // that matters is the device's, and ALSA reports it.
+                    let mut written = false;
+                    while playing && output.room() {
+                        let Some(frame) = queue.pop() else {
+                            break;
+                        };
+                        let result = output.write(&frame, &context.device);
+                        queue.recycle(frame.payload);
+                        if let Err(error) = result {
+                            failure = error;
+                            break;
+                        }
+                        written = true;
+                    }
+                    if !failure.is_empty() {
+                        break;
+                    }
+                    let underruns = output.underruns();
+                    if underruns != reported {
+                        reported = underruns;
+                        detail = describe_audio(underruns);
+                        // A delay is a promise of that much cushion. The ring
+                        // ran dry, so rebuild it before playing on, as video
+                        // does; at delay 0 ALSA's own start threshold is the
+                        // whole cushion and playback simply continues.
+                        if !context.delay.is_zero() {
                             playing = false;
                             filled_at = None;
                             context.gate.set_audio(false);
                         }
+                    }
+                    if written {
+                        context.note_status(context.status.audio(
+                            AudioState::Running,
+                            &detail,
+                            &context.connector,
+                        ));
                     }
                     if queue.is_empty() && Instant::now() >= stalled {
                         failure = format!(
@@ -952,7 +933,20 @@ mod tests {
                 0,
                 0
             ),
-            "Playing OMT video. 4s playout delay (~4s buffered)."
+            "Playing OMT video. 4000 ms playout delay (~4000 ms buffered)."
+        );
+        // Sub-second delays are the point of millisecond granularity, and the
+        // buffered time is reported to the step, not per frame.
+        assert_eq!(
+            describe_running(
+                base,
+                Duration::from_millis(250),
+                Duration::from_millis(233),
+                0,
+                0,
+                0
+            ),
+            "Playing OMT video. 250 ms playout delay (~200 ms buffered)."
         );
         let with_underrun = describe_running(
             base,
@@ -963,7 +957,7 @@ mod tests {
             2,
         );
         assert!(
-            with_underrun.contains("4s playout delay"),
+            with_underrun.contains("4000 ms playout delay"),
             "{with_underrun}"
         );
         assert!(
@@ -971,6 +965,26 @@ mod tests {
             "{with_underrun}"
         );
         assert!(!with_underrun.contains("skipped frame"), "{with_underrun}");
+    }
+
+    /// Each rebuilt detail is a status-file write, so frame-to-frame jitter
+    /// in the queue depth inside one step must not rebuild it.
+    #[test]
+    fn buffered_time_rebuilds_the_detail_only_per_step() {
+        let mut cache = RunningDetail::default();
+        let base = "Playing OMT video.";
+        let delay = Duration::from_millis(500);
+        let ptr = cache
+            .detail(base, delay, Duration::from_millis(433), 0, 0, 0)
+            .as_ptr();
+        assert_eq!(
+            cache
+                .detail(base, delay, Duration::from_millis(466), 0, 0, 0)
+                .as_ptr(),
+            ptr
+        );
+        let moved = cache.detail(base, delay, Duration::from_millis(500), 0, 0, 0);
+        assert!(moved.contains("~500 ms buffered"), "{moved}");
     }
 
     /// The loop republishes this for every displayed frame, so an unchanged

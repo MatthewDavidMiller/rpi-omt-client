@@ -2163,7 +2163,7 @@ mod desktop {
                 ..App::default()
             };
             assert!(!app.form().can_prepare_sd());
-            std::fs::write(root.join(".alpine-release"), b"alpine-rpi-3.24.1\n")
+            std::fs::write(root.join(".alpine-release"), b"alpine-rpi-3.24.2\n")
                 .unwrap_or_else(|error| panic!("{error}"));
             std::fs::write(root.join("config.txt"), b"[all]\n")
                 .unwrap_or_else(|error| panic!("{error}"));

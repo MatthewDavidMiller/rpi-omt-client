@@ -1446,7 +1446,7 @@ mod tests {
     use super::*;
 
     fn probe(model: &str) -> String {
-        format!("aarch64\nalpine\n3.24.1\n{model}\n")
+        format!("aarch64\nalpine\n3.24.2\n{model}\n")
     }
 
     /// The same matrix as `tests/unit/test_board_profile.sh`. These two gates
@@ -1501,14 +1501,14 @@ mod tests {
     fn still_refuses_the_wrong_architecture_or_distribution() {
         let model = "Raspberry Pi 5 Model B Rev 1.0";
         for output in [
-            format!("armv7l\nalpine\n3.24.1\n{model}\n"),
-            format!("aarch64\ndebian\n3.24.1\n{model}\n"),
+            format!("armv7l\nalpine\n3.24.2\n{model}\n"),
+            format!("aarch64\ndebian\n3.24.2\n{model}\n"),
             format!("aarch64\nalpine\n3.22.1\n{model}\n"),
             // 3.23 was the previously pinned series. Package names moved in
             // 3.24, so an older host must fail the probe rather than reach an
             // installer whose apk list it cannot resolve.
             format!("aarch64\nalpine\n3.23.5\n{model}\n"),
-            "aarch64\nalpine\n3.24.1\n".to_owned(),
+            "aarch64\nalpine\n3.24.2\n".to_owned(),
         ] {
             assert!(
                 require_supported_appliance(&output).is_err(),
@@ -1560,7 +1560,7 @@ mod tests {
             probed_board(&probe("Raspberry Pi 4 Model B Rev 1.4")),
             Some("Raspberry Pi 4 Model B Rev 1.4")
         );
-        assert_eq!(probed_board("aarch64\nalpine\n3.24.1\n"), None);
+        assert_eq!(probed_board("aarch64\nalpine\n3.24.2\n"), None);
     }
 
     #[test]

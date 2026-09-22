@@ -19,6 +19,27 @@ pub const VIDEO_BYTE_CAP: usize = 256 * 1024 * 1024;
 /// How far past the configured delay a queue may grow before oldest frames
 /// are dropped. Half a second covers a sender slightly faster than playout.
 pub const TIME_SLACK: Duration = Duration::from_millis(500);
+/// How far past the configured delay a *playing* audio queue may grow before
+/// its oldest frames are dropped.
+///
+/// Video can shed frames to stay live and nobody sees it; every audio frame
+/// shed is a gap the operator hears. So audio is never trimmed to the delay
+/// itself, only past this bound, which is what absorbs a burst of frames that
+/// arrived together after a Wi-Fi gap. The ALSA ring is fed by the device
+/// clock, so in steady state this queue is empty or nearly so and the bound
+/// only engages when a sender clock runs ahead of the HDMI clock or a stall
+/// has left latency to shed.
+pub const AUDIO_SLACK: Duration = Duration::from_millis(100);
+/// Payload buffers kept for reuse. A received frame lands in one of these
+/// instead of a fresh allocation, which for a 1080p VMX frame is an mmap, a
+/// page fault per 4 KiB, a full zero-fill, and a munmap on every frame.
+const SPARE_BUFFERS: usize = 4;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Kind {
+    Video,
+    Audio,
+}
 
 /// Bounded compressed-frame store paced by the announced frame or sample rate.
 pub struct Queue {
@@ -27,28 +48,32 @@ pub struct Queue {
     delay: Duration,
     byte_cap: usize,
     interval: Option<Duration>,
+    kind: Kind,
+    spare: Vec<Vec<u8>>,
 }
 
 impl Queue {
     /// Video queue: 256 MiB payload cap and the operator's delay.
     #[must_use]
     pub fn video(delay: Duration) -> Self {
-        Self::new(delay, VIDEO_BYTE_CAP)
+        Self::new(delay, VIDEO_BYTE_CAP, Kind::Video)
     }
 
-    /// Audio queue: the same delay, with a cap far above 4 s of FPA1.
+    /// Audio queue: the same delay, with a cap far above 8 s of FPA1.
     #[must_use]
     pub fn audio(delay: Duration) -> Self {
-        Self::new(delay, 8 * 1024 * 1024)
+        Self::new(delay, 8 * 1024 * 1024, Kind::Audio)
     }
 
-    fn new(delay: Duration, byte_cap: usize) -> Self {
+    fn new(delay: Duration, byte_cap: usize, kind: Kind) -> Self {
         Self {
             frames: VecDeque::new(),
             bytes: 0,
             delay,
             byte_cap,
             interval: None,
+            kind,
+            spare: Vec::new(),
         }
     }
 
@@ -83,10 +108,26 @@ impl Queue {
         self.duration() >= self.delay || self.bytes >= self.byte_cap
     }
 
+    /// A payload buffer for the next received frame: a recycled one when
+    /// there is one, otherwise empty. Its contents are stale and its length
+    /// is kept, so the receiver zero-fills only bytes it has never had.
+    #[must_use]
+    pub fn spare(&mut self) -> Vec<u8> {
+        self.spare.pop().unwrap_or_default()
+    }
+
+    /// Returns a played frame's payload buffer for reuse.
+    pub fn recycle(&mut self, payload: Vec<u8>) {
+        if self.spare.len() < SPARE_BUFFERS && payload.capacity() > 0 {
+            self.spare.push(payload);
+        }
+    }
+
     /// Appends a compressed media frame. Metadata is ignored so it cannot
     /// occupy the video budget. Returns how many older frames were dropped.
     pub fn push(&mut self, frame: Frame, playing: bool) -> u64 {
         if frame.video.is_none() && frame.audio.is_none() {
+            self.recycle(frame.payload);
             return 0;
         }
         if let Some(interval) = interval_of(&frame) {
@@ -113,9 +154,13 @@ impl Queue {
         Some(frame)
     }
 
-    /// Drops every queued frame except the newest. Delay 0 presents immediately
-    /// rather than playing through a burst that arrived before the first flip.
+    /// Drops every queued video frame except the newest. Delay 0 presents
+    /// immediately rather than playing through a burst that arrived before the
+    /// first flip. Audio keeps its burst: every frame of it is sound.
     pub fn keep_latest_only(&mut self) {
+        if self.kind == Kind::Audio {
+            return;
+        }
         while self.frames.len() > 1 {
             self.drop_oldest();
         }
@@ -124,6 +169,7 @@ impl Queue {
     fn drop_oldest(&mut self) {
         if let Some(frame) = self.frames.pop_front() {
             self.bytes = self.bytes.saturating_sub(frame.payload.len());
+            self.recycle(frame.payload);
         }
     }
 
@@ -137,7 +183,10 @@ impl Queue {
     }
 
     fn drop_while_over_time(&mut self) -> u64 {
-        let limit = self.delay.saturating_add(TIME_SLACK);
+        self.drop_while_longer_than(self.delay.saturating_add(TIME_SLACK))
+    }
+
+    fn drop_while_longer_than(&mut self, limit: Duration) -> u64 {
         let mut dropped = 0_u64;
         while self.duration() > limit && self.frames.len() > 1 {
             self.drop_oldest();
@@ -146,22 +195,22 @@ impl Queue {
         dropped
     }
 
-    /// Keeps delay 0 at one frame (present immediately) and a running session
-    /// at the configured delay when the sender is faster than playout.
+    /// Keeps a running session live when the sender is faster than playout.
+    /// Video holds delay 0 at one frame (present immediately) and anything
+    /// else at the configured delay; audio only sheds past [`AUDIO_SLACK`].
     fn trim_to_target(&mut self) -> u64 {
-        let mut dropped = 0_u64;
-        if self.delay.is_zero() {
-            while self.frames.len() > 1 {
-                self.drop_oldest();
-                dropped = dropped.saturating_add(1);
+        match self.kind {
+            Kind::Audio => self.drop_while_longer_than(self.delay.saturating_add(AUDIO_SLACK)),
+            Kind::Video if self.delay.is_zero() => {
+                let mut dropped = 0_u64;
+                while self.frames.len() > 1 {
+                    self.drop_oldest();
+                    dropped = dropped.saturating_add(1);
+                }
+                dropped
             }
-            return dropped;
+            Kind::Video => self.drop_while_longer_than(self.delay),
         }
-        while self.duration() > self.delay && self.frames.len() > 1 {
-            self.drop_oldest();
-            dropped = dropped.saturating_add(1);
-        }
-        dropped
     }
 }
 
@@ -351,7 +400,7 @@ mod tests {
 
     #[test]
     fn the_byte_cap_drops_oldest_frames() {
-        let mut queue = Queue::new(Duration::from_secs(8), 250);
+        let mut queue = Queue::new(Duration::from_secs(8), 250, Kind::Video);
         assert_eq!(queue.push(video_frame(1, 80, 1, 1), false), 0);
         assert_eq!(queue.push(video_frame(2, 80, 1, 1), false), 0);
         let dropped = queue.push(video_frame(3, 80, 1, 1), false);
@@ -394,6 +443,65 @@ mod tests {
         queue.push(audio_frame(48_000, 48_000), false);
         queue.push(audio_frame(48_000, 48_000), false);
         assert!(queue.filled());
+    }
+
+    /// The dropout this exists for: at delay 0 a Wi-Fi burst of audio frames
+    /// used to be cut to its newest frame, and every frame cut was a gap.
+    #[test]
+    fn delay_zero_audio_keeps_a_whole_burst() {
+        let mut queue = Queue::audio(Duration::ZERO);
+        queue.push(audio_frame(960, 48_000), false);
+        assert!(queue.filled());
+        queue.keep_latest_only();
+        for _ in 0..4 {
+            assert_eq!(queue.push(audio_frame(960, 48_000), true), 0);
+        }
+        assert_eq!(queue.frames.len(), 5);
+    }
+
+    /// Audio sheds only past the slack, so a sender clock that runs ahead
+    /// still cannot grow latency without bound.
+    #[test]
+    fn playing_audio_is_trimmed_only_past_the_slack() {
+        let mut queue = Queue::audio(Duration::ZERO);
+        // 20 ms frames: the slack holds five of them and no more.
+        let mut dropped = 0;
+        for _ in 0..12 {
+            dropped += queue.push(audio_frame(960, 48_000), true);
+        }
+        assert_eq!(queue.frames.len(), 5);
+        assert_eq!(dropped, 7);
+
+        let mut delayed = Queue::audio(Duration::from_millis(250));
+        for _ in 0..20 {
+            delayed.push(audio_frame(960, 48_000), true);
+        }
+        // 250 ms plus the slack is seventeen 20 ms frames.
+        assert_eq!(delayed.frames.len(), 17);
+    }
+
+    #[test]
+    fn delay_zero_video_still_keeps_only_the_newest_frame() {
+        let mut queue = Queue::video(Duration::ZERO);
+        queue.push(video_frame(1, 32, 30, 1), false);
+        queue.push(video_frame(2, 32, 30, 1), false);
+        queue.keep_latest_only();
+        assert_eq!(queue.frames.len(), 1);
+    }
+
+    /// Dropped and played payloads come back as receive buffers, bounded.
+    #[test]
+    fn payload_buffers_are_recycled_and_bounded() {
+        let mut queue = Queue::video(Duration::ZERO);
+        assert_eq!(queue.spare().capacity(), 0);
+        for stamp in 0..10 {
+            queue.push(video_frame(stamp, 64, 30, 1), true);
+        }
+        assert_eq!(queue.spare.len(), SPARE_BUFFERS);
+        let reused = queue.spare();
+        assert!(reused.capacity() >= 64);
+        queue.recycle(Vec::new());
+        assert_eq!(queue.spare.len(), SPARE_BUFFERS - 1);
     }
 
     #[test]

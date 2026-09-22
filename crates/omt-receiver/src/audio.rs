@@ -36,6 +36,17 @@ const PERIOD: Duration = Duration::from_millis(20);
 /// video by this much is inside the ITU-R BT.1359 tolerance, and the video
 /// path's own decode and scanout latency offsets part of it.
 const PREFILL: Duration = Duration::from_millis(100);
+/// How full the worker keeps the ring.
+///
+/// The worker is paced by the device rather than by the wall clock: it hands
+/// ALSA queued audio whenever the ring holds less than this. The HDMI audio
+/// clock and the Pi's own clock are not the same clock, so metering frames out
+/// on a timer let the ring drift dry and underrun on a clean link. Feeding on
+/// the device's own fill level cannot drift. It sits above [`PREFILL`] so the
+/// device always reaches its start threshold, and below [`BUFFER`] so a
+/// frame that overshoots it still fits without stalling the writer; the gap to
+/// [`BUFFER`] is headroom, not latency.
+const RING_TARGET: Duration = Duration::from_millis(160);
 /// A device that will not accept a sample for this long has failed.
 const WRITE_TIMEOUT: Duration = Duration::from_secs(1);
 /// `EAGAIN`, spelled out rather than pulled in from libc for one integer.
@@ -53,6 +64,10 @@ pub struct Output {
     sample_rate: i32,
     channels: i32,
     interleaved: Vec<f32>,
+    /// The ring size the device chose, in frames.
+    buffer_frames: Frames,
+    /// [`RING_TARGET`] in frames at the negotiated rate.
+    target_frames: Frames,
     /// Underruns recovered since this output was created.
     ///
     /// Every one of these is a gap the operator heard, so it is counted and
@@ -71,6 +86,8 @@ impl Output {
             sample_rate: 0,
             channels: 0,
             interleaved: Vec::new(),
+            buffer_frames: 0,
+            target_frames: 0,
             underruns: 0,
         }
     }
@@ -78,6 +95,23 @@ impl Output {
     /// Underruns this output has recovered from, for the playback status.
     pub fn underruns(&self) -> u64 {
         self.underruns
+    }
+
+    /// Whether the ring has room for more audio right now.
+    ///
+    /// True while the ring holds less than [`RING_TARGET`]. Also true when no
+    /// device is open yet, and when ALSA cannot report its fill -- that is an
+    /// underrun or a suspend, and the write path is what recovers and counts
+    /// it, so it has to be allowed to run.
+    #[must_use]
+    pub fn room(&self) -> bool {
+        let Some(pcm) = self.pcm.as_ref() else {
+            return true;
+        };
+        match pcm.avail_update() {
+            Ok(avail) => self.buffer_frames.saturating_sub(avail) < self.target_frames,
+            Err(_) => true,
+        }
     }
 
     pub fn close(&mut self) {
@@ -155,7 +189,9 @@ impl Output {
             };
             configure().map_err(|error| format!("Unable to configure audio device: {error}"))?
         };
-        Self::set_timing(&pcm, sample_rate, geometry)?;
+        let start = Self::set_timing(&pcm, sample_rate, geometry)?;
+        self.buffer_frames = geometry.0;
+        self.target_frames = target_frames(sample_rate, geometry.0, start);
         self.pcm = Some(pcm);
         device.clone_into(&mut self.device);
         self.sample_rate = sample_rate;
@@ -173,7 +209,7 @@ impl Output {
         pcm: &PCM,
         sample_rate: i32,
         (buffer_frames, period_frames): (Frames, Frames),
-    ) -> Result<(), String> {
+    ) -> Result<Frames, String> {
         let start = prefill_frames(sample_rate, buffer_frames, period_frames);
         let timing = || -> Result<(), alsa::Error> {
             let software = pcm.sw_params_current()?;
@@ -185,7 +221,8 @@ impl Output {
             software.set_stop_threshold(buffer_frames)?;
             pcm.sw_params(&software)
         };
-        timing().map_err(|error| format!("Unable to configure audio timing: {error}"))
+        timing().map_err(|error| format!("Unable to configure audio timing: {error}"))?;
+        Ok(start)
     }
 
     fn play(&mut self, samples: usize, channels: usize) -> Result<(), String> {
@@ -254,6 +291,17 @@ fn prefill_frames(sample_rate: i32, buffer_frames: Frames, period_frames: Frames
         .saturating_div(1000);
     let floor = period_frames.max(1);
     wanted.clamp(floor, buffer_frames.max(floor))
+}
+
+/// [`RING_TARGET`] in frames, never below the start threshold -- a target the
+/// device cannot start at would leave it prepared and silent -- and never
+/// above the ring.
+fn target_frames(sample_rate: i32, buffer_frames: Frames, start: Frames) -> Frames {
+    let millis = Frames::try_from(RING_TARGET.as_millis()).unwrap_or(0);
+    let wanted = Frames::from(sample_rate)
+        .saturating_mul(millis)
+        .saturating_div(1000);
+    wanted.clamp(start, buffer_frames.max(start))
 }
 
 /// Waits for the device to take more samples, giving up once one write has
@@ -381,6 +429,20 @@ mod tests {
             super::PERIOD < super::PREFILL,
             "the cushion cannot be one period"
         );
+        assert!(
+            super::PREFILL < super::RING_TARGET && super::RING_TARGET < super::BUFFER,
+            "the fill target must start the device and leave headroom"
+        );
+    }
+
+    /// The fill target is what the worker feeds to, so one the device cannot
+    /// start at would be silence, and one past the ring would never be met.
+    #[test]
+    fn the_fill_target_stays_between_the_start_and_the_ring() {
+        assert_eq!(super::target_frames(48_000, 11_520, 4_800), 7_680);
+        assert_eq!(super::target_frames(48_000, 11_520, 9_000), 9_000);
+        assert_eq!(super::target_frames(48_000, 4_000, 1_000), 4_000);
+        assert_eq!(super::target_frames(0, 11_520, 960), 960);
     }
 
     #[test]

@@ -246,3 +246,34 @@ def test_body_budget_is_shorter_than_sigterm_grace():
     )
     assert timeout is not None, "settings.rs no longer pins the control timeout"
     assert float(timeout.group(1)) > grace_seconds
+
+
+def test_playout_delay_default_and_ceiling_agree_across_every_layer():
+    """The Web state, the container launcher, and the receiver CLI each state
+    the playout delay's default and range. A launcher default the Web page does
+    not show, or a ceiling the receiver refuses, is a playback that silently
+    runs with a delay nobody chose -- or never starts."""
+    state = WEB_STATE.read_text(encoding="utf-8")
+    default = re.search(r"pub const DEFAULT_PLAYOUT_DELAY_MS: u64 = (\d+);", state)
+    ceiling = re.search(r"pub const MAX_PLAYOUT_DELAY_MS: u64 = (\d+);", state)
+    assert default is not None, "state.rs no longer pins DEFAULT_PLAYOUT_DELAY_MS"
+    assert ceiling is not None, "state.rs no longer pins MAX_PLAYOUT_DELAY_MS"
+    launcher = re.search(
+        r'omt-web playout-delay \\\n\s*"\$\{OMT_PLAYOUT_DELAY_FILE\}" (\d+)\)',
+        START_OMT.read_text(encoding="utf-8"),
+    )
+    receiver = re.search(
+        r'options\.number\("--playout-delay", (\d+), (\d+), (\d+)\)',
+        RECEIVER_MAIN.read_text(encoding="utf-8"),
+    )
+    assert launcher is not None, "start-omt.sh no longer passes a playout delay default"
+    assert receiver is not None, "the receiver no longer parses --playout-delay"
+    assert launcher.group(1) == default.group(1)
+    assert receiver.group(1) == default.group(1)
+    assert receiver.group(2) == "0"
+    assert receiver.group(3) == ceiling.group(1)
+    assert "Duration::from_millis(playout_delay)" in RECEIVER_MAIN.read_text(encoding="utf-8")
+    template = (REPO_ROOT / "crates" / "omt-web" / "templates" / "system.html").read_text(
+        encoding="utf-8"
+    )
+    assert f'max="{ceiling.group(1)}"' in template

@@ -357,7 +357,7 @@ pub struct App {
 
 impl Default for App {
     fn default() -> Self {
-        Self {
+        let mut app = Self {
             view: View::Connection,
             focus: 0,
             cursor: 0,
@@ -396,7 +396,9 @@ impl Default for App {
             cancel: Arc::new(AtomicBool::new(false)),
             events: None,
             switch_to_pi_after_job: false,
-        }
+        };
+        app.cursor_end();
+        app
     }
 }
 
@@ -492,7 +494,10 @@ impl App {
     pub fn select_view(&mut self, view: View) {
         self.view = view;
         self.focus = 0;
-        self.cursor = 0;
+        // The same rule `move_focus` follows: a prefilled first field --
+        // the default host, above all -- is edited from its end, so
+        // Backspace clears it and typing does not land in front of it.
+        self.cursor_end();
     }
 
     pub fn move_focus(&mut self, delta: isize) {
@@ -908,6 +913,23 @@ impl App {
 
 #[cfg(test)]
 mod tests {
+    /// The first field of a view is focused without `move_focus`, and a
+    /// prefilled one has to be edited from its end like every other field:
+    /// typing a host used to produce `10.0.0.2raspberrypi.local`.
+    #[test]
+    fn a_prefilled_first_field_is_edited_from_its_end() {
+        let mut app = super::App::default();
+        for _ in 0.."raspberrypi.local".len() {
+            app.backspace();
+        }
+        assert_eq!(app.host, "");
+        app.host = "pi.local".into();
+        app.select_view(super::View::Deploy);
+        app.select_view(super::View::Connection);
+        app.backspace();
+        assert_eq!(app.host, "pi.loca");
+    }
+
     use super::*;
 
     #[test]
@@ -915,7 +937,7 @@ mod tests {
         let root = std::env::temp_dir().join(format!("omt-tui-sd-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir(&root).unwrap_or_else(|error| panic!("{error}"));
-        std::fs::write(root.join(".alpine-release"), b"alpine-rpi-3.24.1\n")
+        std::fs::write(root.join(".alpine-release"), b"alpine-rpi-3.24.2\n")
             .unwrap_or_else(|error| panic!("{error}"));
         std::fs::write(root.join("config.txt"), b"[all]\n")
             .unwrap_or_else(|error| panic!("{error}"));

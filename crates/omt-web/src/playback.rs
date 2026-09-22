@@ -83,8 +83,8 @@ pub struct VideoLimit {
 
 #[derive(Clone, Debug, Serialize)]
 pub struct PlayoutDelay {
-    pub seconds: u64,
-    pub default_seconds: u64,
+    pub milliseconds: u64,
+    pub default_milliseconds: u64,
     pub overridden: bool,
     pub error: String,
 }
@@ -343,16 +343,20 @@ impl Playback {
     }
 
     pub fn playout_delay(&self) -> PlayoutDelay {
-        match state::effective_playout_delay(&self.settings.playout_delay_file, "4") {
-            Ok(seconds) => PlayoutDelay {
-                overridden: seconds != state::DEFAULT_PLAYOUT_DELAY_SECS,
-                seconds,
-                default_seconds: state::DEFAULT_PLAYOUT_DELAY_SECS,
-                error: String::new(),
-            },
+        let default = state::DEFAULT_PLAYOUT_DELAY_MS;
+        match state::read_playout_delay(&self.settings.playout_delay_file) {
+            Ok(saved) => {
+                let milliseconds = saved.unwrap_or(default);
+                PlayoutDelay {
+                    overridden: milliseconds != default,
+                    milliseconds,
+                    default_milliseconds: default,
+                    error: String::new(),
+                }
+            }
             Err(error) => PlayoutDelay {
-                seconds: state::DEFAULT_PLAYOUT_DELAY_SECS,
-                default_seconds: state::DEFAULT_PLAYOUT_DELAY_SECS,
+                milliseconds: default,
+                default_milliseconds: default,
                 overridden: false,
                 error,
             },
@@ -360,29 +364,23 @@ impl Playback {
     }
 
     pub fn save_playout_delay(&self, value: &str) -> ActionResult {
-        let requested = value.trim();
-        let parsed = match state::parse_playout_delay(requested) {
-            Ok(seconds) => seconds,
+        let parsed = match state::parse_playout_delay(value) {
+            Ok(milliseconds) => milliseconds,
             Err(error) => return ActionResult::failure(error),
         };
-        let persist = if requested.is_empty()
-            || requested.eq_ignore_ascii_case("auto")
-            || parsed == state::DEFAULT_PLAYOUT_DELAY_SECS
-        {
-            None
-        } else {
-            Some(parsed)
-        };
+        // `save_playout_delay` removes the file for the default as well, so
+        // an explicit 0 and an empty field leave the same state behind.
+        let persist = (parsed != state::DEFAULT_PLAYOUT_DELAY_MS).then_some(parsed);
         if let Err(error) = state::save_playout_delay(&self.settings.playout_delay_file, persist) {
             return ActionResult::failure(error);
         }
         let label = if persist.is_none() {
             format!(
-                "Playout delay restored to {} seconds",
-                state::DEFAULT_PLAYOUT_DELAY_SECS
+                "Playout delay restored to {} ms",
+                state::DEFAULT_PLAYOUT_DELAY_MS
             )
         } else {
-            format!("Playout delay set to {parsed} second(s)")
+            format!("Playout delay set to {parsed} ms")
         };
         let restarted = self.control("restart");
         if restarted.returncode == Some(0) {

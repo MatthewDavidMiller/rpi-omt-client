@@ -67,13 +67,17 @@ instead of refusing it, which on the dashboard looks like a network fault.
 
 ## Playout delay
 
-`/system` also shows the playout delay. Video and audio wait in a compressed
-queue before HDMI so a multi-second Wi-Fi stall can play through from frames
-already received. The picture is that many seconds behind vMix, by design.
-POST `/system/playout-delay` with a whole number of seconds from 0 to 8, or an
-empty value to restore the default of 4; the change restarts playback. Keep 4
-on Wi-Fi. Wired operators may set 0 or 1. Zero is the low-latency profile:
-present as soon as a frame arrives, matching official `omtplayer`.
+`/system` also shows the playout delay. Video and audio can wait in a
+compressed queue before HDMI so a Wi-Fi stall plays through from frames already
+received. The picture is that many milliseconds behind vMix, by design.
+POST `/system/playout-delay` with a whole number of milliseconds from 0 to
+8000, or an empty value to restore the default of 0; the change restarts
+playback. Zero, the default, is the low-latency profile: present as soon as a
+frame arrives, matching official `omtplayer`, with audio fed to HDMI on the
+device's own clock behind a cushion of about 100 ms. On Wi-Fi, a few hundred
+milliseconds rides out short stalls, and 4000 covers the 3.5 s stalls measured
+against vMix. A playout delay saved by an earlier release in whole seconds is
+ignored, so an upgraded appliance starts at 0 until a new value is saved.
 
 ## Reboot OS
 
@@ -196,8 +200,8 @@ receiver.
   `retrying`: read the detail. `OMT frame was truncated by a timeout` means a
   frame started arriving and did not finish inside six seconds, which on this
   appliance is a stall **beyond** the 3.5 s Wi-Fi blips the playout queue is
-  sized for. A 3.5 s stall should play through from the 4 s default buffer
-  with no session rebuild. The
+  sized for. With a 4000 ms playout delay, a 3.5 s stall should play through
+  from the queue with no session rebuild. The
   receiver first reconnects the video TCP session only, up to three times: the
   last picture stays on screen and audio keeps playing throughout, for about
   eight tenths of a second against a sender whose port is shut, and under four
@@ -215,8 +219,8 @@ receiver.
   is in the world domain rather than genuinely single-band — see the regulatory
   entry below.
 - The picture is a few seconds behind the sender, and the running detail names
-  a playout delay: that is the configured queue, default 4 s for Wi-Fi. Wired
-  operators set 0 or 1 on System. Buffer underruns in that detail mean the
+  a playout delay: that is the configured queue, set in milliseconds on System
+  and 0 by default. Buffer underruns in that detail mean the
   stall lasted longer than the remaining queue; the last picture was held and
   the TCP session stayed up. Those are not ALSA underruns (gaps in the sound)
   and not skipped frames (VMX decoder rejections).

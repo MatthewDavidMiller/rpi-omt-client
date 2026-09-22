@@ -202,12 +202,17 @@ eight seconds after SIGTERM so that budget cannot outlive a shutdown.
 
 TCP reads stay greedy: OMT requires the receiver never block when accepting
 data. Delay lives only in a compressed playout queue (`crates/omt-receiver/src/jitter.rs`),
-default four seconds, operator-configurable from 0 to 8 on the System page.
+operator-configurable from 0 to 8000 ms on the System page and 0 by default.
 Zero is the official `omtplayer` profile (present as soon as a frame arrives).
-Four seconds is the Wi-Fi default: HDMI and ALSA start after both queues hold
-that depth, then pace at the announced frame and sample rates. The queue stores
-VMX and FPA1, not decoded frames, and is capped at 256 MiB of video payload and
-the configured delay plus 0.5 s. vMix drops in-flight extras when its send pool
+With a delay, HDMI and ALSA start after both queues hold that depth. Video then
+paces at the announced frame rate. Audio is paced by the HDMI audio device
+instead: the worker tops the ALSA ring up to 160 ms whenever it falls below,
+so the sender's clock, the Pi's clock, and the sink's clock cannot drift the
+ring dry. Video sheds frames to stay live -- at delay 0 it keeps only the
+newest -- but audio is never trimmed to one frame, because every audio frame
+shed is a gap in the sound; a playing audio queue sheds only past the delay
+plus 100 ms. The queue stores VMX and FPA1, not decoded frames, and is capped
+at 256 MiB of video payload and the configured delay plus 0.5 s. vMix drops in-flight extras when its send pool
 fills, so after a stall the Pi plays through frames already queued and then
 jumps to live — a pre-roll cushion, not a catch-up reel. If the stall lasts
 longer than the remaining buffer the last DRM frame is held, a buffer underrun

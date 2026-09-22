@@ -5,21 +5,30 @@
 // three creations per frame (~180/sec at 60 fps). These threads live for the
 // decoder's lifetime and take one job per frame through bounded channels.
 //
-// Unsafe is confined to constructing `Send` pointers for one frame's disjoint
-// slice and output regions. The main thread does not mutate those regions
-// until every worker has reported completion, and `Drop` joins the workers
-// before the decoder frees its slices.
+// Slices are claimed one at a time from a shared counter rather than handed
+// out as fixed contiguous bands. Slice cost follows picture detail, so with
+// fixed bands every frame waited for whichever worker drew the busiest part
+// of the picture while the others sat idle; claiming lets a worker that
+// finishes early take the next slice instead.
+//
+// Unsafe is confined to constructing `Send` pointers for one frame's slices
+// and output. Each slice index is claimed exactly once, so every worker holds
+// disjoint slice and output ranges. The main thread does not mutate those
+// regions until every worker has reported completion, and `Drop` joins the
+// workers before the decoder frees its slices.
 #![allow(unsafe_code)]
 
 use crate::tables::SLICE_HEIGHT;
 use crate::{DecodeError, DecodeGeometry, PlaneScratch, Slice, decode_group};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, SyncSender};
 use std::thread::{self, JoinHandle};
 
-/// One worker's share of a frame: disjoint slices and their output region.
+/// One frame, shared by every worker: all of its slices and the whole output.
+/// Which slices a worker decodes is decided by the claim counter.
 struct Job {
     slices: *mut Slice,
-    slice_offset: usize,
     slice_count: usize,
     output: *mut u8,
     output_len: usize,
@@ -30,12 +39,15 @@ struct Job {
 
 // SAFETY: a Job is only sent while the main thread uniquely borrows the
 // decoder for this frame and waits for every reply before those pointers can
-// be reused or dropped. Each worker receives a disjoint slice/output range.
+// be reused or dropped. Workers touch only the slice indices they claim from
+// the shared counter, and each index is claimed once.
 unsafe impl Send for Job {}
 
 /// Bounded pool of decode workers with explicit stacks.
 pub struct WorkerPool {
     workers: Vec<WorkerHandle>,
+    /// The next unclaimed slice of the frame being decoded.
+    next: Arc<AtomicUsize>,
 }
 
 struct WorkerHandle {
@@ -64,14 +76,16 @@ impl WorkerPool {
         workers
             .try_reserve_exact(count)
             .map_err(|_| DecodeError::WorkerFailure)?;
+        let next = Arc::new(AtomicUsize::new(0));
         for index in 0..count {
+            let claims = Arc::clone(&next);
             let (job_tx, job_rx) = mpsc::sync_channel::<Option<Job>>(1);
             let (done_tx, done_rx) = mpsc::sync_channel::<bool>(1);
             let scratch = PlaneScratch::new(luma_stride, chroma_stride)?;
             let thread = thread::Builder::new()
                 .name(format!("vmx-decode-{index}"))
                 .stack_size(crate::WORKER_STACK_SIZE)
-                .spawn(move || worker_loop(job_rx, done_tx, scratch))
+                .spawn(move || worker_loop(&job_rx, &done_tx, &claims, scratch))
                 .map_err(|_| DecodeError::WorkerFailure)?;
             workers.push(WorkerHandle {
                 jobs: job_tx,
@@ -79,7 +93,7 @@ impl WorkerPool {
                 thread,
             });
         }
-        Ok(Self { workers })
+        Ok(Self { workers, next })
     }
 
     /// Decodes `slices` into `output` using the pool, returning whether every
@@ -92,53 +106,40 @@ impl WorkerPool {
         matrix: &[u16; 64],
         coefficients: &'static [i16; 5],
     ) -> Result<bool, DecodeError> {
-        let worker_count = self.workers.len().min(slices.len().max(1));
+        let worker_count = self.workers.len().min(slices.len());
         if worker_count == 0 {
             return Ok(true);
         }
-        let group = slices.len().div_ceil(worker_count);
-        let rows_per_group = group * SLICE_HEIGHT;
-        let stride = geometry.stride;
         let slice_len = slices.len();
         let output_len = output.len();
+        // Every slice has to start inside the output before any pointer
+        // crosses a thread boundary; a worker then clamps its own range.
+        let last_offset = (slice_len - 1)
+            .checked_mul(SLICE_HEIGHT)
+            .and_then(|rows| rows.checked_mul(geometry.stride))
+            .ok_or(DecodeError::WorkerFailure)?;
+        if last_offset >= output_len {
+            return Err(DecodeError::OutputSize);
+        }
         let slice_ptr = slices.as_mut_ptr();
         let output_ptr = output.as_mut_ptr();
+        // Workers are parked on their channels, so nothing reads the counter
+        // until the sends below, which order this store before their claims.
+        self.next.store(0, Ordering::Relaxed);
 
-        // Validate and construct the whole disjoint partition before any raw
-        // pointer crosses a thread boundary. After dispatch begins, the only
-        // possible error is a closed worker channel, whose cleanup below can
-        // drain the exact number of jobs already sent.
         let mut jobs: [Option<Job>; crate::MAX_WORKERS] = std::array::from_fn(|_| None);
-        let mut job_count = 0_usize;
-        for (index, job_slot) in jobs.iter_mut().enumerate().take(worker_count) {
-            let slice_offset = index.checked_mul(group).ok_or(DecodeError::WorkerFailure)?;
-            if slice_offset >= slice_len {
-                break;
-            }
-            let slice_count = (slice_len - slice_offset).min(group);
-            let out_offset = index
-                .checked_mul(rows_per_group)
-                .and_then(|rows| rows.checked_mul(stride))
-                .ok_or(DecodeError::WorkerFailure)?;
-            if out_offset >= output_len {
-                return Err(DecodeError::OutputSize);
-            }
-            let out_count = (output_len - out_offset).min(rows_per_group * stride);
-            // SAFETY: slice/output ranges for distinct `index` values are
-            // disjoint partitions of the caller-provided buffers. The main
-            // thread does not touch them again until every `done` arrives.
+        for job_slot in jobs.iter_mut().take(worker_count) {
             *job_slot = Some(Job {
                 slices: slice_ptr,
-                slice_offset,
-                slice_count,
-                output: unsafe { output_ptr.add(out_offset) },
-                output_len: out_count,
+                slice_count: slice_len,
+                output: output_ptr,
+                output_len,
                 geometry,
                 matrix: *matrix,
                 coefficients,
             });
-            job_count += 1;
         }
+        let job_count = worker_count;
 
         let mut active = 0_usize;
         for (index, job) in jobs.into_iter().take(job_count).enumerate() {
@@ -196,33 +197,61 @@ impl Drop for WorkerPool {
     }
 }
 
-fn worker_loop(jobs: Receiver<Option<Job>>, done: SyncSender<bool>, mut scratch: PlaneScratch) {
+fn worker_loop(
+    jobs: &Receiver<Option<Job>>,
+    done: &SyncSender<bool>,
+    claims: &AtomicUsize,
+    mut scratch: PlaneScratch,
+) {
     while let Ok(message) = jobs.recv() {
         match message {
             None => break,
             Some(job) => {
-                // SAFETY: the main thread constructed disjoint slice/output
-                // ranges for this job and waits for `done` before touching
-                // them again or dropping the decoder.
-                let ok = unsafe {
-                    let slices = std::slice::from_raw_parts_mut(
-                        job.slices.add(job.slice_offset),
-                        job.slice_count,
-                    );
-                    let output = std::slice::from_raw_parts_mut(job.output, job.output_len);
-                    decode_group(
-                        slices,
-                        output,
-                        job.geometry,
-                        &job.matrix,
-                        job.coefficients,
-                        &mut scratch,
-                    )
-                };
+                let ok = decode_claimed(&job, claims, &mut scratch);
                 if done.send(ok).is_err() {
                     break;
                 }
             }
+        }
+    }
+}
+
+/// Decodes slices claimed from `claims` until none are left.
+///
+/// A failed slice fails the frame, so it also ends the claiming for every
+/// worker: there is no point decoding the rest of a frame that will be
+/// skipped.
+fn decode_claimed(job: &Job, claims: &AtomicUsize, scratch: &mut PlaneScratch) -> bool {
+    let rows = SLICE_HEIGHT.saturating_mul(job.geometry.stride);
+    loop {
+        let index = claims.fetch_add(1, Ordering::Relaxed);
+        if index >= job.slice_count {
+            return true;
+        }
+        let Some(offset) = index.checked_mul(rows).filter(|&at| at < job.output_len) else {
+            claims.store(job.slice_count, Ordering::Relaxed);
+            return false;
+        };
+        let length = (job.output_len - offset).min(rows);
+        // SAFETY: `index` was claimed by this worker alone and is below the
+        // slice count, and `offset..offset + length` is inside the output and
+        // belongs to that slice alone. The main thread waits for `done` before
+        // touching either again or dropping the decoder.
+        let ok = unsafe {
+            let slice = std::slice::from_raw_parts_mut(job.slices.add(index), 1);
+            let output = std::slice::from_raw_parts_mut(job.output.add(offset), length);
+            decode_group(
+                slice,
+                output,
+                job.geometry,
+                &job.matrix,
+                job.coefficients,
+                scratch,
+            )
+        };
+        if !ok {
+            claims.store(job.slice_count, Ordering::Relaxed);
+            return false;
         }
     }
 }

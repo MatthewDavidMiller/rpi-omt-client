@@ -30,10 +30,10 @@ target="$(omt-web play-target "${OMT_SOURCE_TARGET_FILE}")"
 # one place rather than being restated by whoever builds the argument vector.
 ceiling="$(omt-web video-ceiling \
     "${OMT_VIDEO_CEILING_FILE}" "${OMT_VIDEO_CEILING}")"
-# The operator's playout delay, or the Wi-Fi default of 4 seconds. Same binary
-# as the System page so empty/auto/corrupt files mean one thing.
+# The operator's playout delay in milliseconds, or the default of 0. Same
+# binary as the System page so empty/auto/corrupt files mean one thing.
 delay="$(omt-web playout-delay \
-    "${OMT_PLAYOUT_DELAY_FILE}" 4)"
+    "${OMT_PLAYOUT_DELAY_FILE}" 0)"
 
 mkdir -p "$(dirname -- "${OMT_PLAYBACK_STATUS_FILE}")"
 exec "${OMT_RECEIVER_COMMAND}" play \

@@ -1109,6 +1109,85 @@ mod tests {
         fs::remove_dir_all(root).unwrap_or_else(|error| panic!("{error}"));
     }
 
+    /// The delay form's whole round trip: milliseconds persist as schema 2,
+    /// out-of-range and junk values leave the saved state alone, an empty
+    /// field restores the default, and a seconds-era file is ignored rather
+    /// than shown as an error or blocking the launch.
+    #[tokio::test(flavor = "current_thread")]
+    async fn the_playout_delay_form_saves_milliseconds() {
+        let (state, root) = test_state();
+        let session_id = state
+            .auth
+            .authenticate("correct", None)
+            .unwrap_or_else(|error| panic!("{error}"))
+            .unwrap_or_default();
+        let session = format!("{SESSION_COOKIE}={session_id}");
+        let service = router(Arc::clone(&state));
+        let saved = root.join("playout_delay.json");
+
+        let system = service
+            .clone()
+            .oneshot(request(Method::GET, "/system", Some(&session), ""))
+            .await
+            .unwrap_or_else(|error| panic!("{error}"));
+        assert_eq!(system.status(), StatusCode::OK);
+        let body = to_bytes(system.into_body(), 256 * 1024)
+            .await
+            .unwrap_or_default();
+        let body = String::from_utf8_lossy(&body);
+        assert!(body.contains("Delay (milliseconds)"), "{body}");
+        assert!(body.contains("max=\"8000\""), "{body}");
+        let token = hidden_token(&body);
+
+        let post = |value: &str, csrf: &str| {
+            request(
+                Method::POST,
+                "/system/playout-delay",
+                Some(&session),
+                &format!("csrf_token={csrf}&playout_delay={value}"),
+            )
+        };
+
+        let rejected = service
+            .clone()
+            .oneshot(post("250", "wrong"))
+            .await
+            .unwrap_or_else(|error| panic!("{error}"));
+        assert_eq!(rejected.status(), StatusCode::BAD_REQUEST);
+        assert!(!saved.exists());
+
+        for (value, expected) in [
+            ("250", Some(r#"{"schema":2,"milliseconds":250}"#)),
+            ("8001", Some(r#"{"schema":2,"milliseconds":250}"#)),
+            ("%2B5", Some(r#"{"schema":2,"milliseconds":250}"#)),
+            ("8000", Some(r#"{"schema":2,"milliseconds":8000}"#)),
+            ("", None),
+            ("0", None),
+        ] {
+            let response = service
+                .clone()
+                .oneshot(post(value, &token))
+                .await
+                .unwrap_or_else(|error| panic!("{error}"));
+            assert_eq!(response.status(), StatusCode::SEE_OTHER, "{value}");
+            let on_disk = fs::read_to_string(&saved).ok();
+            assert_eq!(on_disk.as_deref().map(str::trim), expected, "{value}");
+        }
+
+        fs::write(&saved, "{\"schema\":1,\"seconds\":4}\n")
+            .unwrap_or_else(|error| panic!("{error}"));
+        let delay = state.playback.playout_delay();
+        assert_eq!(delay.milliseconds, crate::state::DEFAULT_PLAYOUT_DELAY_MS);
+        assert!(delay.error.is_empty(), "{}", delay.error);
+        assert!(!delay.overridden);
+        assert_eq!(crate::state::effective_playout_delay(&saved, "0"), Ok(0));
+
+        fs::write(&saved, "{\"schema\":3,\"milliseconds\":4}\n")
+            .unwrap_or_else(|error| panic!("{error}"));
+        assert!(!state.playback.playout_delay().error.is_empty());
+        fs::remove_dir_all(root).unwrap_or_else(|error| panic!("{error}"));
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn every_authenticated_page_renders() {
         let (state, root) = test_state();

@@ -123,10 +123,18 @@ impl Channel {
         &self.frame
     }
 
-    /// Takes the current frame so the playout queue can own the payload.
+    /// Takes the current frame so the playout queue can own the payload,
+    /// leaving `replacement` as the buffer the next frame is read into.
+    ///
+    /// The replacement is normally a recycled payload from the queue. Its
+    /// stale contents and length are kept on purpose: `ensure_payload` then
+    /// zero-fills only bytes the buffer has never held, and `read_exact`
+    /// overwrites the rest.
     #[must_use]
-    pub fn take_frame(&mut self) -> Frame {
-        std::mem::replace(&mut self.frame, Frame::new())
+    pub fn take_frame(&mut self, replacement: Vec<u8>) -> Frame {
+        let mut next = Frame::new();
+        next.payload = replacement;
+        std::mem::replace(&mut self.frame, next)
     }
 
     fn close(&mut self) {

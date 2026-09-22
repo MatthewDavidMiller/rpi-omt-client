@@ -59,26 +59,38 @@ OMT_VIDEO_CEILING='1920x1080@60' run_start auto |
 
 # ─── Playout delay ───────────────────────────────────────────────────────────
 
-# No saved override: the Wi-Fi default of 4 seconds reaches the receiver.
-run_start auto | grep -Fq '<--playout-delay><4>'
+# No saved override: the default of 0 ms reaches the receiver.
+run_start auto | grep -Fq '<--playout-delay><0>'
 
 # A saved override replaces the default.
-printf '%s\n' '{"schema":1,"seconds":0}' \
+printf '%s\n' '{"schema":2,"milliseconds":250}' \
+    > "${CASE_DIR}/config/playout_delay.json"
+run_start auto | grep -Fq '<--playout-delay><250>'
+
+# A seconds-era override is discarded rather than converted or refused, so an
+# upgrade cannot stop playback from starting.
+printf '%s\n' '{"schema":1,"seconds":4}' \
     > "${CASE_DIR}/config/playout_delay.json"
 run_start auto | grep -Fq '<--playout-delay><0>'
 
 # A corrupt override fails the launch rather than falling back to a delay
 # nobody chose.
-printf '%s\n' '{"schema":1,"seconds":9}' \
+printf '%s\n' '{"schema":2,"milliseconds":8001}' \
     > "${CASE_DIR}/config/playout_delay.json"
 if run_start auto >/dev/null 2>&1; then
     echo "out-of-range saved playout delay was accepted" >&2
     exit 1
 fi
-printf '%s\n' '{"schema":2,"seconds":1}' \
+printf '%s\n' '{"schema":3,"milliseconds":1}' \
     > "${CASE_DIR}/config/playout_delay.json"
 if run_start auto >/dev/null 2>&1; then
     echo "invalid playout delay schema was accepted" >&2
+    exit 1
+fi
+printf '%s\n' '{"schema":2,"seconds":1}' \
+    > "${CASE_DIR}/config/playout_delay.json"
+if run_start auto >/dev/null 2>&1; then
+    echo "a schema 2 playout delay in seconds was accepted" >&2
     exit 1
 fi
 rm -f "${CASE_DIR}/config/playout_delay.json"

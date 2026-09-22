@@ -117,7 +117,7 @@ expect_status 2 "an unknown option" "${deployer}" --project "${project}" --colou
 # overlay download, so the CLI contract remains deterministic without network.
 alpine_boot="${empty}/PIBOOT"
 mkdir "${alpine_boot}"
-printf '%s\n' '3.24.1' >"${alpine_boot}/.alpine-release"
+printf '%s\n' '3.24.2' >"${alpine_boot}/.alpine-release"
 printf '%s\n' '[all]' >"${alpine_boot}/config.txt"
 mkdir "${alpine_boot}/boot"
 expect_status 2 "prepare-sd with no password source" \

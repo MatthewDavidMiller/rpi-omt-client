@@ -194,50 +194,77 @@ pub fn save_video_ceiling(path: &Path, ceiling: Option<&str>) -> Result<(), Stri
 }
 
 const DELAY_LIMIT: usize = 64;
-pub const DEFAULT_PLAYOUT_DELAY_SECS: u64 = 4;
-pub const MAX_PLAYOUT_DELAY_SECS: u64 = 8;
+/// No playout delay: frames go to HDMI and ALSA as they arrive.
+pub const DEFAULT_PLAYOUT_DELAY_MS: u64 = 0;
+pub const MAX_PLAYOUT_DELAY_MS: u64 = 8000;
+/// The saved-file schema. Schema 1 held whole seconds; see
+/// [`read_playout_delay`] for what becomes of such a file.
+const DELAY_SCHEMA: u8 = 2;
 
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct SavedDelay {
     schema: u8,
-    seconds: u64,
+    milliseconds: u64,
+}
+
+/// Only the schema, so a schema-1 file can be recognised without its
+/// seconds field failing the strict parse.
+#[derive(Deserialize)]
+struct DelaySchema {
+    schema: u8,
 }
 
 pub fn parse_playout_delay(value: &str) -> Result<u64, String> {
     let trimmed = value.trim();
     if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("auto") {
-        return Ok(DEFAULT_PLAYOUT_DELAY_SECS);
+        return Ok(DEFAULT_PLAYOUT_DELAY_MS);
     }
-    let parsed = trimmed.parse::<u64>().map_err(|_| {
+    let invalid = || {
         format!(
-            "Invalid playout delay: {trimmed}. Expected a whole number of seconds from 0 to {MAX_PLAYOUT_DELAY_SECS}."
+            "Invalid playout delay: {trimmed}. Expected a whole number of milliseconds from 0 to {MAX_PLAYOUT_DELAY_MS}."
         )
-    })?;
-    if parsed > MAX_PLAYOUT_DELAY_SECS {
+    };
+    // `u64::from_str` also takes a leading `+`; a setting is digits only.
+    if !trimmed.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err(invalid());
+    }
+    let parsed = trimmed.parse::<u64>().map_err(|_| invalid())?;
+    if parsed > MAX_PLAYOUT_DELAY_MS {
         return Err(format!(
-            "Playout delay {parsed} is outside 0-{MAX_PLAYOUT_DELAY_SECS}."
+            "Playout delay {parsed} ms is outside 0-{MAX_PLAYOUT_DELAY_MS}."
         ));
     }
     Ok(parsed)
 }
 
+/// The saved override in milliseconds, or `None` when there is none.
+///
+/// A schema-1 file is from before the delay was in milliseconds. It is
+/// deliberately treated as absent rather than converted or refused: the
+/// default moved from 4 s to 0 at the same time, and refusing it would stop
+/// the launcher from starting playback at all after an upgrade.
 pub fn read_playout_delay(path: &Path) -> Result<Option<u64>, String> {
     let Some(data) = read_bounded(path, DELAY_LIMIT)? else {
         return Ok(None);
     };
-    let saved: SavedDelay = json::from_slice(&data)
+    let schema: DelaySchema = json::from_slice(&data)
         .map_err(|error| format!("saved playout delay is invalid JSON: {error}"))?;
-    if saved.schema != 1 {
+    if schema.schema == 1 {
+        return Ok(None);
+    }
+    if schema.schema != DELAY_SCHEMA {
         return Err("saved playout delay has an invalid schema".to_owned());
     }
-    if saved.seconds > MAX_PLAYOUT_DELAY_SECS {
+    let saved: SavedDelay = json::from_slice(&data)
+        .map_err(|error| format!("saved playout delay is invalid JSON: {error}"))?;
+    if saved.milliseconds > MAX_PLAYOUT_DELAY_MS {
         return Err(format!(
-            "Playout delay {} is outside 0-{MAX_PLAYOUT_DELAY_SECS}.",
-            saved.seconds
+            "Playout delay {} ms is outside 0-{MAX_PLAYOUT_DELAY_MS}.",
+            saved.milliseconds
         ));
     }
-    Ok(Some(saved.seconds))
+    Ok(Some(saved.milliseconds))
 }
 
 pub fn effective_playout_delay(path: &Path, default: &str) -> Result<u64, String> {
@@ -245,19 +272,22 @@ pub fn effective_playout_delay(path: &Path, default: &str) -> Result<u64, String
     read_playout_delay(path).map(|override_value| override_value.unwrap_or(default))
 }
 
-pub fn save_playout_delay(path: &Path, seconds: Option<u64>) -> Result<(), String> {
-    let Some(seconds) = seconds else {
+pub fn save_playout_delay(path: &Path, milliseconds: Option<u64>) -> Result<(), String> {
+    let Some(milliseconds) = milliseconds else {
         return remove_file_durable(path);
     };
-    if seconds > MAX_PLAYOUT_DELAY_SECS {
+    if milliseconds > MAX_PLAYOUT_DELAY_MS {
         return Err(format!(
-            "Playout delay {seconds} is outside 0-{MAX_PLAYOUT_DELAY_SECS}."
+            "Playout delay {milliseconds} ms is outside 0-{MAX_PLAYOUT_DELAY_MS}."
         ));
     }
-    if seconds == DEFAULT_PLAYOUT_DELAY_SECS {
+    if milliseconds == DEFAULT_PLAYOUT_DELAY_MS {
         return remove_file_durable(path);
     }
-    let saved = SavedDelay { schema: 1, seconds };
+    let saved = SavedDelay {
+        schema: DELAY_SCHEMA,
+        milliseconds,
+    };
     let mut data = serde_json::to_vec(&saved).map_err(|error| error.to_string())?;
     data.push(b'\n');
     atomic_replace(path, &data, DELAY_LIMIT)
@@ -299,12 +329,15 @@ mod tests {
 
     #[test]
     fn playout_delay_parses_empty_auto_and_bounds() {
-        assert_eq!(parse_playout_delay(""), Ok(4));
-        assert_eq!(parse_playout_delay("auto"), Ok(4));
+        assert_eq!(parse_playout_delay(""), Ok(0));
+        assert_eq!(parse_playout_delay("auto"), Ok(0));
         assert_eq!(parse_playout_delay("0"), Ok(0));
-        assert_eq!(parse_playout_delay("8"), Ok(8));
-        assert!(parse_playout_delay("9").is_err());
+        assert_eq!(parse_playout_delay(" 250 "), Ok(250));
+        assert_eq!(parse_playout_delay("8000"), Ok(8000));
+        assert!(parse_playout_delay("8001").is_err());
         assert!(parse_playout_delay("-1").is_err());
+        assert!(parse_playout_delay("+5").is_err());
         assert!(parse_playout_delay("1.5").is_err());
+        assert!(parse_playout_delay("99999999999999999999999").is_err());
     }
 }

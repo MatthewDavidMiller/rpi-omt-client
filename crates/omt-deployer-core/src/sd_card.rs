@@ -230,7 +230,7 @@ mod tests {
             Err(error) => error.to_string(),
         };
         assert!(error.contains("not an Alpine boot partition"), "{error}");
-        fs::write(root.join(".alpine-release"), b"3.24.1\n")
+        fs::write(root.join(".alpine-release"), b"3.24.2\n")
             .unwrap_or_else(|error| panic!("{error}"));
         fs::write(root.join("config.txt"), b"[all]\n").unwrap_or_else(|error| panic!("{error}"));
         fs::create_dir(root.join("boot")).unwrap_or_else(|error| panic!("{error}"));
