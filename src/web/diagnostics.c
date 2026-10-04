@@ -12,6 +12,7 @@
 #include "common/json.h"
 #include "common/rand.h"
 #include "common/timefmt.h"
+#include "common/version.h"
 #include "crypto/crypto.h"
 #include "web/zip.h"
 
@@ -514,7 +515,7 @@ void omt_app_version(const omt_web_settings *s, omt_buf *out) {
     }
     /* The Rust frontend fell back to its crate version, which never carried
      * the leading 'v' the build stamps on. */
-    omt_buf_puts(out, OMT_VERSION[0] == 'v' ? &OMT_VERSION[1] : OMT_VERSION);
+    omt_buf_puts(out, omt_version[0] == 'v' ? &omt_version[1] : omt_version);
 }
 
 void omt_legal_texts(const omt_web_settings *s, omt_buf *license, omt_buf *notices) {

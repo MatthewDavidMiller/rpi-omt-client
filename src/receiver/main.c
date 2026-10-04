@@ -18,6 +18,7 @@
 
 #include "common/json.h"
 #include "common/proc.h"
+#include "common/version.h"
 #include "receiver/discovery.h"
 #include "receiver/play.h"
 
@@ -337,7 +338,7 @@ int main(int argc, char **argv) {
     /* As the Rust runtime does: a closed pipe is an error return, not a kill. */
     signal(SIGPIPE, SIG_IGN);
     if (argc == 2 && strcmp(argv[1], "--version") == 0) {
-        printf("%s\n", OMT_VERSION);
+        printf("%s\n", omt_version);
         return 0;
     }
     if (argc < 2) return usage();

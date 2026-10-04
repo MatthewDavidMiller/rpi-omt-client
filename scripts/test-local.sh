@@ -64,17 +64,27 @@ esac
 # Every gate reports through here so the run's output names which suites
 # actually executed. A gate invoked directly would still abort the run under
 # `set -e`, but silently -- indistinguishable from one that was skipped.
+#
+# Each gate's wall time is recorded too, and print_timings lists the slowest
+# first when the run ends, so a slow pre-commit says where the time went.
+GATE_TIMINGS=()
 run_test() {
-    local label="$1"
+    local label="$1" started="${SECONDS}"
     shift
     echo "=== ${label} ==="
     if "$@"; then
-        echo -e "${GREEN}PASSED${NC}: ${label}"
+        GATE_TIMINGS+=("$((SECONDS - started))"$'\t'"${label}")
+        echo -e "${GREEN}PASSED${NC}: ${label} ($((SECONDS - started))s)"
     else
-        echo -e "${RED}FAILED${NC}: ${label}"
+        echo -e "${RED}FAILED${NC}: ${label} ($((SECONDS - started))s)"
         exit 1
     fi
     echo ""
+}
+
+print_timings() {
+    echo "=== Gate timings (${SECONDS}s total) ==="
+    printf '%s\n' "${GATE_TIMINGS[@]}" | sort -rn | awk -F'\t' '{printf "%6ss  %s\n", $1, $2}'
 }
 
 # ─── Unit Tests ───────────────────────────────────────────────
@@ -135,6 +145,7 @@ run_test "Repository contract tests" "${PYTHON_TEST_BIN}" -m pytest \
     tests/unit/test_runtime_validation.py -q --tb=short
 
 if [[ "${QUICK_MODE}" == "true" ]]; then
+    print_timings
     echo -e "${GREEN}=== Quick tests completed successfully ===${NC}"
     exit 0
 fi
@@ -157,4 +168,5 @@ if [[ "${FULL_MODE}" == "true" ]]; then
     run_test "OMT Network Tests" "${PROJECT_ROOT}/tests/integration/test_omt_network.sh"
 fi
 
+print_timings
 echo -e "${GREEN}=== All tests completed successfully ===${NC}"

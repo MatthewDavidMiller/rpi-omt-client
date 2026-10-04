@@ -14,6 +14,7 @@
 #include <string.h>
 
 #include "common/json.h"
+#include "common/version.h"
 #include "deploy/core/deploy.h"
 #include "deploy/core/https.h"
 
@@ -265,7 +266,7 @@ static bool request_once(SSL_CTX *ctx, const url_parts *u, uint64_t deadline, si
         omt_buf_printf(&req,
                        "GET %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: rpi-omt-deploy/%s\r\n"
                        "Accept: */*\r\nAccept-Encoding: identity\r\nConnection: close\r\n\r\n",
-                       u->path, u->host, OMT_VERSION);
+                       u->path, u->host, omt_version);
         ok = tls_write(&c, req.data, req.len, err);
     }
     /* Headers. */

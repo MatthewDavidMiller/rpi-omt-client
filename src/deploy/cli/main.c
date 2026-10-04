@@ -15,6 +15,7 @@
 #include <string.h>
 
 #include "common/json.h"
+#include "common/version.h"
 #include "deploy/core/deploy.h"
 
 #define SECRETS_LIMIT (16u * 1024u)
@@ -245,7 +246,7 @@ static int parse(int argc, char **argv, cli *c) {
             continue;
         }
         if (strcmp(arg, "--version") == 0 || strcmp(arg, "-V") == 0) {
-            printf("rpi-omt-deploy %s\n", OMT_VERSION);
+            printf("rpi-omt-deploy %s\n", omt_version);
             return 0;
         }
         if (arg[0] == '-' && arg[1] == '-' && arg[2]) {

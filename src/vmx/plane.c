@@ -4,12 +4,13 @@
  * VMX_DecodePlaneInternal128.
  *
  * The reference kernel also carries a 16 KiB twelve-bit lookahead table that
- * resolves a value code, and any zero code following it, in one step. That
- * table is a decode-speed optimisation over the manual path reproduced here:
- * it consumes the same bits and yields the same coefficients, and its only
- * observable difference -- deliberately over-reading a trailing zero code into
- * the next plane, which REWINDOVERREAD then gives back -- cannot arise without
- * it. This path is therefore bit-exact and needs no rewind.
+ * resolves a value code, and any zero code following it, in one step, and
+ * deliberately over-reads a trailing zero code into the next plane, which
+ * REWINDOVERREAD then gives back. This port resolves one code per lookup
+ * instead (vmx_ac_lookahead), and only when the whole code is already in the
+ * window, so it never over-reads and needs no rewind. A code the table cannot
+ * resolve, or one at the edge of the window, takes the bit-by-bit path, which
+ * is the reference's manual path and the definition the table is held to.
  *
  * The reference truncates its unsigned bitstream intermediates into shorts,
  * which is the behaviour the casts below reproduce.
@@ -52,7 +53,22 @@ bool vmx_decode_plane(vmx_slice_streams *s, size_t stride, int16_t bias, const u
             uint32_t guard = 0;
             while (pending < 64) {
                 if (++guard > MAX_SYMBOLS_PER_BLOCK) return false;
-                if (vmx_bits_bit_bare(&s->ac) == 1) {
+                /* With at least VMX_LOOKAHEAD_BITS unread, a code the table
+                 * resolves is wholly inside the window, so consuming its
+                 * length leaves the reader exactly where the bit-by-bit path
+                 * would, and none of that path's corrupt cases can arise. */
+                uint32_t entry = 0;
+                if (s->ac.bits_left >= VMX_LOOKAHEAD_BITS)
+                    entry = vmx_ac_lookahead[vmx_shl64(s->ac.window,
+                                                       (uint32_t)(64 - s->ac.bits_left)) >>
+                                             (64 - VMX_LOOKAHEAD_BITS)];
+                if (entry != 0) {
+                    s->ac.bits_left -= (int32_t)((entry >> 16) & 0xFFu);
+                    if (entry >> 24 == VMX_LOOKAHEAD_VALUE)
+                        block[vmx_zigzag_natural[pending++]] = (int16_t)(uint16_t)entry;
+                    else
+                        pending += entry & 0xFFFFu;
+                } else if (vmx_bits_bit_bare(&s->ac) == 1) {
                     if (vmx_bits_bit_bare(&s->ac) == 1) {
                         pending += 1;
                     } else {
@@ -64,7 +80,7 @@ bool vmx_decode_plane(vmx_slice_streams *s, size_t stride, int16_t bias, const u
                 } else {
                     int32_t width = vmx_bits_zeros_bare(&s->ac) + 2;
                     uint64_t value = vmx_bits_bits_bare(&s->ac, width);
-                    if (pending < 64) block[pending] = vmx_mag_sign(value);
+                    if (pending < 64) block[vmx_zigzag_natural[pending]] = vmx_mag_sign(value);
                     pending += 1;
                 }
                 vmx_bits_reload(&s->ac);

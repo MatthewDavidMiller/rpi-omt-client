@@ -19,14 +19,17 @@
 | Video ceilings, status projection, and atomic publication | `src/receiver_core/ceiling.c`, `src/receiver_core/status.c` |
 | Decode-only VMX1 implementation and its worker pool | `src/vmx/` |
 | VMX bitstream and plane decoding | `src/vmx/bitstream.h`, `src/vmx/plane.c` |
-| Colour conversion: portable definition and AArch64 NEON BGRX kernel | `src/vmx/convert_scalar.c`, `src/vmx/convert_neon.c` |
-| Inverse DCT: portable definition and AArch64 NEON kernel | `src/vmx/idct_scalar.c`, `src/vmx/idct_neon.c` |
+| Entropy lookahead table and its generator | `src/vmx/ac_lookahead.c`, `tools/gen/gen_vmx_tables.py` |
+| Colour conversion: portable definition and AArch64 assembly BGRX kernel | `src/vmx/convert_scalar.c`, `src/vmx/convert_aarch64.S` |
+| Inverse DCT: portable definition and AArch64 assembly kernel | `src/vmx/idct_scalar.c`, `src/vmx/idct_aarch64.S` |
+| Branch-protection landing pads and property note for the assembly | `src/vmx/aarch64.inc` |
 | Decode throughput measurement for per-board ceilings | `tests/c/bench_vmx.c` |
 | VMX conformance vectors captured from the reference decoder | `tests/vectors/vmx/` |
 | First-party C OMT A/V test sender | `src/sender/`, `scripts/build-omt-test-sender.sh`, `scripts/omt-test-sender.sh` |
 | Source-scoped sender firewall helper | `scripts/configure-omt-test-sender-firewall.sh` |
 | Shared validation, status, and forbidden-code-point contracts | `tests/schema/` |
 | Bounded buffers, strict JSON, NFC, file and process I/O | `src/common/` |
+| The build version, stamped into this one object so a version change recompiles one file | `src/common/version.c` |
 | NFC tables generated from the pinned Unicode data | `tools/gen/gen_nfc_tables.py`, `third_party/unicode/` |
 | OMT provenance | `third_party/omt/PROVENANCE.md`, `third_party/omt/libvmx/LICENSE.txt` |
 | HTTPS server: poll loop, OpenSSL TLS, request parsing, connection and time limits | `src/web/http.c` |
@@ -82,7 +85,10 @@ The ARM64 publisher fingerprints both binaries' complete local source closure
 into that scratch stage: Podman's cross-stage cache can otherwise compile a
 changed receiver and still reuse the old copied binary.
 `src/deploy/` is excluded from the build context, so a deployer or SSH-client
-source edit does not trigger another emulated ARM64 receiver compile.
+source edit does not trigger another ARM64 receiver compile. That compile is a
+cross-compile on the build machine against an Alpine sysroot
+(`scripts/make-sysroot.sh`); only the runtime stage's package installs run
+under emulation.
 
 Public routes are `/login`, `/logout`, `/`, `/sources/select`,
 `/sources/refresh`, `/playback/restart`, `/playback/clear`,
@@ -117,6 +123,8 @@ are POST and CSRF protected.
 | Terminal deployer for Linux and Windows: views and input handling (`src/deploy/tui/app.c`), a diffing VT renderer, and the embedded legal texts | `src/deploy/tui/` |
 | Job definitions both deployer frontends share, so a deployment means one thing | `src/deploy/core/jobs.c` |
 | Gate toolbox image: every compiler, linter, and scanner the gates use | `tools/toolbox/Dockerfile` |
+| Target sysroot for the cross-compiled appliance build and AArch64 suites | `scripts/make-sysroot.sh` |
+| AArch64 suites: cross-compiled, run under qemu-user | `scripts/test-c-arm64.sh` |
 | Runs a gate inside the toolbox; the only thing the host needs is Docker or Podman | `scripts/toolbox.sh` |
 | Reads the Linux deployer's static-linkage guarantee back out of the ELF headers | `scripts/verify-linux-deployer.sh` |
 | Supply-chain gate and the pinned Windows OpenSSL | `scripts/check-supply-chain.sh`, `scripts/build-openssl.sh` |

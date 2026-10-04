@@ -1,29 +1,54 @@
 ARG ALPINE_DIGEST=sha256:fd791d74b68913cbb027c6546007b3f0d3bc45125f797758156952bc2d6daf40
 ARG RECEIVER_SOURCE_FINGERPRINT=unknown
 
-# Both appliance binaries are C, built natively for the target platform on the
-# same Alpine release the runtime image uses, so they link the musl, alsa-lib,
-# and OpenSSL the image ships. Only the C tree enters this stage, so a deployer
-# or script edit cannot force another emulated build.
+# Both appliance binaries are C, cross-compiled on the build machine for the
+# target platform against a sysroot of the same Alpine release the runtime
+# image uses, so they link the musl, alsa-lib, and OpenSSL the image ships.
+# Compiling them under QEMU instead took tens of minutes per ARM64 build; only
+# the runtime stages below still run target binaries, and those only install
+# packages. Only the C tree enters this stage, so a deployer or script edit
+# cannot force another build.
+#
+# Clang rather than GCC: the decoder's lane loops are written to be
+# vectorized, which LLVM does and GCC does not, and on AArch64 that is the
+# difference between matching the Rust decoder this replaced and trailing it
+# by about 15%. llvm supplies the archiver its LTO objects need, and lld links
+# them: Alpine's cross binutils is built without the LTO plugin. LTO emits
+# compiler-runtime calls only after lld has resolved symbols, so lld would bind
+# them to libgcc_s.so, which the runtime image does not ship; -static-libgcc
+# takes them from libgcc.a, as GNU ld's plugin does for the native build.
 # hadolint ignore=DL3029
-FROM --platform=$TARGETPLATFORM alpine:3.23.5@${ALPINE_DIGEST} AS c-builder
+FROM --platform=$BUILDPLATFORM alpine:3.23.5@${ALPINE_DIGEST} AS c-builder
 
 SHELL ["/bin/ash", "-eo", "pipefail", "-c"]
 
 ARG RPI_OMT_CLIENT_VERSION=unknown
+ARG TARGETARCH
 
-# Clang rather than GCC: the decoder's lane loops are written to be
-# vectorized, which LLVM does and GCC does not, and on AArch64 that is the
-# difference between matching the Rust decoder this replaced and trailing it
-# by about 15%. llvm supplies the archiver its LTO objects need.
-RUN apk add --no-cache alsa-lib-dev build-base clang llvm openssl-dev
+RUN apk add --no-cache clang lld llvm make
+
+COPY scripts/make-sysroot.sh /usr/local/bin/make-sysroot.sh
+RUN case "${TARGETARCH}" in \
+        arm64) arch=aarch64 ;; \
+        amd64) arch=x86_64 ;; \
+        *) echo "unsupported TARGETARCH ${TARGETARCH}" >&2; exit 1 ;; \
+    esac \
+    && make-sysroot.sh "${arch}" /sysroot \
+    && printf '%s\n' "${arch}" > /sysroot/.omt-arch
 
 WORKDIR /src
 COPY mk/ mk/
 COPY src/ src/
-RUN make -f mk/c.mk CC=clang BUILD=release OMT_VERSION="${RPI_OMT_CLIENT_VERSION}" \
-        -j"$(nproc)" receiver web \
-    && out="$(make -s -f mk/c.mk CC=clang BUILD=release OMT_VERSION=x print-out)" \
+RUN cc="clang --target=$(cat /sysroot/.omt-arch)-alpine-linux-musl --sysroot=/sysroot" \
+    && make -f mk/c.mk CC="${cc}" LDFLAGS="-fuse-ld=lld -static-libgcc" BUILD=release \
+        OMT_VERSION="${RPI_OMT_CLIENT_VERSION}" -j"$(nproc)" receiver web \
+    && out="$(make -s -f mk/c.mk CC="${cc}" LDFLAGS="-fuse-ld=lld -static-libgcc" BUILD=release \
+        OMT_VERSION="${RPI_OMT_CLIENT_VERSION}" print-out)" \
+    && for bin in omt-receiver omt-web; do \
+        if llvm-readelf -d "${out}/bin/${bin}" | grep -q libgcc_s; then \
+            echo "${bin} depends on libgcc_s, which the runtime image lacks" >&2; exit 1; \
+        fi; \
+    done \
     && install -Dm755 "${out}/bin/omt-receiver" /out/runtime/omt-receiver \
     && install -Dm755 "${out}/bin/omt-web" /out/runtime/omt-web
 

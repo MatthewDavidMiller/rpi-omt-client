@@ -196,13 +196,32 @@ $(OUT)/fuzz/fuzz_%: $(OUT)/obj/fuzz/fuzz_%.o $(TEST_LIBS)
 	@$(if $(Q),echo "  LD      $@")
 	$(Q)$(CC) $(LDFLAGS_ALL) -fsanitize=fuzzer -o $@ $< $(TEST_LIBS) $(TEST_SYSLIBS)
 
-.PHONY: fuzz fuzz-smoke
+# Each target is its own make goal, so `make -j` runs them side by side within
+# the job budget instead of one after another; every one still gets the full
+# FUZZ_SECONDS. A target's output goes to its own log, printed when it fails,
+# so concurrent runs cannot interleave into an unreadable report.
+FUZZ_RUNS := $(patsubst %,fuzz-run-%,$(FUZZ_NAMES))
+
+.PHONY: fuzz fuzz-smoke $(FUZZ_RUNS)
 fuzz: $(FUZZ_BINS)
-fuzz-smoke: $(FUZZ_BINS)
-	@set -e; for name in $(FUZZ_NAMES); do \
-	    corpus=tests/fuzz/corpus/$$name; mkdir -p $(OUT)/fuzz/work/$$name; \
-	    echo "== fuzz_$$name ($(FUZZ_SECONDS)s)"; \
-	    LSAN_OPTIONS=suppressions=$(CURDIR)/tests/fuzz/lsan.supp \
-	    $(OUT)/fuzz/fuzz_$$name -max_total_time=$(FUZZ_SECONDS) -rss_limit_mb=2048 \
-	        -max_len=1048576 $(OUT)/fuzz/work/$$name $$corpus; \
-	done
+fuzz-smoke: $(FUZZ_RUNS)
+$(FUZZ_RUNS): fuzz-run-%: $(OUT)/fuzz/fuzz_%
+	@mkdir -p $(OUT)/fuzz/work/$*
+	@echo "== fuzz_$* ($(FUZZ_SECONDS)s)"
+	@if LSAN_OPTIONS=suppressions=$(CURDIR)/tests/fuzz/lsan.supp \
+	    $(OUT)/fuzz/fuzz_$* -max_total_time=$(FUZZ_SECONDS) -rss_limit_mb=2048 \
+	        -max_len=1048576 $(OUT)/fuzz/work/$* tests/fuzz/corpus/$* \
+	        >$(OUT)/fuzz/work/$*.log 2>&1; then \
+	    echo "== fuzz_$* passed"; \
+	else \
+	    cat $(OUT)/fuzz/work/$*.log; echo "== fuzz_$* FAILED"; exit 1; \
+	fi
+
+# ---------------------------------------------------------- link stamp
+# Every linked output relinks when the link flags change (see mk/c.mk). A rule
+# without a recipe only adds the prerequisite; each still links by its own rule.
+LINKED := $(BIN)/omt-receiver $(BIN)/omt-test-sender $(BIN)/omt-web \
+          $(BIN)/rpi-omt-deploy$(EXE) $(BIN)/rpi-omt-deploy-tui$(EXE) \
+          $(TEST_BINS) $(DEPLOY_TEST_BINS) $(OUT)/tests/test_deploy_capsule$(EXE) \
+          $(OUT)/tests/ssh_interop$(EXE) $(OUT)/tests/bench_vmx$(EXE) $(FUZZ_BINS)
+$(LINKED): $(LINK_STAMP)

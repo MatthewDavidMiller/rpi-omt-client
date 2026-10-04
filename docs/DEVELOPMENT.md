@@ -14,7 +14,7 @@ uapi, and Win32 are the platform.
 |---|---|
 | `src/common` | Bounded buffers, strict JSON and XML, NFC, file and process I/O, randomness |
 | `src/protocol` | OMT wire transport and shared target validation |
-| `src/vmx` | Decode-only VMX1, worker pool, AArch64 NEON kernels |
+| `src/vmx` | Decode-only VMX1, worker pool, AArch64 assembly kernels |
 | `src/receiver_core` | Format policy, video ceilings, status projection |
 | `src/receiver` | Linux adapters: DRM/KMS, ALSA, discovery, D-Bus, the `omt-receiver` binary |
 | `src/sender` | First-party OMT A/V test sender |
@@ -32,7 +32,7 @@ uapi, and Win32 are the platform.
 | `deploy/` | Dockerfile, container scripts, host installer, OpenRC services, manifest-v3 capsule |
 | `scripts/` | Build, gate, deploy, and release entry points |
 | `tests/` | C suites (`tests/c`), fuzz targets (`tests/fuzz`), shell, Python, and native suites, schema vectors |
-| `tools/gen/` | Build-time generators: NFC tables, templates, Blowfish tables, the capsule |
+| `tools/gen/` | Build-time generators: NFC tables, templates, Blowfish tables, the VMX entropy lookahead, the capsule |
 | `tools/toolbox/` | The image every gate runs inside |
 
 Both deployer frontends run the same jobs from `src/deploy/core/jobs.c`, so a
@@ -83,8 +83,10 @@ make release                  # local pipeline; needs an authenticated gh CLI
 
 Both deployer builds embed the appliance image, so `make build-arm64` comes
 first; they stop and say so when `omt-client-arm64.tar.gz` is absent. It is
-deliberately not a Make prerequisite, because an emulated ARM64 build takes tens
-of minutes and should never start as a side effect.
+deliberately not a Make prerequisite, because an ARM64 image build runs the
+appliance's runtime stage under emulation and should never start as a side
+effect. Its C is cross-compiled on the workstation, so the build itself takes
+about a minute; the full pre-commit gate takes about five.
 
 ## Invariants
 
@@ -110,7 +112,10 @@ weight the compiler used to.
 - **Every suite runs sanitized.** The C suites run under AddressSanitizer and
   UndefinedBehaviorSanitizer with leak detection; every parser that reads
   untrusted input has a libFuzzer target in `tests/fuzz`, and `make
-  fuzz-smoke` runs them all.
+  fuzz-smoke` runs them all, side by side. Hand-written assembly is the one
+  exception to the sanitizers, and it is confined to `src/` by
+  `scripts/check-no-c-sources.sh` and held bit-exact to portable C by the
+  AArch64 suites.
 - **No third-party code but OpenSSL.** `scripts/check-supply-chain.sh`
   allowlists every system header a source may include, pins the Windows
   OpenSSL by version and SHA-256 to the 3.5 LTS series, and requires every

@@ -95,9 +95,10 @@ build: build-arm64
 
 # The deployer embeds the manifest-v3 capsule, appliance image included, so the
 # image is one of its build inputs: run build-arm64 first. Not a make
-# prerequisite on purpose -- an emulated ARM64 image build takes tens of
-# minutes, and starting one from a target named "build the deployer" would be a
-# surprise rather than a convenience. Both build scripts say so and stop.
+# prerequisite on purpose -- an ARM64 image build pulls packages for and
+# emulates the appliance's runtime stage, and starting one from a target named
+# "build the deployer" would be a surprise rather than a convenience. Both
+# build scripts say so and stop.
 build-deployer:
 	RPI_OMT_CLIENT_VERSION="$(RPI_OMT_CLIENT_VERSION)" $(TOOLBOX) ./scripts/check-deployer.sh --publish
 

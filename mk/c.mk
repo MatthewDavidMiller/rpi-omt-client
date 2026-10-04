@@ -48,21 +48,45 @@ endif
 
 include mk/flags.mk
 
-# Objects depend on the flags they were compiled with, not only on their
-# sources: OMT_VERSION is a -D flag, and check-c.sh builds into the same output
-# directory with OMT_VERSION=check. Without this a release build would link the
-# gate's objects and ship a binary that reports the wrong version.
-FLAGS_STAMP := $(OUT)/.flags
-FLAGS_TEXT  := $(CC) $(CFLAGS_ALL) $(LDFLAGS)
+# Outputs depend on the flags they were built with, not only on their sources,
+# through three stamps that are rewritten only when their text changes.
+#
+#   * Objects depend on the compile flags.
+#   * Binaries depend on the link flags, so check-deployer.sh's
+#     LDFLAGS=-static-pie relinks the build check-c.sh just compiled rather
+#     than recompiling it.
+#   * The version is not a compile flag at all. It is stamped into one object,
+#     common/version.o, because the gates build the same output directory with
+#     different versions (check-c.sh uses OMT_VERSION=check). As a -D on every
+#     file it made each gate run recompile the whole tree; without any stamp a
+#     release build would link the gate's object and report the wrong version.
+FLAGS_STAMP   := $(OUT)/.flags
+FLAGS_TEXT    := $(CC) $(CFLAGS_ALL) $(ASFLAGS_ALL)
+LINK_STAMP    := $(OUT)/.ldflags
+LINK_TEXT     := $(CC) $(LDFLAGS_ALL)
+VERSION_STAMP := $(OUT)/.version
 ifneq ($(file < $(FLAGS_STAMP)),$(FLAGS_TEXT))
 $(shell mkdir -p $(OUT))
 $(file > $(FLAGS_STAMP),$(FLAGS_TEXT))
 endif
+ifneq ($(file < $(LINK_STAMP)),$(LINK_TEXT))
+$(shell mkdir -p $(OUT))
+$(file > $(LINK_STAMP),$(LINK_TEXT))
+endif
+ifneq ($(file < $(VERSION_STAMP)),$(OMT_VERSION))
+$(shell mkdir -p $(OUT))
+$(file > $(VERSION_STAMP),$(OMT_VERSION))
+endif
+
+$(OUT)/obj/common/version.o: FILE_CFLAGS := -DOMT_VERSION='"$(OMT_VERSION)"'
+$(OUT)/obj/common/version.o: $(VERSION_STAMP)
 
 # A source file named *_posix.c or *_win32.c only builds for its platform.
+# Assembly (*.S) builds everywhere; each file guards its body on the
+# architecture it is written for, so elsewhere it assembles to nothing.
 OTHER_PLATFORM := $(if $(filter win32,$(PLATFORM)),posix,win32)
-sources = $(filter-out %_$(OTHER_PLATFORM).c,$(wildcard $(1)/*.c))
-objects = $(patsubst src/%.c,$(OUT)/obj/%.o,$(call sources,$(1)))
+sources = $(filter-out %_$(OTHER_PLATFORM).c,$(wildcard $(1)/*.c)) $(wildcard $(1)/*.S)
+objects = $(patsubst src/%.S,$(OUT)/obj/%.o,$(patsubst src/%.c,$(OUT)/obj/%.o,$(call sources,$(1))))
 
 # Quiet by default; V=1 prints every command.
 ifeq ($(V),1)
@@ -75,6 +99,11 @@ $(OUT)/obj/%.o: src/%.c $(FLAGS_STAMP)
 	@mkdir -p $(@D)
 	@$(if $(Q),echo "  CC      $<")
 	$(Q)$(CC) $(CFLAGS_ALL) $(FILE_CFLAGS) -MMD -MP -c $< -o $@
+
+$(OUT)/obj/%.o: src/%.S $(FLAGS_STAMP)
+	@mkdir -p $(@D)
+	@$(if $(Q),echo "  AS      $<")
+	$(Q)$(CC) $(ASFLAGS_ALL) -MMD -MP -c $< -o $@
 
 $(OUT)/obj/tests/%.o: tests/c/%.c $(FLAGS_STAMP)
 	@mkdir -p $(@D)

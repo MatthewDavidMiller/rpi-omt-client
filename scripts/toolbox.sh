@@ -45,7 +45,8 @@ toolbox_tag() {
             "${DOCKERFILE}" \
             "${PROJECT_ROOT}/tests/requirements-dev.txt" \
             "${PROJECT_ROOT}/scripts/install-hadolint.sh" \
-            "${PROJECT_ROOT}/scripts/install-trivy.sh" |
+            "${PROJECT_ROOT}/scripts/install-trivy.sh" \
+            "${PROJECT_ROOT}/scripts/make-sysroot.sh" |
             sha256sum | cut -c1-16
     )"
     printf '%s:%s\n' "${TOOLBOX_REPO}" "${digest}"

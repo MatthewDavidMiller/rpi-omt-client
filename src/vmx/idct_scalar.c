@@ -182,14 +182,13 @@ static OMT_ALWAYS_INLINE void column_pass(const i16x8 rows[8], i16x8 bias, uint8
 
 void vmx_idct_scalar(const int16_t block[64], const uint16_t matrix[64], uint8_t *dst,
                      size_t stride, int16_t add_value) {
-    /* Inverse zig-zag and dequantise in one pass. The reference multiplies in
-     * 16 bits, keeping the wraparound, then shifts down by four. */
+    /* Dequantise. The block is already in row-major order (see
+     * vmx_zigzag_natural). The reference multiplies in 16 bits, keeping the
+     * wraparound, then shifts down by four. */
     i16x8 rows[8];
-    for (int index = 0; index < 64; index++) {
-        int16_t coefficient = block[vmx_zigzag_inverse[index]];
+    for (int index = 0; index < 64; index++)
         rows[index / 8].v[index % 8] =
-            (int16_t)(vmx_wrap_mul16(coefficient, (int16_t)matrix[index]) >> 4);
-    }
+            (int16_t)(vmx_wrap_mul16(block[index], (int16_t)matrix[index]) >> 4);
     i16x8 transformed[8] = {
         row_pass(rows[0], vmx_tab_i_04), row_pass(rows[1], vmx_tab_i_17),
         row_pass(rows[2], vmx_tab_i_26), row_pass(rows[3], vmx_tab_i_35),

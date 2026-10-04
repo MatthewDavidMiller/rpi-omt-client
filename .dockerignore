@@ -9,6 +9,9 @@ scripts/*
 # runtime-sha256.manifest are unchanged.
 !scripts/install-hadolint.sh
 !scripts/install-trivy.sh
+# The cross-compilation sysroot, which the appliance's builder stage and the
+# toolbox both install with it.
+!scripts/make-sysroot.sh
 !tests/requirements-dev.txt
 *.md
 *.log

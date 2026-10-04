@@ -1,30 +1,39 @@
 #!/bin/bash
-# Build and run the C unit suites on AArch64 under emulation.
+# Build the C unit suites for AArch64 and run them under emulation.
 #
 # The appliance's NEON kernels only compile for AArch64, and QEMU models no
 # Raspberry Pi SoC, so this proves the kernels agree with the portable ones
 # bit for bit and decode the conformance vectors exactly -- not that they are
-# fast. It runs the same Alpine release the appliance image is built on.
+# fast.
+#
+# The suites are cross-compiled with the compiler and flags the appliance
+# image is built with (clang, against the aarch64 sysroot the toolbox installs
+# from the appliance's Alpine release; see scripts/make-sysroot.sh), and only
+# the test binaries run under qemu-user. Compiling under emulation instead
+# took minutes per run and tested GCC's code while clang's shipped. The link
+# flags are deploy/Dockerfile's, for the reason given there.
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-# shellcheck source=scripts/docker-test-env.sh
-source "${SCRIPT_DIR}/docker-test-env.sh"
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "${PROJECT_ROOT}"
 
-ALPINE_IMAGE="docker.io/library/alpine:3.23.5@$(sed -n 's/^ARG ALPINE_DIGEST=//p' "${PROJECT_ROOT}/deploy/Dockerfile")"
+SYSROOT="${OMT_AARCH64_SYSROOT:-/opt/sysroot-aarch64}"
 BUILD="${BUILD:-release}"
 
-if ! ensure_test_container_engine; then
-    echo "ERROR: Docker or Podman is required for the AArch64 C suites" >&2
+for tool in clang ld.lld qemu-aarch64 make; do
+    command -v "${tool}" >/dev/null 2>&1 || {
+        echo "ERROR: ${tool} is required for the AArch64 C suites (run make install)" >&2
+        exit 1
+    }
+done
+[[ -e "${SYSROOT}/lib/ld-musl-aarch64.so.1" ]] || {
+    echo "ERROR: no AArch64 sysroot at ${SYSROOT} (run make install)" >&2
     exit 1
-fi
+}
 
-"${CONTAINER_ENGINE}" run --rm --platform linux/arm64 \
-    -v "${PROJECT_ROOT}:/work:Z" -w /work \
-    "${ALPINE_IMAGE}" sh -euc "
-        apk add --no-cache alsa-lib-dev build-base openssl-dev linux-headers python3 >/dev/null
-        make -f mk/c.mk BUILD=${BUILD} OMT_VERSION=test -j\$(nproc) tests
-        make -f mk/c.mk BUILD=${BUILD} OMT_VERSION=test test
-    "
+C_MAKE=(make -f mk/c.mk
+    CC="clang --target=aarch64-alpine-linux-musl --sysroot=${SYSROOT}"
+    LDFLAGS="-fuse-ld=lld -static-libgcc" BUILD="${BUILD}" OMT_VERSION=test -j"$(nproc)")
+"${C_MAKE[@]}" tests
+"${C_MAKE[@]}" TEST_RUNNER="qemu-aarch64 -L ${SYSROOT}" test

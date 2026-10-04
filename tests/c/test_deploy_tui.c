@@ -7,6 +7,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include "common/version.h"
 #include "deploy/tui/app.h"
 #include "deploy/tui/screen.h"
 #include "deploy/tui/ui.h"
@@ -383,7 +384,7 @@ static void about_reproduces_the_licence_and_the_third_party_notices(void) {
         omt_buf_puts(&joined, lines.items[i]);
         omt_buf_putc(&joined, '\n');
     }
-    CHECK(strstr(omt_buf_cstr(&joined), OMT_VERSION) != NULL);
+    CHECK(strstr(omt_buf_cstr(&joined), omt_version) != NULL);
     CHECK(strstr(omt_buf_cstr(&joined), "LICENSE\n-------") != NULL);
     CHECK(strstr(omt_buf_cstr(&joined), "THIRD-PARTY NOTICES") != NULL);
     /* Every line of both texts is reproduced. */

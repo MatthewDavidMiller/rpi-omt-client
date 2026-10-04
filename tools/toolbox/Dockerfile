@@ -70,7 +70,10 @@ SHELL ["/bin/ash", "-eo", "pipefail", "-c"]
 # what they mean to.
 #
 # qemu-aarch64 runs the appliance's NEON decoder under emulation, so the
-# kernel that ships on the Pi is the one the differential test checked.
+# kernel that ships on the Pi is the one the differential test checked. The
+# suites are cross-compiled for it by clang against /opt/sysroot-aarch64 (see
+# scripts/make-sysroot.sh) and linked by lld: Alpine's aarch64 binutils is
+# built without the plugin the release build's LTO needs.
 #
 # The C tree's gates: clang (with compiler-rt and llvm-ar) builds the
 # sanitizer and libFuzzer configurations -- Alpine's GCC ships no libasan for
@@ -114,6 +117,7 @@ RUN apk add --no-cache \
         grep \
         iproute2 \
         linux-headers \
+        lld \
         llvm \
         make \
         mingw-w64-gcc \
@@ -148,9 +152,10 @@ RUN apk add --no-cache \
 # Reuse the repository's own pinned installers rather than restating the
 # versions and checksums here, so the toolbox cannot drift from what a host
 # install of the same tool would produce.
-COPY scripts/install-hadolint.sh scripts/install-trivy.sh /tmp/installers/
+COPY scripts/install-hadolint.sh scripts/install-trivy.sh scripts/make-sysroot.sh /tmp/installers/
 RUN /tmp/installers/install-hadolint.sh \
     && /tmp/installers/install-trivy.sh \
+    && /tmp/installers/make-sysroot.sh aarch64 /opt/sysroot-aarch64 \
     && rm -rf /tmp/installers
 
 # Alpine marks its Python installation externally managed, so the tooling lives

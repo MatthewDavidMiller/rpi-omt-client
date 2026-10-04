@@ -5,7 +5,17 @@ ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 START="${ROOT}/deploy/container/start-omt.sh"
 CASE_DIR="$(mktemp -d)"
 trap 'rm -rf "${CASE_DIR}"' EXIT
-mkdir -p "${CASE_DIR}/config/run"
+mkdir -p "${CASE_DIR}/config/run" "${CASE_DIR}/bin"
+
+# start-omt.sh resolves the target, ceiling, and delay through omt-web, so the
+# launcher is tested against the C binary this tree builds. tools/test-web.sh
+# exports REAL_OMT_WEB; run on its own, the suite builds the same one.
+OMT_WEB="${REAL_OMT_WEB:-}"
+if [[ -z "${OMT_WEB}" ]]; then
+    make -s -C "${ROOT}" -f mk/c.mk BUILD=asan -j"$(nproc)" web
+    OMT_WEB="${ROOT}/$(make -s -C "${ROOT}" -f mk/c.mk BUILD=asan print-out)/bin/omt-web"
+fi
+ln -s "${OMT_WEB}" "${CASE_DIR}/bin/omt-web"
 
 cat > "${CASE_DIR}/receiver" <<'EOF'
 #!/bin/bash
@@ -21,7 +31,7 @@ run_start() {
     OMT_STORAGE_PATH="${CASE_DIR}/config/omt" \
     OMT_RECEIVER_COMMAND="${CASE_DIR}/receiver" \
     OMT_HDMI_CONNECTOR="${1:-auto}" \
-    PATH="${ROOT}/target/debug:${PATH}" \
+    PATH="${CASE_DIR}/bin:${PATH}" \
         "${START}"
 }
 

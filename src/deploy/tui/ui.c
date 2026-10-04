@@ -8,6 +8,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "common/version.h"
+
 /* Terminals vary in how many colours they honour, so emphasis carries through
  * bold as well as colour: a monochrome console still shows focus. */
 static const style FOCUS = {COLOR_BLACK, COLOR_CYAN, ATTR_BOLD};
@@ -135,7 +137,7 @@ void ui_wrap(const char *text, size_t width, ui_lines *out) {
 void ui_about_text(size_t width, ui_lines *out) {
     omt_buf head;
     omt_buf_init(&head, 1u << 20);
-    omt_buf_printf(&head, "Raspberry Pi OMT client deployer %s\n\n", OMT_VERSION);
+    omt_buf_printf(&head, "Raspberry Pi OMT client deployer %s\n\n", omt_version);
     dp_err err;
     dp_err_init(&err);
     /* The digest is the point: a single-file deployer is otherwise opaque
@@ -179,7 +181,7 @@ void ui_about_text(size_t width, ui_lines *out) {
 
 static void draw_tabs(screen *s, rect area, const app *a) {
     char title[96];
-    omt_snprintf(title, sizeof(title), " Raspberry Pi OMT deployer %s ", OMT_VERSION);
+    omt_snprintf(title, sizeof(title), " Raspberry Pi OMT deployer %s ", omt_version);
     rect inner = screen_block(s, area, title, PLAIN);
     int x = inner.x, end = inner.x + inner.w;
     for (int v = 0; v < VIEW_COUNT && x < end; v++) {

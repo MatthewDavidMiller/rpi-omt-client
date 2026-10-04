@@ -13,6 +13,7 @@
 #include <unistd.h>
 
 #include "common/json.h"
+#include "common/version.h"
 #include "web/app.h"
 #include "web/state.h"
 
@@ -63,7 +64,7 @@ int main(int argc, char **argv) {
     omt_err err;
     if (!omt_web_settings_load(&settings, &err)) return fail(err.msg);
     if (argc == 2 && (strcmp(argv[1], "--version") == 0 || strcmp(argv[1], "-V") == 0)) {
-        printf("%s\n", OMT_VERSION);
+        printf("%s\n", omt_version);
         return 0;
     }
     if (argc == 2 && strcmp(argv[1], "initialize") == 0) {

@@ -105,9 +105,12 @@ the hardware put the three-worker pool -- the row that decides a tier -- at
 6.5 ms per 1080p gradient frame on the Pi 5 against a 16.7 ms budget, and
 26.4 ms on the Pi 4 against a 33.3 ms one. Those figures were taken with the
 Rust decoder this C port replaced; `tests/c/bench_vmx.c` is its C counterpart
-(`make -f mk/c.mk BUILD=release bench`) and has to be rerun on both boards
-before the margins are claimed for the C decoder. Its NEON kernels are proven
-bit-exact under emulation, which says nothing about their speed.
+(`make -f mk/c.mk BUILD=release bench`). On a Pi 4 Model B at 1.5 GHz it puts
+the same row at 6.9 ms with the assembly kernels, against 10.9 ms for the
+intrinsics they replaced (median of five interleaved rounds, no throttling).
+The Pi 5 has not been remeasured with the C decoder, so its margin is still the
+Rust figure. Bit-exactness is proven under emulation on every gate run and was
+confirmed on the Pi 4 itself; emulation says nothing about speed.
 
 The colour conversion has an AArch64 kernel for the same reason the inverse DCT
 does. Once the entropy decode is spread over the pool, packing 1080p into the
@@ -120,6 +123,35 @@ is worth about five percent on the gradient vector and nothing on the flat one.
 Both kernels are checked against each other lane for lane, and the committed
 conformance vectors still decode bit-exactly against the reference decoder on
 both boards.
+
+The two AArch64 kernels are hand-written assembly (`idct_aarch64.S`,
+`convert_aarch64.S`) rather than intrinsics, because the instruction choices
+that matter are ones the compiler will not make from the portable arithmetic.
+The row pass is eight multiply-by-element accumulations per row against
+de-interleaved tables rather than a shuffle-heavy pairwise dot product; a
+multiply by an even constant is one `sqdmulh` by half of it, which is exact;
+the conversion rounds with one `sqrshrun`, which equals the scalar rounding
+only because no BT.601 or BT.709 channel can come near the 16-bit limit. Each
+of those is a claim about every input, so the suites prove it: the conversion
+is compared on every (Y, U, V) under both coefficient sets, and the transform
+on random, saturating, and single-coefficient blocks under every quality.
+
+What the assembly gives up is the sanitizers and the fuzzer, which see only C.
+That is acceptable for these two kernels and no others: each reads one fixed
+64-coefficient block or one row whose bounds `decode_slice` checks before the
+call, and neither ever sees a byte of the stream. The entropy decoder, which
+does, stays in C under ASan, UBSan, and `fuzz_vmx`. Its speed comes from a
+twelve-bit lookahead table (`ac_lookahead.c`, generated) that resolves every
+short code in one step. It is consulted only when the whole code is already in
+the bit window, so the reader ends exactly where the bit-by-bit path would,
+and a differential test holds the two paths to the same pixels, reader
+position, and verdict on damaged streams.
+
+The kernels emit BTI landing pads and the GNU property note for branch
+protection, so they never weaken a binary that has it. The appliance's
+binaries do not have it today: Alpine's musl start files carry no property
+note, and the linker drops the feature for the whole binary when any input
+lacks one. Return-address signing, which needs no note, is in effect.
 
 Playback supports either HDMI connector: both supported boards have two. A
 missing, unreadable, or half-populated DRM tree reads as no display, so the

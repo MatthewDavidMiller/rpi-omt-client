@@ -282,6 +282,110 @@ static uint64_t xorshift(uint64_t *s) {
     return *s;
 }
 
+/* The decoder's AC loop before the lookahead table: one bit field at a time,
+ * as the reference's manual path reads them. The table must leave the
+ * decoder in exactly the state this does -- the same blocks, the same reader
+ * position, the same verdict on a damaged stream. */
+static bool reference_plane(vmx_slice_streams *s, size_t stride, int16_t bias,
+                            const uint16_t matrix[64], uint8_t *dst) {
+    int16_t block[64];
+    uint32_t pending = 0;
+    int16_t dc_prediction = 0;
+    for (size_t row = 0; row < VMX_SLICE_HEIGHT; row += 8) {
+        for (size_t column = 0; column < stride; column += 8) {
+            memset(block, 0, sizeof(block));
+            bool decoded_terms = pending < 64;
+            uint32_t guard = 0;
+            while (pending < 64) {
+                if (++guard > 4096u) return false;
+                if (vmx_bits_bit_bare(&s->ac) == 1) {
+                    if (vmx_bits_bit_bare(&s->ac) == 1) {
+                        pending += 1;
+                    } else {
+                        int32_t width = vmx_bits_zeros_bare(&s->ac) + 2;
+                        uint64_t next = (uint64_t)pending + vmx_bits_bits_bare(&s->ac, width);
+                        pending = next > UINT32_MAX ? UINT32_MAX : (uint32_t)next;
+                    }
+                } else {
+                    int32_t width = vmx_bits_zeros_bare(&s->ac) + 2;
+                    uint64_t value = vmx_bits_bits_bare(&s->ac, width);
+                    if (pending < 64) block[vmx_zigzag_natural[pending]] = vmx_mag_sign(value);
+                    pending += 1;
+                }
+                vmx_bits_reload(&s->ac);
+                if (s->ac.corrupt) return false;
+            }
+            pending -= 64;
+            if (vmx_bits_bit(&s->dc) == 1) {
+                (void)vmx_bits_bit(&s->dc);
+            } else {
+                int32_t width = vmx_bits_zeros(&s->dc) + 2;
+                block[0] = vmx_mag_sign(vmx_bits_bits(&s->dc, width));
+            }
+            if (s->dc.corrupt) return false;
+            block[0] = vmx_wrap_add16(block[0], dc_prediction);
+            dc_prediction = block[0];
+            uint8_t *target = dst + row * stride + column;
+            if (decoded_terms)
+                vmx_idct(block, matrix, target, stride, bias);
+            else
+                vmx_broadcast_dc(block[0], target, stride, bias);
+        }
+    }
+    vmx_bits_align(&s->dc);
+    vmx_bits_align(&s->ac);
+    return !(s->dc.corrupt || s->ac.corrupt);
+}
+
+static bool load_streams(vmx_slice_streams *s, const uint8_t *dc, size_t dc_len, const uint8_t *ac,
+                         size_t ac_len) {
+    return vmx_bits_init(&s->dc, 4096) && vmx_bits_init(&s->ac, 4096) &&
+           vmx_bits_load(&s->dc, dc, dc_len) && vmx_bits_load(&s->ac, ac, ac_len);
+}
+
+static void lookahead_matches_the_bit_by_bit_path(void) {
+    uint64_t state = 0x9E3779B97F4A7C15ull;
+    enum { STRIDE = 64, DST = STRIDE * VMX_SLICE_HEIGHT };
+    for (int round = 0; round < 3000; round++) {
+        /* Uniform bytes are mostly damaged streams; biased ones are dense
+         * with the short codes the table resolves; a run of zero bytes holds
+         * codes too long for it. */
+        uint8_t dc[512], ac[2048];
+        size_t ac_len = 1 + (size_t)(xorshift(&state) % sizeof(ac));
+        for (size_t i = 0; i < sizeof(dc); i++) dc[i] = (uint8_t)xorshift(&state);
+        for (size_t i = 0; i < ac_len; i++) {
+            uint64_t r = xorshift(&state);
+            switch (round % 3) {
+            case 0: ac[i] = (uint8_t)r; break;
+            case 1: ac[i] = (uint8_t)(r | (r >> 8) | (r >> 16)); break;
+            default: ac[i] = r % 7 == 0 ? 0 : (uint8_t)(r | (r >> 8));
+            }
+        }
+        uint16_t matrix[64];
+        vmx_decode_matrix((size_t)round % VMX_QUALITY_COUNT, matrix);
+        vmx_slice_streams fast, slow;
+        memset(&fast, 0, sizeof(fast));
+        memset(&slow, 0, sizeof(slow));
+        CHECK(load_streams(&fast, dc, sizeof(dc), ac, ac_len));
+        CHECK(load_streams(&slow, dc, sizeof(dc), ac, ac_len));
+        uint8_t expected[DST] = {0}, actual[DST] = {0};
+        bool want = reference_plane(&slow, STRIDE, 128, matrix, expected);
+        bool got = vmx_decode_plane(&fast, STRIDE, 128, matrix, 0, actual, DST);
+        CHECK_MSG(want == got, "round %d verdict", round);
+        if (want && got) {
+            CHECK_MSG(memcmp(expected, actual, DST) == 0, "round %d pixels", round);
+            CHECK_MSG(fast.ac.position == slow.ac.position &&
+                          fast.ac.bits_left == slow.ac.bits_left &&
+                          fast.dc.position == slow.dc.position,
+                      "round %d reader", round);
+        }
+        vmx_bits_free(&fast.dc);
+        vmx_bits_free(&fast.ac);
+        vmx_bits_free(&slow.dc);
+        vmx_bits_free(&slow.ac);
+    }
+}
+
 /* On AArch64 this pins the NEON kernels to the portable ones; elsewhere the
  * dispatch resolves to the portable kernel and the check is trivially true,
  * which is why the suite also runs under emulated AArch64. */
@@ -307,6 +411,23 @@ static void idct_kernels_agree_bit_for_bit(void) {
             vmx_idct(block, matrix, actual, 8, biases[b]);
             CHECK_MSG(memcmp(expected, actual, 64) == 0, "round %d bias %d", round, biases[b]);
         }
+    }
+    /* One coefficient at a time, at every position, under every quality, at
+     * the values that saturate each stage of the row and column passes. */
+    static const int16_t values[] = {INT16_MIN, -2048, -1, 1, 2047, INT16_MAX};
+    for (size_t quality = 0; quality < VMX_QUALITY_COUNT; quality++) {
+        uint16_t matrix[64];
+        vmx_decode_matrix(quality, matrix);
+        for (int position = 0; position < 64; position++)
+            for (size_t v = 0; v < OMT_ARRAY_LEN(values); v++) {
+                int16_t block[64] = {0};
+                block[position] = values[v];
+                uint8_t expected[64], actual[64];
+                vmx_idct_scalar(block, matrix, expected, 8, 128);
+                vmx_idct(block, matrix, actual, 8, 128);
+                CHECK_MSG(memcmp(expected, actual, 64) == 0, "quality %zu position %d value %d",
+                          quality, position, values[v]);
+            }
     }
 }
 
@@ -337,6 +458,26 @@ static void convert_kernels_agree_bit_for_bit(void) {
             vmx_bgra_row(luma, blue, red, 64, actual, vmx_yuv_rgb_709);
             CHECK(memcmp(expected, actual, 256) == 0);
         }
+#if defined(__aarch64__)
+    /* Every (Y, U, V) under both coefficient sets. The AArch64 kernel's
+     * rounding is only the scalar one for the channel values these
+     * coefficients can produce (see convert_aarch64.S), so this is the proof,
+     * not a sample. Each row holds every luma value against one chroma pair. */
+    static uint8_t luma[256], blue[128], red[128], expected[1024], actual[1024];
+    for (size_t y = 0; y < 256; y++) luma[y] = (uint8_t)y;
+    const int16_t *sets[] = {vmx_yuv_rgb_709, vmx_yuv_rgb_601};
+    size_t mismatches = 0;
+    for (int c = 0; c < 2; c++)
+        for (size_t u = 0; u < 256; u++)
+            for (size_t v = 0; v < 256; v++) {
+                memset(blue, (int)u, sizeof(blue));
+                memset(red, (int)v, sizeof(red));
+                vmx_bgra_row_scalar(luma, blue, red, 256, expected, sets[c]);
+                vmx_bgra_row(luma, blue, red, 256, actual, sets[c]);
+                if (memcmp(expected, actual, sizeof(actual)) != 0) mismatches++;
+            }
+    CHECK_MSG(mismatches == 0, "%zu rows differ", mismatches);
+#endif
 }
 
 int main(void) {
@@ -347,6 +488,7 @@ int main(void) {
     RUN(rejects_unsupported_geometry);
     RUN(bit_reader_matches_the_reference);
     RUN(plane_helpers_match_the_reference);
+    RUN(lookahead_matches_the_bit_by_bit_path);
     RUN(idct_kernels_agree_bit_for_bit);
     RUN(convert_kernels_agree_bit_for_bit);
     return TEST_EXIT();

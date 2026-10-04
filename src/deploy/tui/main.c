@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "common/version.h"
 #include "deploy/tui/app.h"
 #include "deploy/tui/term.h"
 #include "deploy/tui/ui.h"
@@ -22,7 +23,7 @@
 
 int main(int argc, char **argv) {
     if (argc > 1 && (strcmp(argv[1], "--version") == 0 || strcmp(argv[1], "-V") == 0)) {
-        printf("rpi-omt-deploy-tui %s\n", OMT_VERSION);
+        printf("rpi-omt-deploy-tui %s\n", omt_version);
         return 0;
     }
     if (argc > 1) {

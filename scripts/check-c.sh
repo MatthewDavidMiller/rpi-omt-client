@@ -8,7 +8,8 @@
 #     use-after-free, and NULL dereferences along error paths;
 #   * cppcheck, for the bounds and lifetime mistakes neither compiler flags;
 #   * clang-format, so a review diff is only ever about behaviour;
-#   * the generated Unicode tables, regenerated and compared.
+#   * the generated tables (Unicode, templates, Blowfish, the VMX entropy
+#     lookahead), regenerated and compared.
 #
 # banned.h makes every poisoned libc call a compile error, so the builds below
 # also prove none of them crept back in.
@@ -29,6 +30,7 @@ fi
 mapfile -d '' -t C_FILES < <(
     find src tests/c tests/fuzz -type f \( -name '*.c' -o -name '*.h' \) \
         ! -name nfc_tables.c ! -name templates_gen.c ! -name blowfish_tables.c \
+        ! -name ac_lookahead.c \
         -print0 2>/dev/null | sort -z
 )
 
@@ -45,6 +47,7 @@ echo "Checking generated sources..."
 python3 tools/gen/gen_nfc_tables.py --check
 python3 tools/gen/gen_templates.py --check
 python3 tools/gen/gen_blowfish_tables.py --check
+python3 tools/gen/gen_vmx_tables.py --check
 
 jobs="$(nproc)"
 for compiler in gcc clang; do
@@ -67,8 +70,12 @@ if command -v x86_64-w64-mingw32-gcc >/dev/null 2>&1; then
         OPENSSL_PREFIX="$(scripts/build-openssl.sh x86_64-w64-mingw32)" -j"${jobs}" deploy-libs
 fi
 
+# One job per core, and a build directory that lets an unchanged file reuse
+# its previous results.
 echo "Running cppcheck..."
+mkdir -p build/cppcheck
 cppcheck --quiet --error-exitcode=1 --std=c11 --inline-suppr \
+    -j "${jobs}" --cppcheck-build-dir=build/cppcheck \
     --enable=warning,portability \
     -D_GNU_SOURCE -DOMT_VERSION='"check"' -Isrc \
     --suppress=missingIncludeSystem \

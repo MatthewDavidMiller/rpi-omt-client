@@ -12,7 +12,7 @@ C_WARN     := -Wall -Wextra -Werror -Wconversion -Wsign-conversion -Wshadow \
               -Wnull-dereference -Wundef -Wpointer-arith -Wwrite-strings
 C_HARDEN   := -fstack-protector-strong -fno-strict-aliasing -fno-common \
               -ftrivial-auto-var-init=zero
-C_DEFS     := -D_GNU_SOURCE -DOMT_VERSION='"$(OMT_VERSION)"'
+C_DEFS     := -D_GNU_SOURCE
 C_INCLUDE  := -Isrc -include src/common/banned.h
 
 LD_HARDEN  := -Wl,-z,relro,-z,now,-z,noexecstack
@@ -63,4 +63,12 @@ LD_OPENSSL := -L$(OPENSSL_PREFIX)/lib
 endif
 
 CFLAGS_ALL  = $(C_STD) $(C_WARN) $(C_HARDEN) $(C_DEFS) $(C_INCLUDE) $(C_OPT) $(CFLAGS)
+# Assembly is preprocessed, so it sees the same definitions and include path,
+# but not banned.h (which is C) and none of the C warnings. Branch protection
+# is passed so the kernels can test for it (src/vmx/aarch64.inc); an assembler
+# warning is an error, as a compiler one is; and every object, including one
+# that assembles to nothing on this architecture, declares a non-executable
+# stack.
+ASFLAGS_ALL = $(C_DEFS) -Isrc $(filter -mbranch-protection=%,$(C_HARDEN)) \
+              -Wa,--fatal-warnings -Wa,--noexecstack $(ASFLAGS)
 LDFLAGS_ALL = $(LD_HARDEN) $(LD_OPT) $(LD_OPENSSL) $(LDFLAGS)

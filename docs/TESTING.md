@@ -11,14 +11,16 @@ make install
 Docker or Podman is the only thing the gates need from a workstation. GCC and
 Clang with the sanitizer and libFuzzer runtimes, clang-format, cppcheck,
 OpenSSL, OpenSSH's server (the reference the SSH client is held to), mingw-w64,
-Hadolint, ShellCheck, Trivy, and the Python tooling all live inside
+an AArch64 sysroot with lld and qemu-aarch64 for the cross-compiled ARM64
+suites, Hadolint, ShellCheck, Trivy, and the Python tooling all live inside
 `tools/toolbox/Dockerfile`; nothing is installed onto the host.
 The container build context excludes `target/`: these workstation artifacts
 are rebuilt inside the pinned builder and can otherwise add tens of GiB to
 every context upload after Linux and Windows validation.
 `scripts/toolbox.sh` runs each gate in that image and rebuilds it automatically
 when a pinned version changes, because the image tag is a content hash of the
-Dockerfile, the Python requirements, and the pinned installers.
+Dockerfile, the Python requirements, the pinned installers, and the sysroot
+recipe.
 
 The toolbox is built on the same digest-pinned `alpine:3.23.5` image the
 appliance compiles with, so the gates and the shipped receiver resolve one
@@ -131,8 +133,11 @@ sampling with padded strides and untouched bars, including repeated output
 rows. Invalid placement sizes and overflowing strides must return errors.
 
 `make test-receiver` builds and tests the C receiver, every suite sanitized,
-and then repeats the C suites on AArch64 under emulation so the NEON kernels
-are checked bit for bit against the portable ones. It exercises
+and then repeats the C suites on AArch64 so the assembly kernels are checked
+bit for bit against the portable ones. `scripts/test-c-arm64.sh` cross-compiles
+those suites with the appliance's own compiler and flags against the toolbox's
+AArch64 sysroot and runs only the test binaries under qemu-user, which takes
+seconds rather than the minutes compiling under emulation did. It exercises
 shared target vectors, bounded wire parsing, CLI exit-status contracts, detail
 sanitization and JSON escaping, playback state/order, heartbeat publication,
 and atomic status replacement. HDMI connector selection is driven against a

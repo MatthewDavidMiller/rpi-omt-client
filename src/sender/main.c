@@ -24,6 +24,7 @@
 #include "common/buf.h"
 #include "common/ipaddr.h"
 #include "common/proc.h"
+#include "common/version.h"
 #include "protocol/omt.h"
 
 #define DEFAULT_PORT_FIRST 6400
@@ -383,7 +384,7 @@ int main(int argc, char **argv) {
     }
     if (r == 2) {
         /* The bare semantic version, as the Rust sender printed it. */
-        printf("omt-test-sender %s\n", OMT_VERSION[0] == 'v' ? &OMT_VERSION[1] : OMT_VERSION);
+        printf("omt-test-sender %s\n", omt_version[0] == 'v' ? &omt_version[1] : omt_version);
         return 0;
     }
     if (r < 0) {

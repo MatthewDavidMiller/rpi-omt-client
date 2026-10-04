@@ -39,8 +39,8 @@ grep -Eq 'tar -tzf' "${BUILD}" || \
     fail "the compressed archive must be verified as gzip before it is published"
 grep -Fq 'RECEIVER_SOURCE_FINGERPRINT=' "${BUILD}" || \
     fail "the ARM64 build must fingerprint the receiver source closure"
-grep -Fq 'find mk src -path src/deploy -prune -o -type f -print0' "${BUILD}" || \
-    fail "the receiver fingerprint must cover the C sources and build rules"
+grep -Fq 'find mk src scripts/make-sysroot.sh -path src/deploy -prune -o -type f -print0' "${BUILD}" || \
+    fail "the receiver fingerprint must cover the C sources, build rules, and sysroot recipe"
 grep -Fq '"${RPI_OMT_CLIENT_VERSION}" "${receiver_files_fingerprint}"' "${BUILD}" || \
     fail "the receiver fingerprint must include embedded version metadata"
 grep -Fq -- '--build-arg "RECEIVER_SOURCE_FINGERPRINT=${RECEIVER_SOURCE_FINGERPRINT}"' "${BUILD}" || \

@@ -16,9 +16,9 @@ what is specific to working here as an agent.
 - Do not assume Raspberry Pi hardware is attached. Development is on amd64;
   Pi-only claims need the hardware checklist in
   [docs/TESTING.md](docs/TESTING.md).
-- Gates are slow by design — an emulated ARM64 image build takes tens of
-  minutes. Run the narrowest one rather than the broadest, and allow it to
-  finish.
+- Gates are thorough rather than fast — the full pre-commit gate takes about
+  five minutes. Run the narrowest one rather than the broadest, and allow it
+  to finish.
 - Treat `vars.yml` and the local `env` directory as sensitive operator
   configuration; do not read or modify them unless asked.
 - Commit or push only when asked. `git commit` triggers the full pre-commit
