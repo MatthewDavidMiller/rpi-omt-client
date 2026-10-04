@@ -277,3 +277,20 @@ def test_playout_delay_default_and_ceiling_agree_across_every_layer():
     assert "po.playout_delay_ms = delay;" in RECEIVER_MAIN.read_text(encoding="utf-8")
     template = (REPO_ROOT / "src" / "web" / "templates" / "system.html").read_text(encoding="utf-8")
     assert f'max="{ceiling.group(1)}"' in template
+
+
+def test_deployer_reads_the_password_banner_on_the_installer_s_own_terms():
+    """The deployer reads the first-start banner before rebooting only when the
+    installer started the container itself, which it learns from the installer's
+    deferral line, and it stops waiting at the web server's start line. Rewording
+    either side would silently lose a reinstall's generated password."""
+    installer = INSTALLER.read_text(encoding="utf-8")
+    deployer = DEPLOYER_OPS.read_text(encoding="utf-8")
+    entrypoint = (REPO_ROOT / "deploy" / "container" / "entrypoint.sh").read_text(encoding="utf-8")
+    web_main = (REPO_ROOT / "src" / "web" / "main.c").read_text(encoding="utf-8")
+    assert '"Container startup deferred"' in deployer
+    assert "printf 'Container startup deferred; " in installer
+    assert '"omt-web listening on"' in deployer
+    assert 'printf("omt-web listening on https://' in web_main
+    assert '"Web UI password (save this now)"' in deployer
+    assert '" Web UI password (save this now):"' in entrypoint

@@ -290,6 +290,25 @@ void app_set_status(app *a, const char *fmt, ...) {
     va_start(args, fmt);
     omt_buf_vprintf(&a->status, fmt, args);
     va_end(args);
+    /* The status bar is one row. Remote errors arrive with line breaks in
+     * them, and a break would end the row partway through the message. */
+    size_t out = 0;
+    bool in_break = false;
+    for (size_t i = 0; i < a->status.len; i++) {
+        uint8_t ch = a->status.data[i];
+        if (ch == '\n' || ch == '\r') {
+            in_break = true;
+            continue;
+        }
+        if (in_break && out > 0 && a->status.data[out - 1] != ' ') a->status.data[out++] = ' ';
+        in_break = false;
+        a->status.data[out++] = ch;
+    }
+    while (out > 0 && a->status.data[out - 1] == ' ') out--;
+    if (a->status.data) {
+        a->status.len = out;
+        a->status.data[out] = '\0';
+    }
 }
 
 static size_t value_chars(const app *a, slot s) {
@@ -334,9 +353,11 @@ void app_scroll_about(app *a, long delta) {
     a->about_scroll = next < 0 ? 0 : (size_t)next;
 }
 
-void app_push_log(app *a, const char *line) {
-    char *copy = dp_strdup(line);
+static void push_log_line(app *a, const char *line, size_t len) {
+    char *copy = malloc(len + 1);
     if (!copy) return;
+    memcpy(copy, line, len);
+    copy[len] = '\0';
     if (a->log_len >= LOG_CAPACITY) {
         free(a->log[0]);
         memmove(a->log, a->log + 1, (a->log_len - 1) * sizeof(char *));
@@ -344,6 +365,27 @@ void app_push_log(app *a, const char *line) {
         if (a->log_scroll > 0) a->log_scroll--;
     }
     a->log[a->log_len++] = copy;
+}
+
+/* One log row per line: a remote error carries its own line breaks, and a row
+ * holding one would render it as a replacement character. */
+void app_push_log(app *a, const char *line) {
+    for (;;) {
+        const char *nl = strchr(line, '\n');
+        size_t len = nl ? (size_t)(nl - line) : strlen(line);
+        if (len > 0 && line[len - 1] == '\r') len--;
+        if (!nl) {
+            push_log_line(a, line, len);
+            return;
+        }
+        /* A trailing break ends the last line rather than starting an empty one. */
+        if (nl[1] == '\0') {
+            push_log_line(a, line, len);
+            return;
+        }
+        push_log_line(a, line, len);
+        line = nl + 1;
+    }
 }
 
 void app_poll_worker(app *a) {
@@ -382,10 +424,15 @@ void app_poll_worker(app *a) {
         }
     } else {
         const char *text = error ? error : "the worker stopped without reporting";
-        app_set_status(a, "Failed: %s", text);
+        size_t text_len = strlen(text);
+        while (text_len > 0 && (text[text_len - 1] == '\n' || text[text_len - 1] == '\r' ||
+                                text[text_len - 1] == ' ')) {
+            text_len--;
+        }
+        app_set_status(a, "Failed: %.*s", (int)text_len, text);
         omt_buf line;
         omt_buf_init(&line, DP_ERR_LIMIT);
-        omt_buf_printf(&line, "-- failed: %s --", text);
+        omt_buf_printf(&line, "-- failed: %.*s --", (int)text_len, text);
         app_push_log(a, omt_buf_cstr(&line));
         omt_buf_free(&line);
     }

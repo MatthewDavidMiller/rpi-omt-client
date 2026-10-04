@@ -1609,6 +1609,9 @@ bool dp_deploy(const dp_connection *c, const dp_deploy_options *o, const dp_canc
         ok = stage_and_promote(s, arts, count, &st, cancel, p, err);
         if (!ok) remove_stage(s, omt_buf_cstr(&stage_q));
     }
+    /* Whether the installer started the container itself rather than leaving
+     * it for the reboot: only then can the first-start banner already exist. */
+    bool started_before_reboot = false;
     if (ok) {
         omt_buf chmod, installer, install_script, inner;
         text_init(&chmod);
@@ -1635,6 +1638,8 @@ bool dp_deploy(const dp_connection *c, const dp_deploy_options *o, const dp_canc
         ssh_result_init(&r);
         ok = run_simple(s, omt_buf_cstr(&command), &input, cancel, &r, err) &&
              dp_require_success(&r, "Remote installer", err);
+        started_before_reboot =
+            ok && !ssh_contains_bytes(r.out.data, r.out.len, "Container startup deferred");
         /* The installer prints its operator summary on stdout. OpenRC and
          * Compose warnings arrive on stderr and are deliberately excluded. */
         if (ok && dp_installer_summary(omt_buf_cstr(&r.out), &summary)) {
@@ -1653,6 +1658,13 @@ bool dp_deploy(const dp_connection *c, const dp_deploy_options *o, const dp_canc
         omt_buf_free(&install_script);
         omt_buf_free(&inner);
     }
+    /* A host whose KMS is already live -- any reinstall -- starts the
+     * container during the install, so a newly generated password is printed
+     * now, by a container the boot-time service start then recreates. Its logs
+     * go with it, so the banner has to be read before the reboot or never. */
+    if (ok && started_before_reboot) {
+        ok = fetch_initial_web_password(c, s, cancel, &password, err);
+    }
     if (ok) {
         dp_report(p, "Rebooting to apply kernel, firmware, and KMS settings...");
         ok = read_boot_id(s, cancel, &boot_id, err) &&
@@ -1668,7 +1680,7 @@ bool dp_deploy(const dp_connection *c, const dp_deploy_options *o, const dp_canc
         dp_err wait_error;
         dp_err_init(&wait_error);
         if (wait_for_appliance(c, s, cancel, p, &wait_error)) {
-            ok = fetch_initial_web_password(c, s, cancel, &password, err);
+            if (password.len == 0) ok = fetch_initial_web_password(c, s, cancel, &password, err);
             if (ok && password.len) {
                 dp_reportf(p, "Web UI password (save this now): %s", omt_buf_cstr(&password));
             }

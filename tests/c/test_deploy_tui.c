@@ -309,6 +309,28 @@ static void a_failed_job_is_reported_in_the_status_and_the_log(void) {
     app_free(&a);
 }
 
+/* Remote errors carry line breaks. Found on a Pi 4: the Wi-Fi rollback error
+ * rendered its breaks as replacement characters and cut the status bar short. */
+static void a_multi_line_failure_is_one_status_row_and_several_log_rows(void) {
+    app a;
+    app_init(&a);
+    a.job = worker_finished_for_test(
+        false, "Wi-Fi update failed:\nNew Wi-Fi profile did not associate; retained\n");
+    app_poll_worker(&a);
+    CHECK_STR(omt_buf_cstr(&a.status),
+              "Failed: Wi-Fi update failed: New Wi-Fi profile did not associate; retained");
+    CHECK(a.log_len == 2);
+    CHECK_STR(a.log[0], "-- failed: Wi-Fi update failed:");
+    CHECK_STR(a.log[1], "New Wi-Fi profile did not associate; retained --");
+    app_push_log(&a, "one\r\ntwo\n\nfour");
+    CHECK(a.log_len == 6);
+    CHECK_STR(a.log[2], "one");
+    CHECK_STR(a.log[3], "two");
+    CHECK_STR(a.log[4], "");
+    CHECK_STR(a.log[5], "four");
+    app_free(&a);
+}
+
 static void web_password_rotation_uses_its_own_fields(void) {
     app a;
     app_init(&a);
@@ -608,6 +630,7 @@ int main(void) {
     RUN(deploy_refuses_a_remote_directory_the_core_would_reject);
     RUN(successful_alpine_setup_can_apply_the_new_pi_login);
     RUN(a_failed_job_is_reported_in_the_status_and_the_log);
+    RUN(a_multi_line_failure_is_one_status_row_and_several_log_rows);
     RUN(web_password_rotation_uses_its_own_fields);
     RUN(keys_switch_views_and_reveal_secrets);
     RUN(about_reproduces_the_licence_and_the_third_party_notices);
