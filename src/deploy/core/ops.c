@@ -728,10 +728,26 @@ static bool fetch_initial_web_password(const dp_connection *c, ssh_session *s,
     dp_sudo_input(c, &input);
     ssh_result r;
     ssh_result_init(&r);
-    bool ok = run_simple(s, omt_buf_cstr(&command), &input, cancel, &r, err);
-    if (ok && ssh_result_success(&r)) {
+    /* Docker reports the container running as soon as the entrypoint starts,
+     * and the entrypoint prints the banner only after it has made the TLS
+     * certificate -- seconds later on a Pi 4. So read the logs until either
+     * the banner or the server's own start line appears; a redeploy that
+     * keeps the stored hash prints no banner at all. */
+    uint64_t deadline = dp_now_ms() + 60u * 1000u;
+    bool ok = true;
+    for (;;) {
+        ok = check_cancel(cancel, err) &&
+             run_simple(s, omt_buf_cstr(&command), &input, cancel, &r, err);
+        if (!ok || !ssh_result_success(&r)) break;
+        omt_buf_clear(&combined);
         ssh_result_combined(&r, &combined);
-        dp_first_web_password(omt_buf_cstr(&combined), password);
+        if (dp_first_web_password(omt_buf_cstr(&combined), password)) break;
+        if (strstr(omt_buf_cstr(&combined), "omt-web listening on") || dp_now_ms() >= deadline) {
+            break;
+        }
+        ssh_result_free(&r);
+        ssh_result_init(&r);
+        dp_sleep_ms(2000);
     }
     ssh_result_free(&r);
     omt_buf_free(&command);

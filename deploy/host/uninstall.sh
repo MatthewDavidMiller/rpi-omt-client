@@ -10,6 +10,8 @@ INSTALL_DIR="$(cd -- "${SCRIPT_DIR}/../.." && pwd -P)"
 source "${INSTALL_DIR}/deploy/lib/host-validation.sh"
 # shellcheck source=deploy/lib/service-install.sh
 source "${INSTALL_DIR}/deploy/lib/service-install.sh"
+# shellcheck source=deploy/lib/publication.sh
+source "${INSTALL_DIR}/deploy/lib/publication.sh"
 host_validate_safe_absolute_path "${INSTALL_DIR}" || {
     echo "ERROR: Invalid install directory: ${INSTALL_DIR}" >&2
     exit 1
@@ -53,8 +55,38 @@ host_remove_openrc_services "${OPENRC_SERVICES[@]}"
 for service in "${OPENRC_SERVICES[@]}"; do
     rm -f -- "/etc/conf.d/${service}"
 done
-rm -f -- /etc/nftables.d/omt-client.nft \
-    /etc/ssh/sshd_config.d/90-omt-client-hardening.conf \
+# The installer enabled nftables at boot on Alpine's stock ruleset, whose input
+# chain drops by default and accepts no SSH of its own: the appliance's drop-in
+# is what lets the operator in. Deleting it would leave the firewall running
+# with nothing admitting SSH, now and after every reboot, recoverable only from
+# a console or the SD card. So the drop-in is cut back to the SSH rules instead
+# of removed: the host stays firewalled and reachable, and a later install
+# overwrites the file.
+if [[ -d /etc/nftables.d && ! -L /etc/nftables.d ]]; then
+    SSH_PORT="$(sshd -T 2>/dev/null | \
+        awk '$1 == "port" && !seen { port = $2; seen = 1 } END { if (seen) print port }')"
+    [[ "${SSH_PORT}" =~ ^[0-9]+$ ]] || SSH_PORT=22
+    host_publish_file /etc/nftables.d/omt-client.nft 0600 root root <<EOF
+table inet filter {
+    chain input {
+        type filter hook input priority 0; policy drop;
+    }
+}
+table inet filter {
+    chain input {
+        ct state established,related accept
+        ct state invalid drop
+        iifname "lo" accept
+        ip protocol icmp accept
+        ip6 nexthdr ipv6-icmp accept
+        udp sport 67 udp dport 68 accept
+        udp sport 547 udp dport 546 accept
+        tcp dport ${SSH_PORT} accept
+    }
+}
+EOF
+fi
+rm -f -- /etc/ssh/sshd_config.d/90-omt-client-hardening.conf \
     /etc/sysctl.d/90-omt-client-hardening.conf \
     /etc/modprobe.d/omt-client-blacklist.conf \
     /etc/local.d/omt-client-cpufreq.start \
@@ -100,5 +132,5 @@ if [[ "${REMOVE_DIR}" =~ ^[Yy] ]]; then
     echo "Removed ${INSTALL_DIR} and omt-config-v3."
 fi
 
-echo "Docker log policy, zram, and Wi-Fi configuration were retained as safe host defaults."
+echo "Docker log policy, zram, Wi-Fi configuration, and an SSH-only firewall were retained as safe host defaults."
 echo "=== Uninstall Complete ==="

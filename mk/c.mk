@@ -48,6 +48,17 @@ endif
 
 include mk/flags.mk
 
+# Objects depend on the flags they were compiled with, not only on their
+# sources: OMT_VERSION is a -D flag, and check-c.sh builds into the same output
+# directory with OMT_VERSION=check. Without this a release build would link the
+# gate's objects and ship a binary that reports the wrong version.
+FLAGS_STAMP := $(OUT)/.flags
+FLAGS_TEXT  := $(CC) $(CFLAGS_ALL) $(LDFLAGS)
+ifneq ($(file < $(FLAGS_STAMP)),$(FLAGS_TEXT))
+$(shell mkdir -p $(OUT))
+$(file > $(FLAGS_STAMP),$(FLAGS_TEXT))
+endif
+
 # A source file named *_posix.c or *_win32.c only builds for its platform.
 OTHER_PLATFORM := $(if $(filter win32,$(PLATFORM)),posix,win32)
 sources = $(filter-out %_$(OTHER_PLATFORM).c,$(wildcard $(1)/*.c))
@@ -60,12 +71,12 @@ else
 Q := @
 endif
 
-$(OUT)/obj/%.o: src/%.c
+$(OUT)/obj/%.o: src/%.c $(FLAGS_STAMP)
 	@mkdir -p $(@D)
 	@$(if $(Q),echo "  CC      $<")
 	$(Q)$(CC) $(CFLAGS_ALL) $(FILE_CFLAGS) -MMD -MP -c $< -o $@
 
-$(OUT)/obj/tests/%.o: tests/c/%.c
+$(OUT)/obj/tests/%.o: tests/c/%.c $(FLAGS_STAMP)
 	@mkdir -p $(@D)
 	@$(if $(Q),echo "  CC      $<")
 	$(Q)$(CC) $(CFLAGS_ALL) -MMD -MP -c $< -o $@

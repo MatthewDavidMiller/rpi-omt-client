@@ -14,7 +14,8 @@ table src/deploy/core/capsule.c reads. The archive is tens of megabytes, and
 .incbin copies it straight into the object file instead of through a C array
 the compiler would have to parse.
 
-    gen_capsule.py --root DIR --format elf|pe --output FILE.S [--depfile FILE.d]
+    gen_capsule.py --root DIR --format elf|pe --output FILE.S
+                   [--depfile FILE.d --object FILE.o]
 """
 
 import argparse
@@ -145,6 +146,10 @@ def main() -> int:
     parser.add_argument("--format", choices=("elf", "pe"), required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--depfile")
+    # The output is rewritten only when its text changes, and a rebuilt image
+    # does not change the text, so the object assembled from it has to depend
+    # on the members directly or it would keep embedding the old image.
+    parser.add_argument("--object")
     arguments = parser.parse_args()
     root = pathlib.Path(arguments.root).resolve()
     names = read_members(root)
@@ -156,7 +161,8 @@ def main() -> int:
     if arguments.depfile:
         inputs = [root / "deploy/manifest-v3.txt"] + [root / name for name in names]
         inputs += [root / "LICENSE", root / "THIRD_PARTY_NOTICES.txt"]
-        lines = [f"{output}: " + " ".join(str(p) for p in inputs)]
+        targets = f"{output} {arguments.object}" if arguments.object else str(output)
+        lines = [f"{targets}: " + " ".join(str(p) for p in inputs)]
         lines += [f"{p}:" for p in inputs]
         pathlib.Path(arguments.depfile).write_text("\n".join(lines) + "\n")
     return 0

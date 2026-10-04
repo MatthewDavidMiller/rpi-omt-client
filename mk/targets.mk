@@ -48,8 +48,9 @@ web: $(BIN)/omt-web
 
 # --------------------------------------------------------------- deployer
 # The capsule embeds every manifest-v3 member, the ARM64 image included, with
-# .incbin. The generator's depfile names each member, so a rebuilt image or an
-# edited host script re-assembles it.
+# .incbin. The generator's depfile makes both the assembler file and its object
+# depend on each member, so a rebuilt image or an edited host script
+# re-assembles it.
 CAPSULE_FORMAT := $(if $(filter windows,$(TARGET_OS)),pe,elf)
 comma := ,
 CAPSULE_ASFLAGS := $(if $(filter linux,$(TARGET_OS)),-Wa$(comma)--noexecstack)
@@ -58,7 +59,7 @@ $(OUT)/gen/capsule.S: tools/gen/gen_capsule.py deploy/manifest-v3.txt
 	@mkdir -p $(@D)
 	@$(if $(Q),echo "  GEN     $@")
 	$(Q)$(PYTHON) tools/gen/gen_capsule.py --root . --format $(CAPSULE_FORMAT) \
-	    --output $@ --depfile $(OUT)/gen/capsule.d
+	    --output $@ --depfile $(OUT)/gen/capsule.d --object $(OUT)/obj/gen/capsule.o
 
 $(OUT)/obj/gen/%.o: $(OUT)/gen/%.S
 	@mkdir -p $(@D)
@@ -179,7 +180,7 @@ FUZZ_NAMES := $(patsubst tests/fuzz/fuzz_%.c,%,$(wildcard tests/fuzz/fuzz_*.c))
 FUZZ_BINS  := $(patsubst %,$(OUT)/fuzz/fuzz_%,$(FUZZ_NAMES))
 FUZZ_SECONDS ?= 60
 
-$(OUT)/obj/fuzz/%.o: tests/fuzz/%.c
+$(OUT)/obj/fuzz/%.o: tests/fuzz/%.c $(FLAGS_STAMP)
 	@mkdir -p $(@D)
 	@$(if $(Q),echo "  CC      $<")
 	$(Q)$(CC) $(CFLAGS_ALL) -MMD -MP -c $< -o $@

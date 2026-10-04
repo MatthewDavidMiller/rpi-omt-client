@@ -14,6 +14,7 @@ set -euo pipefail
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 INSTALL="${ROOT}/deploy/host/install.sh"
+UNINSTALL="${ROOT}/deploy/host/uninstall.sh"
 NS=omt-fw-test
 HOST_IP=10.99.213.1
 NS_IP=10.99.213.2
@@ -146,6 +147,35 @@ probe "${WEB_PORT}" reachable "the web UI must survive the appliance firewall"
 # A port the appliance never opens must still be refused, or the drop-in has
 # simply disabled the firewall rather than punched two holes in it.
 probe 4444 blocked "an unrelated port must stay closed"
+
+# The uninstaller leaves nftables enabled on the same stock ruleset, so what it
+# keeps of the drop-in is all that admits SSH afterwards. Replay that state:
+# stock ruleset plus the retained drop-in, exactly as uninstall.sh writes it.
+ip netns exec "${NS}" nft flush ruleset
+ip netns exec "${NS}" nft -f - <<'STOCK'
+table inet filter {
+    chain input {
+        type filter hook input priority 0; policy drop;
+        iifname lo accept
+        ct state { established, related } accept
+        ct state invalid drop
+    }
+}
+STOCK
+RETAINED="$(sed -n '/^    host_publish_file \/etc\/nftables.d\/omt-client.nft/,/^EOF$/p' "${UNINSTALL}" \
+    | sed '1d;$d' \
+    | sed "s/\${SSH_PORT}/${SSH_PORT}/g")"
+[[ -n "${RETAINED}" ]] || {
+    echo "FAIL: could not extract the retained nftables drop-in from uninstall.sh" >&2
+    exit 1
+}
+printf '%s\n' "${RETAINED}" | ip netns exec "${NS}" nft -f - || {
+    echo "FAIL: the uninstaller's retained nftables drop-in is not loadable" >&2
+    exit 1
+}
+probe "${SSH_PORT}" reachable "SSH must survive uninstalling the appliance"
+probe "${WEB_PORT}" blocked "the web port must close when the appliance is uninstalled"
+probe 4444 blocked "an unrelated port must stay closed after uninstalling"
 
 if ((failures > 0)); then
     echo "${failures} firewall reachability test(s) failed" >&2
