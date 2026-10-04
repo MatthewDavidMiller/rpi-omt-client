@@ -151,7 +151,13 @@ twelve-bit lookahead table (`ac_lookahead.c`, generated) that resolves every
 short code in one step. It is consulted only when the whole code is already in
 the bit window, so the reader ends exactly where the bit-by-bit path would,
 and a differential test holds the two paths to the same pixels, reader
-position, and verdict on damaged streams.
+position, and verdict on damaged streams. Each table entry stores its coefficient
+unconditionally, a run of zeros storing 0 where 0 already is, so the innermost
+loop has no branch on what kind of code it read, which detailed pictures make
+unpredictable. And the readers are decoded from a local copy: the build does
+not assume strict aliasing, so readers reached through the caller's pointer
+were reloaded from memory after every coefficient stored. Together those made
+the entropy stage of a dense picture 1.7x faster on a Pi 4.
 
 The kernels emit BTI landing pads and the GNU property note for branch
 protection, so they never weaken a binary that has it. The appliance's
@@ -180,8 +186,34 @@ modes outside the fixed 1920x1080 envelope are never selected. Only a display
 offering no usable mode at all is now reported as `unsupported-format`, and the
 running status names both sizes so a resample is visible rather than silent.
 
-The resample is nearest-neighbour with pixel-centre sampling, the filter a
-decode-bound board has room for. It runs inside the decode
+On the Pi 4 and Pi 5 the colour conversion and that resample are not done on
+the CPU at all. Both boards scan out through the HVS, which converts YCbCr and
+scales planes in hardware, so the receiver hands it what the decoder already
+holds: planar YCbCr 4:2:2 (`DRM_FORMAT_YUV422`, three planes in one dumb
+buffer), each plane row copied once from slice scratch with no conversion, at
+half the bytes of BGRX. The primary plane is set through atomic mode-setting
+with the stream's `COLOR_ENCODING` (BT.601 or BT.709) and limited
+`COLOR_RANGE`, its source rectangle the video and its destination the fitted
+placement, and each flip is an atomic commit that changes only the plane's
+framebuffer. On a Pi 4 at 1.5 GHz that took the receiver from 41.6% to 27.8% of
+one core playing 1080p30 -- the Pi 4's multi-worker decode is limited by memory
+bandwidth more than arithmetic, and the conversion's 8 MiB of BGRX a frame was
+most of the traffic.
+
+At the video's own size the plane uses nearest-neighbour filtering, which
+repeats chroma across each pixel pair exactly as the software conversion does;
+checked on the hardware through its writeback connector against
+`vmx_decode_bgrx`, every conformance vector matched within 2 levels per channel
+on smooth content and 4 on noise -- matrix rounding, not a different picture.
+The hardware's default filter interpolates chroma instead, which softens sharp
+colour edges, so it is used only for a scaled mode, where it is the better
+resample. Every step of that path is optional: a kernel without atomic
+mode-setting, a plane without `YU16` or the colour properties, or a test-only
+commit the hardware refuses sends the configuration down the BGRX path below,
+and the receiver log names which path each configuration took and why.
+
+The BGRX fallback's resample is nearest-neighbour with pixel-centre sampling,
+the filter a decode-bound board has room for. It runs inside the decode
 (`vmx_decode_bgrx_placed`) rather than after it: `scale.c` builds one table of
 source columns and one of source rows, and each worker converts only the source
 rows its slices contribute, gathers each into a destination row, and stores it
@@ -364,7 +396,8 @@ occurs immediately on change and at the 500 ms heartbeat. Audio failure
 degrades playback while video continues.
 
 The presenter decodes the next frame *before* it waits for the outstanding page
-flip. DRM allows one flip per CRTC, so with three surfaces the buffer being
+flip. DRM allows one flip per CRTC -- a legacy page flip on the BGRX path, an
+atomic commit of the plane's framebuffer on the YCbCr one -- so with three surfaces the buffer being
 decoded into is neither the one on screen nor the one queued, and the decode
 overlaps the previous frame's scanout; waiting first left the decoder idle for
 most of every frame interval and made the third buffer pointless. A format the

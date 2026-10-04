@@ -21,10 +21,9 @@ bool vmx_decode_plane(vmx_slice_streams *streams, size_t stride, int16_t bias,
 
 /* Every AC code of at most VMX_LOOKAHEAD_BITS bits, resolved from the next
  * VMX_LOOKAHEAD_BITS of the stream (tools/gen/gen_vmx_tables.py). An entry is
- * payload | length << 16 | kind << 24, and zero when the code is longer. */
+ * coefficient | length << 16 | advance << 24, the coefficient being 0 for a
+ * run of zeros, and the entry zero when the code is longer. */
 #define VMX_LOOKAHEAD_BITS 12
-#define VMX_LOOKAHEAD_ZEROS 1u
-#define VMX_LOOKAHEAD_VALUE 2u
 extern const uint32_t vmx_ac_lookahead[1u << VMX_LOOKAHEAD_BITS];
 
 int16_t vmx_mag_sign(uint64_t value);

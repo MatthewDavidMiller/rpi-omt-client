@@ -1,12 +1,18 @@
 /* Copyright (c) 2026 Matthew David Miller
  * SPDX-License-Identifier: MIT
  *
- * Direct KMS scanout through the legacy mode-setting ioctls. The receiver
- * owns the CRTC, decodes each VMX frame straight into a dumb buffer, and
- * page-flips. Mode selection re-runs whenever the incoming format changes, a
- * format the display cannot show is reported as unsupported rather than as a
- * failure, and when no mode carries the format the closest usable one is
- * taken and each frame is resampled into it.
+ * Direct KMS scanout. The receiver owns the CRTC, decodes each VMX frame
+ * straight into a dumb buffer, and page-flips. Mode selection re-runs whenever
+ * the incoming format changes, a format the display cannot show is reported
+ * as unsupported rather than as a failure, and when no mode carries the format
+ * the closest usable one is taken and the picture is fitted into it.
+ *
+ * Where the display hardware can convert YCbCr itself -- the HVS on the Pi 4
+ * and Pi 5 -- the decoder writes planar 4:2:2 (half the bytes of BGRX, and no
+ * colour conversion on the CPU) into a plane that the hardware converts with
+ * the stream's BT.601 or BT.709 matrix and scales into the mode, through
+ * atomic mode-setting. Anything that refuses that path falls back to BGRX
+ * through the legacy ioctls, converted and resampled by the decoder.
  */
 #ifndef OMT_RECEIVER_VIDEO_DRM_H
 #define OMT_RECEIVER_VIDEO_DRM_H
@@ -43,6 +49,9 @@ typedef struct {
     uint64_t size;
     uint32_t framebuffer;
     uint8_t *map; /* mapped once, for the life of the surface */
+    /* A YCbCr surface's three planes within the one buffer. */
+    uint32_t plane_offsets[3];
+    uint32_t plane_pitches[3];
 } omt_surface;
 
 typedef struct {
@@ -58,6 +67,10 @@ typedef struct {
     bool flip_pending;
     vmx_decoder *decoder;
     bool scaled;
+    /* YCbCr through the display hardware; otherwise the BGRX fallback. */
+    bool yuv;
+    uint32_t plane;         /* the primary plane the YCbCr surfaces scan out on */
+    uint32_t plane_fb_prop; /* its FB_ID property, which each flip sets */
     omt_scaler scaler;
     vmx_placement placed; /* the scaler's tables, as the decoder takes them */
     omt_video_format format;

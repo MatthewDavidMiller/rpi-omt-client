@@ -125,7 +125,7 @@ static void release(omt_video_output *o) {
     if (!o->cfg.active) return;
     for (size_t i = 0; i < o->cfg.surface_count; i++) destroy_surface(o->fd, &o->cfg.surfaces[i]);
     vmx_decoder_free(o->cfg.decoder);
-    if (o->cfg.scaled) omt_scaler_free(&o->cfg.scaler);
+    omt_scaler_free(&o->cfg.scaler);
     memset(&o->cfg, 0, sizeof(o->cfg));
 }
 
@@ -350,6 +350,290 @@ static bool create_surface(int fd, uint16_t width, uint16_t height, omt_surface 
     return true;
 }
 
+/* ------------------------------------------------- YCbCr through the plane */
+
+/* Names of the properties the YCbCr path sets, per object. */
+static const char *const CONNECTOR_PROPS[] = {"CRTC_ID"};
+static const char *const CRTC_PROPS[] = {"MODE_ID", "ACTIVE"};
+static const char *const PLANE_PROPS[] = {"FB_ID",  "CRTC_ID", "SRC_X",          "SRC_Y",
+                                          "SRC_W",  "SRC_H",   "CRTC_X",         "CRTC_Y",
+                                          "CRTC_W", "CRTC_H",  "COLOR_ENCODING", "COLOR_RANGE"};
+#define PLANE_PROP_COUNT (sizeof(PLANE_PROPS) / sizeof(PLANE_PROPS[0]))
+#define MAX_OBJECT_PROPS 64u
+
+static bool set_cap(int fd, uint64_t capability) {
+    struct omt_drm_set_client_cap cap = {.capability = capability, .value = 1};
+    return drm_ioctl(fd, OMT_DRM_IOCTL_SET_CLIENT_CAP, &cap) == 0;
+}
+
+/* Fills ids[i] with the id of the property names[i] on one object; false when
+ * any is missing. `type_value`, when asked for, receives the plane "type". */
+static bool find_props(int fd, uint32_t object, uint32_t object_type, const char *const *names,
+                       size_t count, uint32_t *ids, uint64_t *type_value) {
+    uint32_t prop_ids[MAX_OBJECT_PROPS];
+    uint64_t values[MAX_OBJECT_PROPS];
+    struct omt_drm_mode_obj_get_properties get = {.props_ptr = (uint64_t)(uintptr_t)prop_ids,
+                                                  .prop_values_ptr = (uint64_t)(uintptr_t)values,
+                                                  .count_props = MAX_OBJECT_PROPS,
+                                                  .obj_id = object,
+                                                  .obj_type = object_type};
+    if (drm_ioctl(fd, OMT_DRM_IOCTL_MODE_OBJ_GETPROPERTIES, &get) != 0 ||
+        get.count_props > MAX_OBJECT_PROPS)
+        return false;
+    for (size_t n = 0; n < count; n++) ids[n] = 0;
+    for (uint32_t i = 0; i < get.count_props; i++) {
+        struct omt_drm_mode_get_property prop = {.prop_id = prop_ids[i]};
+        if (drm_ioctl(fd, OMT_DRM_IOCTL_MODE_GETPROPERTY, &prop) != 0) continue;
+        prop.name[sizeof(prop.name) - 1] = 0;
+        if (type_value && strcmp(prop.name, "type") == 0) *type_value = values[i];
+        for (size_t n = 0; n < count; n++)
+            if (strcmp(prop.name, names[n]) == 0) ids[n] = prop_ids[i];
+    }
+    for (size_t n = 0; n < count; n++)
+        if (ids[n] == 0) return false;
+    return true;
+}
+
+/* The value an enum property gives the entry called `name`. */
+static bool enum_value(int fd, uint32_t prop_id, const char *name, uint64_t *out) {
+    struct omt_drm_mode_property_enum entries[16];
+    struct omt_drm_mode_get_property prop = {.prop_id = prop_id};
+    if (drm_ioctl(fd, OMT_DRM_IOCTL_MODE_GETPROPERTY, &prop) != 0 ||
+        !(prop.flags & OMT_DRM_MODE_PROP_ENUM) || prop.count_enum_blobs > 16)
+        return false;
+    prop.enum_blob_ptr = (uint64_t)(uintptr_t)entries;
+    prop.count_values = 0;
+    prop.values_ptr = 0;
+    if (drm_ioctl(fd, OMT_DRM_IOCTL_MODE_GETPROPERTY, &prop) != 0) return false;
+    for (uint32_t i = 0; i < prop.count_enum_blobs && i < 16; i++) {
+        entries[i].name[sizeof(entries[i].name) - 1] = 0;
+        if (strcmp(entries[i].name, name) == 0) {
+            *out = entries[i].value;
+            return true;
+        }
+    }
+    return false;
+}
+
+/* The primary plane that can scan YCbCr 4:2:2 out on `crtc`. */
+static bool find_yuv_plane(int fd, uint32_t crtc, uint32_t *plane_out, uint32_t *ids) {
+    uint32_t crtcs[16];
+    struct omt_drm_mode_card_res res = {.crtc_id_ptr = (uint64_t)(uintptr_t)crtcs,
+                                        .count_crtcs = 16};
+    if (drm_ioctl(fd, OMT_DRM_IOCTL_MODE_GETRESOURCES, &res) != 0 || res.count_crtcs > 16)
+        return false;
+    uint32_t crtc_bit = 0;
+    for (uint32_t i = 0; i < res.count_crtcs; i++)
+        if (crtcs[i] == crtc) crtc_bit = 1u << i;
+    if (crtc_bit == 0) return false;
+    uint32_t planes[64];
+    struct omt_drm_mode_get_plane_res pres = {.plane_id_ptr = (uint64_t)(uintptr_t)planes,
+                                              .count_planes = 64};
+    if (drm_ioctl(fd, OMT_DRM_IOCTL_MODE_GETPLANERESOURCES, &pres) != 0 || pres.count_planes > 64)
+        return false;
+    for (uint32_t i = 0; i < pres.count_planes; i++) {
+        uint32_t formats[128];
+        struct omt_drm_mode_get_plane plane = {.plane_id = planes[i],
+                                               .count_format_types = 128,
+                                               .format_type_ptr = (uint64_t)(uintptr_t)formats};
+        if (drm_ioctl(fd, OMT_DRM_IOCTL_MODE_GETPLANE, &plane) != 0 ||
+            plane.count_format_types > 128 || !(plane.possible_crtcs & crtc_bit))
+            continue;
+        bool yuv = false;
+        for (uint32_t f = 0; f < plane.count_format_types; f++)
+            yuv = yuv || formats[f] == OMT_DRM_FORMAT_YUV422;
+        uint64_t type = UINT64_MAX;
+        if (!yuv ||
+            !find_props(fd, planes[i], OMT_DRM_MODE_OBJECT_PLANE, PLANE_PROPS, PLANE_PROP_COUNT,
+                        ids, &type) ||
+            type != OMT_DRM_PLANE_TYPE_PRIMARY)
+            continue;
+        *plane_out = planes[i];
+        return true;
+    }
+    return false;
+}
+
+/* One dumb buffer holding all three planes: luma rows at the buffer's pitch,
+ * then Cb and Cr at half of it. Filled with YCbCr black, so the modeset that
+ * shows it before the first frame shows black rather than green. */
+static bool create_yuv_surface(int fd, uint16_t width, uint16_t height, omt_surface *s,
+                               char *detail, size_t size) {
+    memset(s, 0, sizeof(*s));
+    struct omt_drm_mode_create_dumb create = {
+        .width = width, .height = (uint32_t)height * 2, .bpp = 8};
+    if (drm_ioctl(fd, OMT_DRM_IOCTL_MODE_CREATE_DUMB, &create) != 0) {
+        os_detail(detail, size, "Unable to create DRM buffer", errno);
+        return false;
+    }
+    s->handle = create.handle;
+    s->pitch = create.pitch;
+    s->size = create.size;
+    uint32_t luma_bytes = create.pitch * height, chroma_pitch = create.pitch / 2;
+    if (create.pitch % 2 != 0 || (uint64_t)luma_bytes * 2 > create.size) {
+        snprintf(detail, size, "DRM buffer pitch cannot carry planar YCbCr");
+        destroy_surface(fd, s);
+        return false;
+    }
+    s->plane_offsets[0] = 0;
+    s->plane_offsets[1] = luma_bytes;
+    s->plane_offsets[2] = luma_bytes + chroma_pitch * height;
+    s->plane_pitches[0] = create.pitch;
+    s->plane_pitches[1] = chroma_pitch;
+    s->plane_pitches[2] = chroma_pitch;
+    struct omt_drm_mode_fb_cmd2 fb = {
+        .width = width, .height = height, .pixel_format = OMT_DRM_FORMAT_YUV422};
+    for (int p = 0; p < 3; p++) {
+        fb.handles[p] = create.handle;
+        fb.pitches[p] = s->plane_pitches[p];
+        fb.offsets[p] = s->plane_offsets[p];
+    }
+    if (drm_ioctl(fd, OMT_DRM_IOCTL_MODE_ADDFB2, &fb) != 0) {
+        os_detail(detail, size, "Unable to register a YCbCr framebuffer", errno);
+        destroy_surface(fd, s);
+        return false;
+    }
+    s->framebuffer = fb.fb_id;
+    struct omt_drm_mode_map_dumb map = {.handle = create.handle};
+    void *mapping = MAP_FAILED;
+    if (drm_ioctl(fd, OMT_DRM_IOCTL_MODE_MAP_DUMB, &map) == 0)
+        mapping =
+            mmap(NULL, create.size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, (off_t)map.offset);
+    if (mapping == MAP_FAILED) {
+        os_detail(detail, size, "Unable to map DRM buffer", errno);
+        destroy_surface(fd, s);
+        return false;
+    }
+    s->map = mapping;
+    memset(s->map, 16, luma_bytes);
+    memset(s->map + luma_bytes, 128, (size_t)chroma_pitch * height * 2);
+    return true;
+}
+
+/* An atomic request under construction: objects in order, each with its
+ * properties. */
+typedef struct {
+    uint32_t objects[3];
+    uint32_t counts[3];
+    uint32_t props[24];
+    uint64_t values[24];
+    uint32_t object_count;
+    uint32_t prop_count;
+} atomic_request;
+
+static void request_object(atomic_request *r, uint32_t object) {
+    r->objects[r->object_count] = object;
+    r->counts[r->object_count++] = 0;
+}
+
+static void request_prop(atomic_request *r, uint32_t prop, uint64_t value) {
+    r->props[r->prop_count] = prop;
+    r->values[r->prop_count++] = value;
+    r->counts[r->object_count - 1]++;
+}
+
+static int request_commit(int fd, const atomic_request *r, uint32_t flags) {
+    struct omt_drm_mode_atomic atomic = {.flags = flags,
+                                         .count_objs = r->object_count,
+                                         .objs_ptr = (uint64_t)(uintptr_t)r->objects,
+                                         .count_props_ptr = (uint64_t)(uintptr_t)r->counts,
+                                         .props_ptr = (uint64_t)(uintptr_t)r->props,
+                                         .prop_values_ptr = (uint64_t)(uintptr_t)r->values};
+    return drm_ioctl(fd, OMT_DRM_IOCTL_MODE_ATOMIC, &atomic);
+}
+
+/* Brings the mode up with the first YCbCr surface on the primary plane, the
+ * picture fitted into `placement` by the display hardware. False, with the
+ * reason in `detail`, when anything refuses; the caller then takes the BGRX
+ * path, so nothing this leaves behind is a failure of the session. */
+static bool configure_yuv(int fd, uint32_t connector, omt_drm_config *cfg,
+                          const struct omt_drm_mode_modeinfo *mode, size_t width, size_t height,
+                          vmx_color_space color_space, const omt_placement *placement, char *detail,
+                          size_t size) {
+    uint32_t plane_ids[PLANE_PROP_COUNT], connector_ids[1], crtc_ids[2];
+    uint64_t encoding = 0, range = 0;
+    if (!set_cap(fd, OMT_DRM_CLIENT_CAP_UNIVERSAL_PLANES) ||
+        !set_cap(fd, OMT_DRM_CLIENT_CAP_ATOMIC)) {
+        snprintf(detail, size, "the DRM device offers no atomic mode-setting");
+        return false;
+    }
+    if (!find_yuv_plane(fd, cfg->crtc, &cfg->plane, plane_ids) ||
+        !find_props(fd, connector, OMT_DRM_MODE_OBJECT_CONNECTOR, CONNECTOR_PROPS, 1, connector_ids,
+                    NULL) ||
+        !find_props(fd, cfg->crtc, OMT_DRM_MODE_OBJECT_CRTC, CRTC_PROPS, 2, crtc_ids, NULL)) {
+        snprintf(detail, size, "no primary plane on this display takes planar YCbCr 4:2:2");
+        return false;
+    }
+    if (!enum_value(fd, plane_ids[10],
+                    color_space == VMX_BT601 ? "ITU-R BT.601 YCbCr" : "ITU-R BT.709 YCbCr",
+                    &encoding) ||
+        !enum_value(fd, plane_ids[11], "YCbCr limited range", &range)) {
+        snprintf(detail, size, "the display plane offers no matching YCbCr colour encoding");
+        return false;
+    }
+    /* At the video's own size, nearest-neighbour keeps chroma repeated
+     * across each pixel pair, as the decoder's own conversion does: the
+     * picture matches it within rounding. A scaled mode takes the hardware's
+     * default filter, which is smoother than the nearest-neighbour resample
+     * it replaces. Kernels without the property get their own default. */
+    const char *filter_name[] = {"SCALING_FILTER"};
+    uint32_t filter_prop = 0;
+    uint64_t filter = 0;
+    bool has_filter =
+        find_props(fd, cfg->plane, OMT_DRM_MODE_OBJECT_PLANE, filter_name, 1, &filter_prop, NULL) &&
+        enum_value(fd, filter_prop, cfg->scaled ? "Default" : "Nearest Neighbor", &filter);
+    for (size_t i = 0; i < OMT_DRM_BUFFERS; i++) {
+        if (!create_yuv_surface(fd, (uint16_t)width, (uint16_t)height, &cfg->surfaces[i], detail,
+                                size))
+            return false;
+        cfg->surface_count++;
+    }
+    struct omt_drm_mode_create_blob blob = {.data = (uint64_t)(uintptr_t)mode,
+                                            .length = sizeof(*mode)};
+    if (drm_ioctl(fd, OMT_DRM_IOCTL_MODE_CREATEPROPBLOB, &blob) != 0) {
+        os_detail(detail, size, "Unable to describe the DRM mode", errno);
+        return false;
+    }
+    atomic_request r;
+    memset(&r, 0, sizeof(r));
+    request_object(&r, connector);
+    request_prop(&r, connector_ids[0], cfg->crtc);
+    request_object(&r, cfg->crtc);
+    request_prop(&r, crtc_ids[0], blob.blob_id);
+    request_prop(&r, crtc_ids[1], 1);
+    request_object(&r, cfg->plane);
+    uint64_t plane_values[PLANE_PROP_COUNT] = {cfg->surfaces[0].framebuffer,
+                                               cfg->crtc,
+                                               0,
+                                               0,
+                                               (uint64_t)width << 16,
+                                               (uint64_t)height << 16,
+                                               placement->x,
+                                               placement->y,
+                                               placement->width,
+                                               placement->height,
+                                               encoding,
+                                               range};
+    for (size_t i = 0; i < PLANE_PROP_COUNT; i++) request_prop(&r, plane_ids[i], plane_values[i]);
+    if (has_filter) request_prop(&r, filter_prop, filter);
+    /* Asked first, so a refusal leaves the display exactly as it was. */
+    bool ok = request_commit(
+                  fd, &r, OMT_DRM_MODE_ATOMIC_TEST_ONLY | OMT_DRM_MODE_ATOMIC_ALLOW_MODESET) == 0;
+    if (!ok)
+        os_detail(detail, size, "the display hardware refused YCbCr scanout", errno);
+    else if (request_commit(fd, &r, OMT_DRM_MODE_ATOMIC_ALLOW_MODESET) != 0) {
+        os_detail(detail, size, "Unable to set DRM mode for YCbCr scanout", errno);
+        ok = false;
+    }
+    /* The committed state holds its own reference to the mode. */
+    struct omt_drm_mode_destroy_blob destroy = {.blob_id = blob.blob_id};
+    (void)drm_ioctl(fd, OMT_DRM_IOCTL_MODE_DESTROYPROPBLOB, &destroy);
+    if (!ok) return false;
+    cfg->plane_fb_prop = plane_ids[0];
+    cfg->yuv = true;
+    return true;
+}
+
 /* Selects a mode for the incoming format and rebuilds the flip chain. */
 static omt_present configure(omt_video_output *o, const omt_video_header *h, char *detail,
                              size_t size) {
@@ -427,41 +711,56 @@ static omt_present configure(omt_video_output *o, const omt_video_header *h, cha
         result = OMT_PRESENT_UNSUPPORTED;
         goto done;
     }
-    if (choice.scaled) {
-        omt_placement placement;
-        if (!omt_placement_fit(width, height, mode_w, mode_h, &placement)) {
-            snprintf(detail, size, "The display's mode cannot carry the OMT video format.");
-            result = OMT_PRESENT_UNSUPPORTED;
-            goto done;
-        }
-        if (!omt_scaler_init(&cfg.scaler, width, height, placement, &err)) {
-            snprintf(detail, size, "%s", err.msg);
-            goto done;
-        }
-        cfg.scaled = true;
-        cfg.placed = (vmx_placement){placement.x,      placement.y,        placement.width,
-                                     placement.height, cfg.scaler.columns, cfg.scaler.rows};
-    }
-    for (size_t i = 0; i < OMT_DRM_BUFFERS; i++) {
-        if (!create_surface(o->fd, mode.hdisplay, mode.vdisplay, &cfg.surfaces[i], detail, size))
-            goto done;
-        cfg.surface_count++;
-    }
-    /* Letterbox bars stay unwritten for the configuration's life, so they are
-     * cleared rather than assumed black. */
-    if (cfg.scaled && !omt_placement_fills(&cfg.scaler.placement, mode_w, mode_h))
-        for (size_t i = 0; i < cfg.surface_count; i++)
-            memset(cfg.surfaces[i].map, 0, cfg.surfaces[i].size);
-    uint32_t connector = o->connector_id;
-    struct omt_drm_mode_crtc set = {.set_connectors_ptr = (uint64_t)(uintptr_t)&connector,
-                                    .count_connectors = 1,
-                                    .crtc_id = cfg.crtc,
-                                    .fb_id = cfg.surfaces[0].framebuffer,
-                                    .mode_valid = 1,
-                                    .mode = mode};
-    if (drm_ioctl(o->fd, OMT_DRM_IOCTL_MODE_SETCRTC, &set) != 0) {
-        os_detail(detail, size, "Unable to set DRM mode", errno);
+    omt_placement placement = {0, 0, mode_w, mode_h};
+    if (choice.scaled && !omt_placement_fit(width, height, mode_w, mode_h, &placement)) {
+        snprintf(detail, size, "The display's mode cannot carry the OMT video format.");
+        result = OMT_PRESENT_UNSUPPORTED;
         goto done;
+    }
+    cfg.scaled = choice.scaled;
+    char why[256];
+    if (configure_yuv(o->fd, o->connector_id, &cfg, &mode, width, height,
+                      vmx_color_space_resolve(h->color_space, height), &placement, why,
+                      sizeof(why))) {
+        fprintf(stderr, "Display path: planar YCbCr 4:2:2, converted%s by the display hardware.\n",
+                choice.scaled ? " and scaled" : "");
+    } else {
+        /* Whatever the YCbCr attempt built goes before the fallback builds
+         * its own, so peak allocation stays one chain. */
+        for (size_t i = 0; i < cfg.surface_count; i++) destroy_surface(o->fd, &cfg.surfaces[i]);
+        cfg.surface_count = 0;
+        cfg.plane = 0;
+        fprintf(stderr, "Display path: BGRX converted by the decoder (%s).\n", why);
+        if (choice.scaled) {
+            if (!omt_scaler_init(&cfg.scaler, width, height, placement, &err)) {
+                snprintf(detail, size, "%s", err.msg);
+                goto done;
+            }
+            cfg.placed = (vmx_placement){placement.x,      placement.y,        placement.width,
+                                         placement.height, cfg.scaler.columns, cfg.scaler.rows};
+        }
+        for (size_t i = 0; i < OMT_DRM_BUFFERS; i++) {
+            if (!create_surface(o->fd, mode.hdisplay, mode.vdisplay, &cfg.surfaces[i], detail,
+                                size))
+                goto done;
+            cfg.surface_count++;
+        }
+        /* Letterbox bars stay unwritten for the configuration's life, so they
+         * are cleared rather than assumed black. */
+        if (cfg.scaled && !omt_placement_fills(&placement, mode_w, mode_h))
+            for (size_t i = 0; i < cfg.surface_count; i++)
+                memset(cfg.surfaces[i].map, 0, cfg.surfaces[i].size);
+        uint32_t connector = o->connector_id;
+        struct omt_drm_mode_crtc set = {.set_connectors_ptr = (uint64_t)(uintptr_t)&connector,
+                                        .count_connectors = 1,
+                                        .crtc_id = cfg.crtc,
+                                        .fb_id = cfg.surfaces[0].framebuffer,
+                                        .mode_valid = 1,
+                                        .mode = mode};
+        if (drm_ioctl(o->fd, OMT_DRM_IOCTL_MODE_SETCRTC, &set) != 0) {
+            os_detail(detail, size, "Unable to set DRM mode", errno);
+            goto done;
+        }
     }
     cfg.format =
         (omt_video_format){h->width, h->height, h->frame_rate_n, h->frame_rate_d, h->color_space};
@@ -478,7 +777,7 @@ static omt_present configure(omt_video_output *o, const omt_video_header *h, cha
 done:
     for (size_t i = 0; i < cfg.surface_count; i++) destroy_surface(o->fd, &cfg.surfaces[i]);
     vmx_decoder_free(cfg.decoder);
-    if (cfg.scaled) omt_scaler_free(&cfg.scaler);
+    omt_scaler_free(&cfg.scaler);
     free(modes);
     return result;
 }
@@ -529,20 +828,45 @@ omt_present omt_video_present(omt_video_output *o, const omt_frame *frame, char 
     if (st != VMX_OK) return omt_classify_decode(st, c->presented, &c->skips, detail, size);
     /* Decoding happens before the outstanding flip is retired: with three
      * surfaces the target is neither on screen nor queued, which is what the
-     * third buffer is for. A scaled mode resamples inside the decode, on the
-     * whole worker pool, straight into the surface. */
-    if (c->scaled)
+     * third buffer is for. YCbCr is copied out plane by plane and converted
+     * and scaled by the display; the BGRX fallback converts in the decoder,
+     * and a scaled mode resamples there too, on the whole worker pool. */
+    if (c->yuv) {
+        vmx_plane planes[3];
+        for (int p = 0; p < 3; p++) {
+            uint64_t end = p < 2 ? surface->plane_offsets[p + 1] : surface->size;
+            planes[p] =
+                (vmx_plane){surface->map + surface->plane_offsets[p],
+                            (size_t)(end - surface->plane_offsets[p]), surface->plane_pitches[p]};
+        }
+        st = vmx_decode_yuv422p(c->decoder, planes);
+    } else if (c->scaled) {
         st = vmx_decode_bgrx_placed(c->decoder, surface->map, surface->size, surface->pitch,
                                     &c->placed);
-    else
+    } else {
         st = vmx_decode_bgrx(c->decoder, surface->map, surface->size, surface->pitch);
+    }
     if (st != VMX_OK) return omt_classify_decode(st, c->presented, &c->skips, detail, size);
     if (!retire_flip(o, detail, size)) return OMT_PRESENT_FAILED;
-    struct omt_drm_mode_crtc_page_flip flip = {
-        .crtc_id = c->crtc, .fb_id = surface->framebuffer, .flags = OMT_DRM_MODE_PAGE_FLIP_EVENT};
-    if (drm_ioctl(o->fd, OMT_DRM_IOCTL_MODE_PAGE_FLIP, &flip) != 0) {
-        os_detail(detail, size, "Unable to queue DRM page flip", errno);
-        return OMT_PRESENT_FAILED;
+    if (c->yuv) {
+        /* A flip is the plane's framebuffer and nothing else. */
+        atomic_request r;
+        memset(&r, 0, sizeof(r));
+        request_object(&r, c->plane);
+        request_prop(&r, c->plane_fb_prop, surface->framebuffer);
+        if (request_commit(o->fd, &r,
+                           OMT_DRM_MODE_ATOMIC_NONBLOCK | OMT_DRM_MODE_PAGE_FLIP_EVENT) != 0) {
+            os_detail(detail, size, "Unable to queue DRM page flip", errno);
+            return OMT_PRESENT_FAILED;
+        }
+    } else {
+        struct omt_drm_mode_crtc_page_flip flip = {.crtc_id = c->crtc,
+                                                   .fb_id = surface->framebuffer,
+                                                   .flags = OMT_DRM_MODE_PAGE_FLIP_EVENT};
+        if (drm_ioctl(o->fd, OMT_DRM_IOCTL_MODE_PAGE_FLIP, &flip) != 0) {
+            os_detail(detail, size, "Unable to queue DRM page flip", errno);
+            return OMT_PRESENT_FAILED;
+        }
     }
     c->front = next;
     c->flip_pending = true;

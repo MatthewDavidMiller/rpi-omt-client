@@ -114,7 +114,11 @@ supported boards — the firmware substitutes the Pi 5 variant itself. On the
 Pi 4 it also sets `gpu_mem=64`: that board still splits RAM with the VideoCore,
 and under full KMS the V3D driver allocates from CMA instead, so the split is
 wasted RAM. The Pi 5 has no such split and the setting is omitted there rather
-than written and ignored.
+than written and ignored. The Pi 4 block also sets `arm_boost=1`, the Raspberry Pi OS
+default the Alpine image leaves out: the firmware then runs the board at the
+highest clock it rates it for, 1.8 GHz on revision 1.4 and later boards (the
+BCM2711 C0) and unchanged on older ones. Decode is CPU-bound enough that it
+counts; a single-core 1080p decode is about 20% faster at 1.8 GHz.
 
 ## Video limit
 

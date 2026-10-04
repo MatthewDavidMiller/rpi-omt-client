@@ -45,7 +45,7 @@ typedef struct {
     uint8_t *placed_row;
 } plane_scratch;
 
-typedef enum { PIXELS_UYVY, PIXELS_BGRX } pixel_format;
+typedef enum { PIXELS_UYVY, PIXELS_BGRX, PIXELS_YUV422P } pixel_format;
 
 typedef struct {
     uint8_t *output;
@@ -54,6 +54,7 @@ typedef struct {
     pixel_format pixels;
     const int16_t *coefficients;
     const vmx_placement *placement; /* NULL for an unscaled decode */
+    vmx_plane planes[3];            /* PIXELS_YUV422P */
 } frame_job;
 
 struct vmx_decoder;
@@ -163,6 +164,22 @@ static bool decode_slice(vmx_decoder *d, size_t index, plane_scratch *scratch) {
             if (offset > job->output_len || job->output_len - offset < row_bytes) return false;
             memcpy(job->output + offset, scratch->placed_row, row_bytes);
         }
+        return true;
+    }
+
+    if (job->pixels == PIXELS_YUV422P) {
+        /* Each plane row goes out in one sequential store, which is what a
+         * write-combined scanout mapping wants. */
+        size_t widths[3] = {d->width, d->width / 2, d->width / 2};
+        const uint8_t *sources[3] = {scratch->luma, scratch->blue, scratch->red};
+        size_t strides[3] = {d->luma_stride, d->chroma_stride, d->chroma_stride};
+        for (size_t row = 0; row < slice->rows; row++)
+            for (size_t p = 0; p < 3; p++) {
+                const vmx_plane *plane = &job->planes[p];
+                size_t offset = (index * VMX_SLICE_HEIGHT + row) * plane->stride;
+                if (offset > plane->len || plane->len - offset < widths[p]) return false;
+                memcpy(plane->data + offset, sources[p] + row * strides[p], widths[p]);
+            }
         return true;
     }
 
@@ -434,7 +451,8 @@ static vmx_status decode(vmx_decoder *d, uint8_t *output, size_t output_len, siz
     if (placement) {
         vmx_status st = prepare_placement(d, placement, output_len, stride);
         if (st != VMX_OK) return st;
-    } else {
+    } else if (pixels != PIXELS_YUV422P) {
+        /* The planar output checked its own planes before getting here. */
         size_t needed;
         if (stride < minimum_stride || !omt_mul(stride, d->height, &needed) || output_len < needed)
             return VMX_OUTPUT_SIZE;
@@ -476,6 +494,19 @@ vmx_status vmx_decode_uyvy(vmx_decoder *d, uint8_t *output, size_t output_len, s
 
 vmx_status vmx_decode_bgrx(vmx_decoder *d, uint8_t *output, size_t output_len, size_t stride) {
     return decode(d, output, output_len, stride, d->width * 4, PIXELS_BGRX, NULL);
+}
+
+vmx_status vmx_decode_yuv422p(vmx_decoder *d, const vmx_plane planes[3]) {
+    if (!d->loaded) return VMX_EMPTY;
+    size_t widths[3] = {d->width, d->width / 2, d->width / 2};
+    for (size_t p = 0; p < 3; p++) {
+        size_t needed;
+        if (!planes[p].data || planes[p].stride < widths[p] ||
+            !omt_mul(planes[p].stride, d->height, &needed) || planes[p].len < needed)
+            return VMX_OUTPUT_SIZE;
+        d->job.planes[p] = planes[p];
+    }
+    return decode(d, NULL, 0, 0, 0, PIXELS_YUV422P, NULL);
 }
 
 vmx_status vmx_decode_bgrx_placed(vmx_decoder *d, uint8_t *output, size_t output_len, size_t stride,

@@ -16,6 +16,9 @@
 #define OMT_HAVE_SYSTEM_DRM 1
 #include <drm/drm.h>
 #include <drm/drm_mode.h>
+#if __has_include(<drm/drm_fourcc.h>)
+#include <drm/drm_fourcc.h>
+#endif
 #endif
 #endif
 
@@ -45,8 +48,44 @@ static void declarations_match_the_kernel(void) {
               offsetof(struct drm_mode_map_dumb, offset));
     CHECK_INT(offsetof(struct omt_drm_mode_modeinfo, flags),
               offsetof(struct drm_mode_modeinfo, flags));
+    CHECK_INT(OMT_DRM_IOCTL_SET_CLIENT_CAP, DRM_IOCTL_SET_CLIENT_CAP);
+    CHECK_INT(OMT_DRM_IOCTL_MODE_GETRESOURCES, DRM_IOCTL_MODE_GETRESOURCES);
+    CHECK_INT(OMT_DRM_IOCTL_MODE_GETPROPERTY, DRM_IOCTL_MODE_GETPROPERTY);
+    CHECK_INT(OMT_DRM_IOCTL_MODE_GETPLANERESOURCES, DRM_IOCTL_MODE_GETPLANERESOURCES);
+    CHECK_INT(OMT_DRM_IOCTL_MODE_GETPLANE, DRM_IOCTL_MODE_GETPLANE);
+    CHECK_INT(OMT_DRM_IOCTL_MODE_ADDFB2, DRM_IOCTL_MODE_ADDFB2);
+    CHECK_INT(OMT_DRM_IOCTL_MODE_OBJ_GETPROPERTIES, DRM_IOCTL_MODE_OBJ_GETPROPERTIES);
+    CHECK_INT(OMT_DRM_IOCTL_MODE_ATOMIC, DRM_IOCTL_MODE_ATOMIC);
+    CHECK_INT(OMT_DRM_IOCTL_MODE_CREATEPROPBLOB, DRM_IOCTL_MODE_CREATEPROPBLOB);
+    CHECK_INT(OMT_DRM_IOCTL_MODE_DESTROYPROPBLOB, DRM_IOCTL_MODE_DESTROYPROPBLOB);
+    CHECK_INT(OMT_DRM_CLIENT_CAP_UNIVERSAL_PLANES, DRM_CLIENT_CAP_UNIVERSAL_PLANES);
+    CHECK_INT(OMT_DRM_CLIENT_CAP_ATOMIC, DRM_CLIENT_CAP_ATOMIC);
+    CHECK_INT(OMT_DRM_MODE_ATOMIC_TEST_ONLY, DRM_MODE_ATOMIC_TEST_ONLY);
+    CHECK_INT(OMT_DRM_MODE_ATOMIC_NONBLOCK, DRM_MODE_ATOMIC_NONBLOCK);
+    CHECK_INT(OMT_DRM_MODE_ATOMIC_ALLOW_MODESET, DRM_MODE_ATOMIC_ALLOW_MODESET);
+    CHECK_INT(OMT_DRM_MODE_OBJECT_CRTC, DRM_MODE_OBJECT_CRTC);
+    CHECK_INT(OMT_DRM_MODE_OBJECT_CONNECTOR, DRM_MODE_OBJECT_CONNECTOR);
+    CHECK_INT(OMT_DRM_MODE_OBJECT_PLANE, DRM_MODE_OBJECT_PLANE);
+    CHECK_INT(OMT_DRM_MODE_PROP_ENUM, DRM_MODE_PROP_ENUM);
+    CHECK_INT(sizeof(struct omt_drm_mode_atomic), sizeof(struct drm_mode_atomic));
+    CHECK_INT(sizeof(struct omt_drm_mode_fb_cmd2), sizeof(struct drm_mode_fb_cmd2));
+    CHECK_INT(offsetof(struct omt_drm_mode_fb_cmd2, modifier),
+              offsetof(struct drm_mode_fb_cmd2, modifier));
+    CHECK_INT(sizeof(struct omt_drm_mode_get_property), sizeof(struct drm_mode_get_property));
+    CHECK_INT(sizeof(struct omt_drm_mode_get_plane), sizeof(struct drm_mode_get_plane));
+    CHECK_INT(sizeof(struct omt_drm_mode_obj_get_properties),
+              sizeof(struct drm_mode_obj_get_properties));
+    CHECK_INT(sizeof(struct omt_drm_mode_card_res), sizeof(struct drm_mode_card_res));
+#if defined(__has_include)
+#if __has_include(<drm/drm_fourcc.h>)
+    CHECK_INT(OMT_DRM_FORMAT_YUV422, DRM_FORMAT_YUV422);
+#endif
+#endif
 #else
     CHECK(sizeof(struct omt_drm_mode_crtc) == 104);
+    /* fourcc_code('Y', 'U', '1', '6'), spelled out where the header is not. */
+    CHECK_INT(OMT_DRM_FORMAT_YUV422,
+              (uint32_t)'Y' | (uint32_t)'U' << 8 | (uint32_t)'1' << 16 | (uint32_t)'6' << 24);
 #endif
 }
 

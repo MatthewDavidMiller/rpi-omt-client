@@ -11,10 +11,14 @@ first (src/vmx/plane.c reads them one bit field at a time):
     0  0{z} 1 b{z+1}            one coefficient, GetIntFrom2MagSign(1b{z+1} - 1)
 
 Every code no longer than twelve bits is resolved here in one lookup on the
-next twelve bits of the stream. An entry packs the payload (the coefficient,
-or the zero count) into bits 0..15, the code length into bits 16..23, and the
-kind into bits 24..25; zero means the code is longer and the decoder takes
-the bit-by-bit path, which is unchanged.
+next twelve bits of the stream. An entry packs the coefficient into bits
+0..15, the code length into bits 16..23, and how many positions the code
+advances into bits 24..31: one for a coefficient, the run for zeros. A zero
+run carries the coefficient 0, which no coefficient code can decode to, so
+the decoder stores every entry's coefficient without asking which kind it is
+-- a zero run stores 0 into a position that already holds 0 -- and a
+data-dependent branch drops out of the innermost loop. Zero means the code is
+longer and the decoder takes the bit-by-bit path, which is unchanged.
 
     gen_vmx_tables.py           write src/vmx/ac_lookahead.c
     gen_vmx_tables.py --check   fail if the committed file differs
@@ -25,8 +29,6 @@ import pathlib
 import sys
 
 BITS = 12
-KIND_ZEROS = 1
-KIND_VALUE = 2
 OUTPUT = pathlib.Path(__file__).resolve().parents[2] / "src/vmx/ac_lookahead.c"
 
 
@@ -50,31 +52,38 @@ def golomb(bits: str, start: int) -> tuple[int, int] | None:
     return end, int(bits[start + zeros : end], 2)
 
 
+def pack(coefficient: int, length: int, advance: int) -> int:
+    assert 0 < length <= BITS and 0 < advance < 256
+    return advance << 24 | length << 16 | coefficient
+
+
 def entry(index: int) -> int:
     bits = format(index, f"0{BITS}b")
     if bits[0] == "1":
         if bits[1] == "1":
-            return KIND_ZEROS << 24 | 2 << 16 | 1
+            return pack(0, 2, 1)
         code = golomb(bits, 2)
         if code is None:
             return 0
         length, run = code
-        return KIND_ZEROS << 24 | length << 16 | run
+        return pack(0, length, run)
     code = golomb(bits, 1)
     if code is None:
         return 0
     length, value = code
-    return KIND_VALUE << 24 | length << 16 | mag_sign(value)
+    coefficient = mag_sign(value)
+    assert coefficient != 0, "a coefficient code decoded to the zero-run marker"
+    return pack(coefficient, length, 1)
 
 
 def render() -> str:
     table = [entry(i) for i in range(1 << BITS)]
     # Anchors: "11" is a lone zero; "010" and "011" are the coefficients -1
     # and +1; "1010" is a run of two; twelve zeros are too long to resolve.
-    assert table[0b110000000000] == KIND_ZEROS << 24 | 2 << 16 | 1
-    assert table[0b010000000000] == KIND_VALUE << 24 | 3 << 16 | 0xFFFF
-    assert table[0b011000000000] == KIND_VALUE << 24 | 3 << 16 | 1
-    assert table[0b101000000000] == KIND_ZEROS << 24 | 4 << 16 | 2
+    assert table[0b110000000000] == pack(0, 2, 1)
+    assert table[0b010000000000] == pack(0xFFFF, 3, 1)
+    assert table[0b011000000000] == pack(1, 3, 1)
+    assert table[0b101000000000] == pack(0, 4, 2)
     assert table[0] == 0
     lines = [
         "/* Copyright (c) 2026 Matthew David Miller",

@@ -55,6 +55,19 @@ vmx_status vmx_decode_uyvy(vmx_decoder *decoder, uint8_t *output, size_t output_
 /* BGRX is the byte order the DRM scanout reads as XRGB8888. */
 vmx_status vmx_decode_bgrx(vmx_decoder *decoder, uint8_t *output, size_t output_len, size_t stride);
 
+/* One plane of a planar output: `len` bytes at `data`, rows `stride` apart. */
+typedef struct {
+    uint8_t *data;
+    size_t len;
+    size_t stride;
+} vmx_plane;
+
+/* Planar YUV 4:2:2 as the decoder holds it: luma, then Cb, then Cr at half
+ * width, each row copied once with no conversion. This is DRM_FORMAT_YUV422,
+ * which display hardware that converts YCbCr itself scans out directly, at
+ * half the bytes of BGRX. */
+vmx_status vmx_decode_yuv422p(vmx_decoder *decoder, const vmx_plane planes[3]);
+
 /* The largest placed area a decode accepts, which bounds each worker's row
  * buffer. Wider than any mode a supported board drives. */
 #define VMX_MAX_PLACED_WIDTH 8192u

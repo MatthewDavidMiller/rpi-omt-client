@@ -293,6 +293,73 @@ static void placed_decodes_reject_bad_placements(void) {
     omt_buf_free(&compressed);
 }
 
+/* Planar 4:2:2 is the same samples UYVY carries, so re-interleaved it must
+ * be the UYVY the conformance vectors pin; padding past each row is left
+ * alone. */
+static void planar_output_is_the_pinned_uyvy(void) {
+    vector vectors[32];
+    size_t n = load_vectors(vectors, 32);
+    CHECK(n > 0);
+    for (size_t i = 0; i < n; i++) {
+        const vector *v = &vectors[i];
+        omt_buf compressed;
+        CHECK(read_stream(v, &compressed));
+        size_t w = v->width, h = v->height, half = w / 2;
+        size_t uyvy_len = w * h * 2;
+        uint8_t *uyvy = test_alloc(uyvy_len), *interleaved = test_alloc(uyvy_len);
+        for (size_t workers = 1; workers <= 4; workers += 3) {
+            vmx_decoder *d = make(v, workers);
+            CHECK_INT(vmx_decoder_load(d, compressed.data, compressed.len), VMX_OK);
+            CHECK_INT(vmx_decode_uyvy(d, uyvy, uyvy_len, w * 2), VMX_OK);
+            size_t strides[3] = {w + 32, half + 16, half + 16};
+            vmx_plane planes[3];
+            for (size_t p = 0; p < 3; p++) {
+                planes[p].stride = strides[p];
+                planes[p].len = strides[p] * h;
+                planes[p].data = test_alloc(planes[p].len);
+                memset(planes[p].data, 0x5A, planes[p].len);
+            }
+            CHECK_INT(vmx_decoder_load(d, compressed.data, compressed.len), VMX_OK);
+            CHECK_INT(vmx_decode_yuv422p(d, planes), VMX_OK);
+            bool padding_untouched = true;
+            for (size_t y = 0; y < h; y++) {
+                const uint8_t *luma = planes[0].data + y * strides[0];
+                const uint8_t *cb = planes[1].data + y * strides[1];
+                const uint8_t *cr = planes[2].data + y * strides[2];
+                for (size_t x = 0; x < half; x++) {
+                    uint8_t *o = interleaved + y * w * 2 + x * 4;
+                    o[0] = cb[x];
+                    o[1] = luma[2 * x];
+                    o[2] = cr[x];
+                    o[3] = luma[2 * x + 1];
+                }
+                padding_untouched =
+                    padding_untouched && luma[w] == 0x5A && cb[half] == 0x5A && cr[half] == 0x5A;
+            }
+            CHECK_MSG(memcmp(uyvy, interleaved, uyvy_len) == 0, "%s with %zu workers", v->label,
+                      workers);
+            CHECK_MSG(padding_untouched, "%s padding", v->label);
+            /* Every plane is held to its own extent. */
+            for (size_t p = 0; p < 3; p++) {
+                vmx_plane bad[3] = {planes[0], planes[1], planes[2]};
+                bad[p].len -= 1;
+                CHECK_INT(vmx_decode_yuv422p(d, bad), VMX_OUTPUT_SIZE);
+                bad[p] = planes[p];
+                bad[p].stride = (p == 0 ? w : half) - 1;
+                CHECK_INT(vmx_decode_yuv422p(d, bad), VMX_OUTPUT_SIZE);
+                bad[p] = planes[p];
+                bad[p].data = NULL;
+                CHECK_INT(vmx_decode_yuv422p(d, bad), VMX_OUTPUT_SIZE);
+            }
+            for (size_t p = 0; p < 3; p++) free(planes[p].data);
+            vmx_decoder_free(d);
+        }
+        free(uyvy);
+        free(interleaved);
+        omt_buf_free(&compressed);
+    }
+}
+
 static void rejects_unsupported_geometry(void) {
     size_t cases[][3] = {{8, 32, 1},  {1922, 1080, 1}, {64, 8, 1}, {64, 1082, 1},
                          {65, 32, 1}, {64, 32, 0},     {64, 32, 9}};
@@ -613,6 +680,7 @@ int main(void) {
     RUN(rejects_undersized_destinations);
     RUN(placed_decodes_match_decode_then_gather);
     RUN(placed_decodes_reject_bad_placements);
+    RUN(planar_output_is_the_pinned_uyvy);
     RUN(rejects_unsupported_geometry);
     RUN(bit_reader_matches_the_reference);
     RUN(plane_helpers_match_the_reference);

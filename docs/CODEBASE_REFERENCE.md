@@ -10,7 +10,7 @@
 | First-party D-Bus wire client: SASL EXTERNAL, marshalling, bounded messages | `src/receiver/dbus.c` |
 | Bounded XML reads for settings and announcements | `src/common/xml.c` |
 | HDMI connector selection and hotplug checks | `src/receiver/connector.c` |
-| Direct KMS scanout and mode selection, raw ioctls against an in-tree uapi | `src/receiver/video_drm.c`, `src/receiver/drm_uapi.h` |
+| Direct KMS scanout and mode selection: planar YCbCr through the display hardware by atomic mode-setting, BGRX by the legacy ioctls as the fallback; raw ioctls against an in-tree uapi | `src/receiver/video_drm.c`, `src/receiver/drm_uapi.h` |
 | Placement and sampling tables for a mode that is not the video's size (the resample runs in `vmx_decode_bgrx_placed`) | `src/receiver/scale.c` |
 | HDMI audio through ALSA | `src/receiver/audio_alsa.c`, `src/receiver/audio_interleave.c` |
 | Frame handoff: newest video frame, audio in arrival order | `src/receiver/handoff.c` |

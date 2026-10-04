@@ -18,7 +18,7 @@ failures=0
 fail() { echo "FAIL: $1" >&2; failures=$((failures + 1)); }
 
 # The C standard library, POSIX, Linux, Win32, OpenSSL, and ALSA headers.
-ALLOWED_HEADER='^(alloca|errno|fcntl|inttypes|limits|math|netdb|poll|process|pthread|signal|spawn|stdarg|stdatomic|stdbool|stddef|stdint|stdio|stdlib|string|termios|time|unistd|wchar|dirent|arm_neon)\.h$|^(sys|arpa|netinet)/[a-z_]+\.h$|^drm/drm(_mode)?\.h$|^(windows|winsock2|ws2tcpip|wincrypt|bcrypt)\.h$|^openssl/[a-z0-9_]+\.h$|^alsa/asoundlib\.h$'
+ALLOWED_HEADER='^(alloca|errno|fcntl|inttypes|limits|math|netdb|poll|process|pthread|signal|spawn|stdarg|stdatomic|stdbool|stddef|stdint|stdio|stdlib|string|termios|time|unistd|wchar|dirent|arm_neon)\.h$|^(sys|arpa|netinet)/[a-z_]+\.h$|^drm/drm(_mode|_fourcc)?\.h$|^(windows|winsock2|ws2tcpip|wincrypt|bcrypt)\.h$|^openssl/[a-z0-9_]+\.h$|^alsa/asoundlib\.h$'
 
 echo "Checking that sources include only platform and OpenSSL headers..."
 while IFS= read -r header; do

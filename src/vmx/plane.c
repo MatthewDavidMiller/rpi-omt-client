@@ -38,10 +38,9 @@ int16_t vmx_shift_signed(int16_t value, int32_t shift) {
     return (int16_t)(uint16_t)((uint32_t)(uint16_t)value << shift);
 }
 
-bool vmx_decode_plane(vmx_slice_streams *s, size_t stride, int16_t bias, const uint16_t matrix[64],
-                      int32_t dc_shift, uint8_t *dst, size_t dst_len) {
-    if (stride == 0 || stride % 8 != 0 || dst_len / VMX_SLICE_HEIGHT < stride) return false;
-
+static OMT_ALWAYS_INLINE bool decode_plane(vmx_slice_streams *s, size_t stride, int16_t bias,
+                                           const uint16_t matrix[64], int32_t dc_shift,
+                                           uint8_t *dst) {
     int16_t block[64];
     uint32_t pending = 0;
     int16_t dc_prediction = 0;
@@ -64,12 +63,14 @@ bool vmx_decode_plane(vmx_slice_streams *s, size_t stride, int16_t bias, const u
                                                        (uint32_t)(64 - s->ac.bits_left)) >>
                                              (64 - VMX_LOOKAHEAD_BITS)];
                 if (entry != 0) {
+                    /* No branch on the code's kind, which detail makes
+                     * unpredictable: a run of zeros carries the coefficient
+                     * 0 and stores it into a position that is already 0. */
+                    int16_t coefficient = (int16_t)(uint16_t)entry;
                     s->ac.bits_left -= (int32_t)((entry >> 16) & 0xFFu);
-                    if (entry >> 24 == VMX_LOOKAHEAD_VALUE) {
-                        last = pending;
-                        block[vmx_zigzag_natural[pending++]] = (int16_t)(uint16_t)entry;
-                    } else
-                        pending += entry & 0xFFFFu;
+                    block[vmx_zigzag_natural[pending]] = coefficient;
+                    last = coefficient != 0 ? pending : last;
+                    pending += entry >> 24;
                 } else if (vmx_bits_bit_bare(&s->ac) == 1) {
                     if (vmx_bits_bit_bare(&s->ac) == 1) {
                         pending += 1;
@@ -116,4 +117,18 @@ bool vmx_decode_plane(vmx_slice_streams *s, size_t stride, int16_t bias, const u
     vmx_bits_align(&s->dc);
     vmx_bits_align(&s->ac);
     return !(s->dc.corrupt || s->ac.corrupt);
+}
+
+bool vmx_decode_plane(vmx_slice_streams *s, size_t stride, int16_t bias, const uint16_t matrix[64],
+                      int32_t dc_shift, uint8_t *dst, size_t dst_len) {
+    if (stride == 0 || stride % 8 != 0 || dst_len / VMX_SLICE_HEIGHT < stride) return false;
+    /* The readers are decoded from a local copy. The build does not assume
+     * strict aliasing and `block` escapes to the transform, so a reader the
+     * caller owns would be reloaded from memory after every coefficient
+     * stored; a local whose address never leaves this function stays in
+     * registers. Every path writes the readers back, as the original did. */
+    vmx_slice_streams local = *s;
+    bool ok = decode_plane(&local, stride, bias, matrix, dc_shift, dst);
+    *s = local;
+    return ok;
 }

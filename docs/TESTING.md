@@ -370,19 +370,28 @@ decode throughput, so a pass on one is not evidence for another:
    frame interval its ceiling promises, lower that board's profile rather than
    shipping a limit it cannot hold. Then confirm that over-ceiling input reports
    `unsupported-format` rather than stuttering;
-7. verify the resampled path on a display whose mode list does not carry the
+7. confirm the display path. The receiver log (`receiver.log` in the config
+   volume) names it on every configuration: `planar YCbCr 4:2:2, converted by
+   the display hardware` is the Pi 4 and Pi 5 path, and a `BGRX converted by
+   the decoder` line gives the reason the hardware path was refused. Two
+   techniques reach that path without a monitor: `install.sh --hdmi-video
+   HDMI-A-1:1920x1080@60` forces the connector on (the `D` suffix it writes),
+   so the receiver modesets and flips for real, and the vc4 writeback connector
+   captures what the HVS composes, which is how the YCbCr colour was held to
+   `vmx_decode_bgrx`. Neither replaces looking at a real display;
+8. verify the resampled path on a display whose mode list does not carry the
    sender's format — a panel that stops at 720p fed 1080p is the case this was
    written for. Confirm a full picture rather than `unsupported-format`, that
    the running detail names both sizes, that a mismatched aspect ratio gets
    black bars rather than a stretch, and that the board still holds the frame
    interval with the resample in the loop;
-8. verify HDMI audio timing under a loaded link. Play a full session over the
+9. verify HDMI audio timing under a loaded link. Play a full session over the
    Wi-Fi link the appliance will actually use and confirm the playing detail
    reports no underruns, then confirm the bundle's ALSA playback stream state
    shows the negotiated buffer and a start threshold near 100 ms rather than
    ALSA's one-frame default. The start threshold and ring size are set through
    the device and cannot be asserted off the board;
-9. induce a video TCP disconnect on a Pi 4 and a Pi 5 while a session is
+10. induce a video TCP disconnect on a Pi 4 and a Pi 5 while a session is
    playing. The two ways it can fail are not interchangeable, and each has its
    own bound, so exercise both:
 
@@ -418,7 +427,7 @@ decode throughput, so a pass on one is not evidence for another:
      indefinitely is the regression this step exists to catch. These
      checks must use a shape the board can decode: Pi 4 is 1080p30 or 720p60,
      and 1080p60 must still report `unsupported-format`;
-10. confirm a held frame on damaged input. Nothing off the board proves that a
+11. confirm a held frame on damaged input. Nothing off the board proves that a
     skipped frame leaves the previous picture scanning out: the unit tests
     cover only which decoder faults are allowed to skip and how long a run is
     tolerated, and the hold itself is DRM behaviour. Feed a sender emitting

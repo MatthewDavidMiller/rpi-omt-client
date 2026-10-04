@@ -5,7 +5,8 @@
  * geometries so the slice-count check is passed often enough for the entropy
  * decoder to be reached. Each frame is also decoded through a placement,
  * shrunk or enlarged into a letterboxed destination as a scaled display mode
- * would have it.
+ * would have it, and as planar 4:2:2 for display hardware that converts
+ * YCbCr itself.
  */
 #include <stdlib.h>
 
@@ -52,6 +53,15 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
             (void)vmx_decode_uyvy(d, out, len, shape[0] * 2);
         if (vmx_decoder_load(d, data + 1, size - 1) == VMX_OK)
             placed(d, shape, (data[0] & 0x10) != 0);
+        if (vmx_decoder_load(d, data + 1, size - 1) == VMX_OK) {
+            /* The planar 4:2:2 output, in the one buffer it fits. */
+            size_t half = shape[0] / 2;
+            vmx_plane planes[3] = {
+                {out, shape[0] * shape[1], shape[0]},
+                {out + shape[0] * shape[1], half * shape[1], half},
+                {out + shape[0] * shape[1] + half * shape[1], half * shape[1], half}};
+            (void)vmx_decode_yuv422p(d, planes);
+        }
     }
     free(out);
     vmx_decoder_free(d);

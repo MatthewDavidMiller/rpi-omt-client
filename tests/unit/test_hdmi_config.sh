@@ -91,7 +91,7 @@ expect_equal "an empty config still gets the managed block" \
 # The Pi 4 still splits RAM with the VideoCore. Under full KMS the V3D driver
 # allocates from CMA, so the split is wasted RAM. The Pi 5 has no such split and
 # must not be given the setting at all.
-gpu_mem_block=$'# BEGIN OMT Client HDMI configuration\ndtoverlay=vc4-kms-v3d\nmax_framebuffers=2\ndisable_fw_kms_setup=1\ngpu_mem=64\ndtoverlay=disable-bt\n# END OMT Client HDMI configuration'
+gpu_mem_block=$'# BEGIN OMT Client HDMI configuration\ndtoverlay=vc4-kms-v3d\nmax_framebuffers=2\ndisable_fw_kms_setup=1\ngpu_mem=64\narm_boost=1\ndtoverlay=disable-bt\n# END OMT Client HDMI configuration'
 
 expect_equal "pi4 reserves the minimum GPU split" \
     $'\n'"${gpu_mem_block}" "$(printf '' | host_hdmi_config_txt pi4)"
@@ -109,6 +109,13 @@ grep -Fqx 'dtparam=krnbt=off' <<< "$(printf '' | host_hdmi_config_txt pi5)" ||
     fail "pi5 must disable onboard Bluetooth with dtparam=krnbt=off"
 grep -Fqx 'dtoverlay=disable-bt' <<< "$(printf '' | host_hdmi_config_txt pi4)" ||
     fail "pi4 must disable onboard Bluetooth with dtoverlay=disable-bt"
+
+# A Pi 4 runs at the clock the firmware rates its board for; the Pi 5 is
+# already there and is never given the setting.
+grep -Fqx 'arm_boost=1' <<< "$(printf '' | host_hdmi_config_txt pi4)" ||
+    fail "pi4 must let the firmware raise the clock to the board's rating"
+grep -Fq 'arm_boost' <<< "$(printf '' | host_hdmi_config_txt pi5)" &&
+    fail "pi5 must not be given arm_boost"
 
 # Switching boards replaces the managed block rather than accumulating both
 # spellings of it, which is what an SD card moved between Pis would produce.
