@@ -25,10 +25,7 @@ RPI_OMT_CLIENT_VERSION="${RPI_OMT_CLIENT_VERSION:-$("${PROJECT_ROOT}/scripts/det
 receiver_files_fingerprint="$(
     cd "${PROJECT_ROOT}"
     {
-        printf '%s\0' Cargo.toml Cargo.lock rust-toolchain.toml
-        find .cargo -type f -print0
-        find crates/omt-protocol crates/omt-receiver-core crates/vmx-decoder \
-            crates/omt-receiver crates/omt-web -type f -print0
+        find mk src -path src/deploy -prune -o -type f -print0
     } | sort -z | xargs -0 sha256sum | sha256sum | awk '{print $1}'
 )"
 RECEIVER_SOURCE_FINGERPRINT="$(

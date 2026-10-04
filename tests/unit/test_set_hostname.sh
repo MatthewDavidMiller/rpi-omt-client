@@ -12,9 +12,9 @@ ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 SET_HOSTNAME="${ROOT}/deploy/host/set-hostname.sh"
 SETUP_SYS="${ROOT}/deploy/host/setup-sys.sh"
 MANIFEST="${ROOT}/deploy/manifest-v3.txt"
-OPS_RS="${ROOT}/crates/omt-deployer-core/src/ops.rs"
-DEPLOYER_RS="${ROOT}/crates/rpi-omt-deployer/src/main.rs"
-CLI_RS="${ROOT}/crates/rpi-omt-deploy/src/main.rs"
+OPS_H="${ROOT}/src/deploy/core/ops_internal.h"
+TUI_C="${ROOT}/src/deploy/tui/app.c"
+CLI_C="${ROOT}/src/deploy/cli/main.c"
 
 failures=0
 fail() {
@@ -94,21 +94,21 @@ grep -Eq -- '\| *publish ' "${SET_HOSTNAME}" && \
 # as an unfinished rename.
 MARKER="$(sed -n 's/^COMPLETE_MARKER="\(.*\)"$/\1/p' "${SET_HOSTNAME}")"
 [[ -n "${MARKER}" ]] || fail "set-hostname declares no completion marker"
-grep -Fq "\"${MARKER}\"" "${OPS_RS}" || \
-    fail "ops.rs does not wait for the marker set-hostname prints: ${MARKER}"
-grep -Fq '"deploy/host/set-hostname.sh"' "${OPS_RS}" || \
-    fail "ops.rs does not name the uploaded rename script"
+grep -Fq "\"${MARKER}\"" "${OPS_H}" || \
+    fail "the deployer does not wait for the marker set-hostname prints: ${MARKER}"
+grep -Fq '"deploy/host/set-hostname.sh"' "${OPS_H}" || \
+    fail "the deployer does not name the uploaded rename script"
 grep -Fxq 'deploy/host/set-hostname.sh' "${MANIFEST}" || \
     fail "the rename script is not a capsule member, so it cannot be uploaded"
 
 # Both front ends have to offer the action, or an operator's only route to it
 # is a hand-run script on the Pi -- which is the gap this was added to close.
-grep -Fq 'Hostname(HostnameArgs)' "${CLI_RS}" || \
+grep -Fq '{"hostname", CMD_HOSTNAME,' "${CLI_C}" || \
     fail "the CLI has no hostname command"
-grep -Fq 'can_set_hostname' "${DEPLOYER_RS}" || \
-    fail "the desktop deployer does not gate a rename button"
-grep -Fq 'Change hostname' "${DEPLOYER_RS}" || \
-    fail "the desktop deployer's Manage view has no rename control"
+grep -Fq 'DP_JOB_HOSTNAME' "${TUI_C}" || \
+    fail "the terminal deployer does not run a rename"
+grep -Fq '"Apply hostname"' "${TUI_C}" || \
+    fail "the terminal deployer's Manage view has no rename control"
 
 # The two rewrites, run over fixtures. Both programs are read out of the
 # script, so this tests what ships rather than a restatement of it.

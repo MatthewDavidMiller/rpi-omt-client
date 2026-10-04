@@ -127,25 +127,25 @@ checks=(
     "/usr/local/bin/omt-web --version | grep -Fxq vtest"
     "test \"\$(/usr/local/bin/omt-receiver discover --wait-ms 0 --json)\" = '[]'"
     "! find /usr/lib -name 'libstdc++.so*' -print -quit | grep -q ."
-    "grep -Fq '\"bomFormat\": \"CycloneDX\"' /app/legal/runtime-sbom.cdx.json && grep -Fq '\"version\": \"vtest\"' /app/legal/runtime-sbom.cdx.json && grep -Fq '\"name\": \"axum\"' /app/legal/runtime-sbom.cdx.json && grep -Fq '\"name\": \"serde\"' /app/legal/runtime-sbom.cdx.json"
+    "grep -Fq '\"bomFormat\": \"CycloneDX\"' /app/legal/runtime-sbom.cdx.json && grep -Fq '\"version\": \"vtest\"' /app/legal/runtime-sbom.cdx.json && grep -Fq '\"name\": \"omt-receiver\"' /app/legal/runtime-sbom.cdx.json && grep -Fq '\"name\": \"libssl3\"' /app/legal/runtime-sbom.cdx.json"
     "test -s /app/runtime-sha256.manifest && sha256sum --check /app/runtime-sha256.manifest >/dev/null"
     "! command -v gst-launch-1.0 >/dev/null 2>&1"
     "test \"\$HOME\" = /etc/omt && test \"\$(id -un)\" = omt"
 )
 labels=(
-    "Rust OMT receiver is executable"
-    "Rust Web frontend is executable"
+    "C OMT receiver is executable"
+    "C Web frontend is executable"
     "OMT runtime scripts are executable"
     "Python and its virtual environment are absent"
-    "integrity manifest covers the Rust Web frontend"
+    "integrity manifest covers the C Web frontend"
     "version file matches the build"
     "project license and third-party notices are packaged"
     "project copyright is exact"
-    "Rust receiver reports the build version"
-    "Rust Web frontend reports the build version"
+    "C receiver reports the build version"
+    "C Web frontend reports the build version"
     "zero-source discovery returns JSON"
     "runtime image contains no C++ standard library"
-    "runtime CycloneDX SBOM identifies Rust components"
+    "runtime CycloneDX SBOM identifies first-party and OpenSSL components"
     "runtime SHA-256 manifest verifies"
     "retired GStreamer runtime is absent"
     "runtime identity and HOME are fixed"
@@ -214,7 +214,7 @@ if "${CONTAINER_ENGINE}" cp \
    "${CONTAINER_ENGINE}" cp \
        "${ARM64_ARTIFACT_CONTAINER}:/omt-web" "${web_artifact}" &&
    [[ -s "${receiver_artifact}" ]] && [[ -s "${web_artifact}" ]]; then
-    pass "ARM64 builder produced the Rust receiver and web artifacts"
+    pass "ARM64 builder produced the C receiver and web artifacts"
 else
     fail "ARM64 builder artifacts are missing"
 fi
@@ -239,4 +239,4 @@ fi
 rm -f "${receiver_artifact}" "${web_artifact}"
 
 echo "==========================================="
-echo -e "${GREEN}All Rust OMT image build tests passed!${NC}"
+echo -e "${GREEN}All OMT image build tests passed!${NC}"

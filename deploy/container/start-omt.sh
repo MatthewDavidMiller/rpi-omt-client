@@ -21,7 +21,7 @@ if [[ ! "${OMT_HDMI_CONNECTOR}" =~ ^(auto|HDMI-A-1|HDMI-A-2)$ ]]; then
     exit 2
 fi
 
-# One shared reader with the Rust Web service: schema, size, symlink, and
+# One shared reader with the Web service: schema, size, symlink, and
 # validation rules live in omt-web rather than a second copy here.
 target="$(omt-web play-target "${OMT_SOURCE_TARGET_FILE}")"
 

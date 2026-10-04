@@ -56,11 +56,7 @@ assert_equals "0.2.0" \
     "Release directory without a v-prefix is detected"
 
 mkdir -p "${tmpdir}/rpi-omt-client-main"
-printf '%s\n' \
-    '[workspace]' \
-    '' \
-    '[workspace.package]' \
-    'version = "4.5.6"' >"${tmpdir}/rpi-omt-client-main/Cargo.toml"
+printf '4.5.6\n' >"${tmpdir}/rpi-omt-client-main/VERSION"
 git -C "${tmpdir}/rpi-omt-client-main" init --quiet
 git -C "${tmpdir}/rpi-omt-client-main" \
     -c user.name="Version Test" \

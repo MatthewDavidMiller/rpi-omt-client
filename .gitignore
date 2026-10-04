@@ -15,13 +15,9 @@ build/
 /.codex/
 **/bin/
 **/obj/
-# src/bin is where Cargo expects extra binaries, so exempt it from the
-# build-output rule above, which would otherwise drop Rust sources silently.
-!crates/**/src/bin/
 TestResults/
 
-# Rust profiling and coverage output
-*.rs.bk
+# Profiling and coverage output
 *.profraw
 *.profdata
 perf.data

@@ -1,7 +1,7 @@
 # AGENTS.md
 
 Raspberry Pi OMT Client receives Open Media Transport video and audio and
-presents it directly on HDMI: a Rust 2024 workspace, a shell deployment
+presents it directly on HDMI: a C17 tree, a shell deployment
 capsule, and a container image, targeting Alpine 3.24 aarch64 on a Raspberry
 Pi 5 or Pi 4 Model B.
 

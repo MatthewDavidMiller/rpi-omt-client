@@ -58,12 +58,12 @@ if [[ -n "${password}" ]]; then
 fi
 unset password
 safe_nonempty_file "${OMT_CONFIG_DIR}/web_secret" 256 || {
-    echo "Rust Web secret was not initialized safely" >&2
+    echo "Web secret was not initialized safely" >&2
     exit 1
 }
 chmod 600 "${OMT_CONFIG_DIR}/web_secret"
 safe_nonempty_file "${OMT_CONFIG_DIR}/web_password" 16384 || {
-    echo "Rust Web password was not initialized safely" >&2
+    echo "Web password was not initialized safely" >&2
     exit 1
 }
 chmod 600 "${OMT_CONFIG_DIR}/web_password"

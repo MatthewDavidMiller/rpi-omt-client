@@ -8,13 +8,13 @@
 #
 # A ceiling is a comma-separated list of shapes; a frame is admitted when it
 # fits inside any one of them. That is what lets a Pi 4 take either 1080p30 or
-# 720p60 without inventing a pixel-rate budget. `omt-receiver-core` parses the
+# 720p60 without inventing a pixel-rate budget. `src/receiver_core` parses the
 # same string and owns admission at runtime; the tests below and its own unit
 # tests are the two ends of that contract.
 #
-# The Pi 5 and Pi 4 ceilings have been confirmed on hardware with
-# `cargo test --release -p vmx-decoder --test decode_bench -- --ignored`; the
-# margins are recorded beside each.
+# The Pi 5 and Pi 4 ceilings were confirmed on hardware with the Rust
+# decoder's benchmark; `make -f mk/c.mk BUILD=release bench` is the C
+# decoder's, and is what re-confirms them. The margins are recorded beside each.
 #
 # Every supported board has a dual-band radio, and that is a support criterion
 # rather than a coincidence. Real-world testing showed 2.4 GHz cannot carry an

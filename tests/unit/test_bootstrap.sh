@@ -86,9 +86,9 @@ fi
 # every image with every rule commented out, so `command -v doas` selected the
 # doas branch on exactly the stock hosts that cannot use it, and the deploy
 # died on "doas: Operation not permitted" rather than printing the bootstrap
-# instructions. The Rust deployer runs the same probe and must agree.
-OPS_RS="${ROOT}/crates/omt-deployer-core/src/ops.rs"
-for probe_source in "${DEPLOY}" "${OPS_RS}"; do
+# instructions. The native deployer runs the same probe and must agree.
+OPS_C="${ROOT}/src/deploy/core/ops.c"
+for probe_source in "${DEPLOY}" "${OPS_C}"; do
     [[ -f "${probe_source}" ]] || {
         fail "missing escalation probe source: ${probe_source}"
         continue

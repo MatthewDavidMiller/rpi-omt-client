@@ -26,8 +26,8 @@ fail() {
 }
 bash -n "${BUILD}"
 
-grep -Fxq 'target/' "${ROOT}/.dockerignore" || \
-    fail "container build contexts must exclude the workstation Cargo target directory"
+grep -Fxq 'build/' "${ROOT}/.dockerignore" || \
+    fail "container build contexts must exclude the workstation build directory"
 
 grep -Eq 'gzip -9 -n' "${BUILD}" || \
     fail "the ARM64 archive must be gzip compressed, matching its .tar.gz name"
@@ -39,8 +39,8 @@ grep -Eq 'tar -tzf' "${BUILD}" || \
     fail "the compressed archive must be verified as gzip before it is published"
 grep -Fq 'RECEIVER_SOURCE_FINGERPRINT=' "${BUILD}" || \
     fail "the ARM64 build must fingerprint the receiver source closure"
-grep -Fq 'find .cargo -type f -print0' "${BUILD}" || \
-    fail "the receiver fingerprint must include Cargo build configuration"
+grep -Fq 'find mk src -path src/deploy -prune -o -type f -print0' "${BUILD}" || \
+    fail "the receiver fingerprint must cover the C sources and build rules"
 grep -Fq '"${RPI_OMT_CLIENT_VERSION}" "${receiver_files_fingerprint}"' "${BUILD}" || \
     fail "the receiver fingerprint must include embedded version metadata"
 grep -Fq -- '--build-arg "RECEIVER_SOURCE_FINGERPRINT=${RECEIVER_SOURCE_FINGERPRINT}"' "${BUILD}" || \
@@ -51,15 +51,14 @@ grep -Fq 'LABEL org.rpi-omt-client.receiver-source=${RECEIVER_SOURCE_FINGERPRINT
 fingerprint_labels="$(grep -Fc 'LABEL org.rpi-omt-client.receiver-source=${RECEIVER_SOURCE_FINGERPRINT}' "${DOCKERFILE}")"
 [[ "${fingerprint_labels}" == 2 ]] || \
     fail "both receiver COPY boundaries must be tied to the source fingerprint"
-if grep -Fq 'COPY crates/ crates/' "${DOCKERFILE}"; then
+grep -Fxq 'src/deploy/' "${ROOT}/.dockerignore" || \
     fail "deployer-only edits must not invalidate the ARM64 receiver builder"
-fi
-for receiver_crate in omt-protocol omt-receiver-core vmx-decoder omt-receiver; do
-    grep -Fq "COPY crates/${receiver_crate}/ crates/${receiver_crate}/" "${DOCKERFILE}" || \
-        fail "the receiver builder must copy ${receiver_crate}"
+for tree in mk src; do
+    grep -Fxq "COPY ${tree}/ ${tree}/" "${DOCKERFILE}" || \
+        fail "the C builder must copy ${tree}/"
 done
-grep -Fq 'COPY crates/omt-web/ crates/omt-web/' "${DOCKERFILE}" || \
-    fail "the runtime builder must copy omt-web"
+grep -Fq 'receiver web' "${DOCKERFILE}" || \
+    fail "the C builder must build both appliance binaries"
 
 # The appliance side must not have grown a decompression step of its own:
 # `docker load` detects gzip, and a pipeline through gunzip would break the

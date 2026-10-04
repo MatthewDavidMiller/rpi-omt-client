@@ -36,7 +36,7 @@
 | `OMT_DIAGNOSTICS_HOST_PCAP_METADATA_FILE` | `/host-diagnostics/host-network-pcap.txt` |
 | `OMT_DIAGNOSTICS_HOST_TIMEOUT_SECONDS` | `30`; must not exceed the bundle budget |
 | `OMT_DIAGNOSTICS_HOST_BUDGET_SECONDS` | `25` (host action; exported by the OpenRC watcher — container env only mirrors this into support bundles) |
-| `OMT_DIAGNOSTICS_BUNDLE_BUDGET_SECONDS` | `60`; must stay at most the Rust Web service's bounded collection ceiling of `85` seconds |
+| `OMT_DIAGNOSTICS_BUNDLE_BUDGET_SECONDS` | `60`; must stay at most the Web service's bounded collection ceiling of `85` seconds |
 | `OMT_DIAGNOSTICS_RECEIVE_PROBE` | `1` (enabled); accepts `1/0`, `true/false`, `yes/no`, or `on/off` |
 | `OMT_DIAGNOSTICS_DOWNLOAD_LIMIT` | `10 per hour` |
 | `OMT_DIAGNOSTICS_ACTION_LIMIT` | `30 per hour` |
@@ -51,7 +51,7 @@
 Numeric settings reject malformed, non-finite, and out-of-range values during
 application creation. Bundle budget and host timeout are cross-checked so a
 misconfigured wait cannot exceed the bounded collection budget. The four rate
-limits are parsed by the Rust service during startup, so a typo fails startup
+limits are parsed by the Web service during startup, so a typo fails startup
 instead of silently removing brute-force protection. Legacy
 `OMT_DEBUG_*`,
 `OMT_HOST_DEBUG_*`, and `PIPELINE_STATUS_STALE_SECONDS` variables fail startup
@@ -65,7 +65,7 @@ startup instead of silently enabling the diagnostics receive probe.
 | File | Contract |
 |---|---|
 | `web_secret` | Mode 0600 HMAC secret. An upgrade migrates and removes the legacy `flask_secret` file. |
-| `web_password` | Mode 0600 PBKDF2-SHA256 password hash. The deployer can rotate it atomically from a 12-128 byte password and restarts the service, invalidating existing sessions. Rotation is off by default; the desktop Deploy view has an explicit enable option. Legacy Werkzeug PBKDF2 and scrypt hashes remain accepted. |
+| `web_password` | Mode 0600 PBKDF2-SHA256 password hash. The deployer can rotate it atomically from a 12-128 byte password and restarts the service, invalidating existing sessions. Rotation is off by default; the terminal deployer's Deploy view has an explicit enable option. Legacy Werkzeug PBKDF2 and scrypt hashes remain accepted. |
 | `web_sessions.json` | Schema 2 bounded HMAC-digested session registry |
 | `source_target.json` | Schema 1; either `{"kind":"discovered","name":...}` or `{"kind":"direct","uri":"omt://..."}` |
 | `video_ceiling.json` | Schema 1 operator override of the board decode ceiling |
@@ -144,8 +144,8 @@ System page. `auto` restores the board default. No ceiling may exceed
 Raising a ceiling above the board default is permitted and is not validated:
 a board that cannot decode the format will drop frames rather than refuse them.
 
-Both ceilings are measured, not derived: the Pi 5 decodes the 1080p gradient
+Both ceilings are measured, not derived: the Pi 5 decoded the 1080p gradient
 vector in 6.5 ms against a 16.7 ms budget, and the Pi 4 in 26.4 ms against
-33.3 ms. Re-confirm with
-`cargo test --release -p vmx-decoder --test decode_bench -- --ignored` and lower
-the profile if a board cannot hold its tier.
+33.3 ms. Those figures come from the Rust decoder the C one replaced; re-confirm
+them for the C decoder on each board with `make -f mk/c.mk BUILD=release bench`
+and lower the profile if a board cannot hold its tier.

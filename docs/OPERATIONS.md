@@ -115,8 +115,8 @@ persistent `web_password` value is a one-way hash, not a recoverable copy.
 
 ### Change the Web GUI password
 
-Rotation is optional and off by default. In the desktop deployer, enable
-**Rotate the Web GUI password after deploy** on the **Deploy** view, or open
+Rotation is optional and off by default. In the terminal deployer, enable
+**Also set the Web GUI password** on the **Deploy** view, or open
 **Manage**, enter and confirm a new password, and select **Change Web GUI
 password**. The password must contain 12-128 UTF-8 bytes
 and no control characters. The deployer sends it only over the authenticated
@@ -132,15 +132,15 @@ printf '%s\n' \
   | rpi-omt-deploy --host pi.example --username pi --secrets-stdin web-password
 ```
 
-For root SSH, omit `sudo_password`. Prefer the desktop prompt or a protected
+For root SSH, omit `sudo_password`. Prefer `--interactive-secrets` or a protected
 input source in automation; the literal JSON is only a field-layout example.
 The operation refuses an active `OMT_WEB_PASSWORD` emergency override.
 
 ### Rename the appliance
 
 The name in the Web GUI header and in the `<name>.local` mDNS record is the
-Raspberry Pi's own hostname. Change it from the desktop deployer's **Manage**
-view under **Appliance hostname**, or from the CLI:
+Raspberry Pi's own hostname. Change it from the terminal deployer's **Manage**
+view under **Rename appliance to**, or from the CLI:
 
 ```bash
 printf '%s\n' '{"password":"SSH_PASSWORD","sudo_password":"SUDO_PASSWORD"}' \

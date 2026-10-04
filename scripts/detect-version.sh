@@ -10,9 +10,10 @@ if [[ -n "${RPI_OMT_CLIENT_VERSION:-}" ]]; then
     exit 0
 fi
 
-cargo_file="${PROJECT_ROOT}/Cargo.toml"
-if [[ -f "${cargo_file}" ]]; then
-    project_version="$(sed -n '/^\[workspace\.package\]$/,/^\[/s/^version = "\([^"]*\)"$/\1/p' "${cargo_file}" | head -n 1)"
+# VERSION holds the canonical project version: one line, no prefix.
+version_file="${PROJECT_ROOT}/VERSION"
+if [[ -f "${version_file}" ]]; then
+    project_version="$(head -n 1 "${version_file}" | tr -d '[:space:]')"
     if [[ "${project_version}" =~ ^v?[0-9]+(\.[0-9]+){1,2}([._-][0-9A-Za-z][0-9A-Za-z._-]*)?$ ]]; then
         printf 'v%s\n' "${project_version#v}"
         exit 0

@@ -48,7 +48,7 @@ if git show-ref --verify --quiet "refs/tags/${VERSION}"; then
     TAG_COMMIT="$(git rev-parse --verify "refs/tags/${VERSION}^{commit}")"
     if [[ "${TAG_COMMIT}" != "${HEAD_COMMIT}" ]]; then
         echo "ERROR: ${VERSION} already tags ${TAG_COMMIT}, not HEAD ${HEAD_COMMIT}." >&2
-        echo "Bump workspace.package.version before creating another release." >&2
+        echo "Bump VERSION before creating another release." >&2
         exit 1
     fi
 fi
@@ -90,7 +90,7 @@ for required in \
     "${LINUX_PUBLISH}/bin/rpi-omt-deploy-tui" \
     "${LINUX_PUBLISH}/deployer-sbom.cdx.json" \
     "${WINDOWS_PUBLISH}/bin/rpi-omt-deploy.exe" \
-    "${WINDOWS_PUBLISH}/bin/rpi-omt-deployer.exe" \
+    "${WINDOWS_PUBLISH}/bin/rpi-omt-deploy-tui.exe" \
     "${WINDOWS_PUBLISH}/deployer-sbom.cdx.json"; do
     if [[ ! -f "${required}" || -L "${required}" || ! -s "${required}" ]]; then
         echo "ERROR: Release build did not produce ${required}." >&2
@@ -132,7 +132,9 @@ if gh release view "${VERSION}" >/dev/null 2>&1; then
 fi
 
 release_flags=(--verify-tag --generate-notes --title "${VERSION}")
-if [[ "${VERSION}" =~ ^v0\. ]]; then
+# A 0.x version, or a SemVer pre-release such as 2.0.0-rc.1, is not a stable
+# release, so GitHub must not offer it as the latest one.
+if [[ "${VERSION}" =~ ^v0\. || "${VERSION}" == *-* ]]; then
     release_flags+=(--prerelease)
 fi
 gh release create "${VERSION}" \

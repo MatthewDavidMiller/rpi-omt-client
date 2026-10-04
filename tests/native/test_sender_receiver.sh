@@ -1,5 +1,5 @@
 #!/bin/bash
-# Exercise the real Rust receiver against the real Rust sender over TCP.
+# Exercise the real receiver against the real sender over TCP.
 set -euo pipefail
 
 if [[ $# -ne 2 ]]; then
@@ -58,4 +58,4 @@ for field in \
         exit 1
     }
 done
-echo "Rust sender/receiver probe passed on TCP ${port}."
+echo "Sender/receiver probe passed on TCP ${port}."

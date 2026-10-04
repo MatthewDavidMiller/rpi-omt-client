@@ -35,4 +35,4 @@ These are available for Windows and MacOS and are the recommended way to get sta
 ## In this repository
 
 This tree retains only the upstream MIT license text for provenance. The decode-only
-VMX1 implementation used by the OMT receiver lives in `crates/vmx-decoder/`.
+VMX1 implementation used by the OMT receiver lives in `src/vmx/`.

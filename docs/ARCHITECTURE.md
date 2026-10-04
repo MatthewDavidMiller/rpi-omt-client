@@ -1,12 +1,12 @@
 # Architecture
 
-The appliance is a clean, bounded Rust OMT implementation built around a Rust
-2024 workspace and a decode-only VMX1 port.
+The appliance is a clean, bounded OMT implementation in C17, with a decode-only
+VMX1 port and OpenSSL as its only third-party library.
 
 ```text
 OMT network
-  └─ Rust discovery/receive transport
-       └─ omt-receiver (Rust)
+  └─ discovery/receive transport
+       └─ omt-receiver (C)
             ├─ dependency-free parsing/status core
             ├─ VMX decoder (libvmx)
             ├─ DRM/KMS HDMI presenter
@@ -14,7 +14,7 @@ OMT network
             └─ atomic playback status
 
 HTTPS operator
-  └─ omt-web (Rust, Axum + rustls)
+  └─ omt-web (C, poll loop + OpenSSL TLS)
        ├─ persistent authenticated sessions
        ├─ source/network/diagnostic services
        ├─ About
@@ -28,11 +28,11 @@ unprivileged container
 
 ## Receiver
 
-`crates/omt-receiver` composes Linux adapters around the audited, decode-only
-`vmx-decoder` crate. `omt-protocol` owns wire transport and shared target
-validation; `omt-receiver-core` owns format policy, sanitization, and
-synchronized status projection; `omt-receiver` owns typed CLI parsing and HDMI
-connector selection over the DRM sysfs tree.
+`src/receiver` composes Linux adapters around the audited, decode-only
+decoder in `src/vmx`. `src/protocol` owns wire transport and shared target
+validation; `src/receiver_core` owns format policy, ceilings, and synchronized
+status projection; `src/receiver` owns CLI parsing and HDMI connector
+selection over the DRM sysfs tree.
 `discover` emits bounded JSON, `probe` checks a direct OMT target, and `play`
 owns receive, DRM, ALSA, hotplug, retry, and status publication. Discovered
 names are NFC, have no control characters, and are at most 63 UTF-8 bytes.
@@ -44,13 +44,15 @@ field, and every rejection -- a duplicate of any requested tag, a document type
 declaration, an unknown entity -- still refuses the whole document, so no field
 can be read out of one another field's reader would have discarded.
 
-The mDNS path deserializes Avahi's signals against their full signatures.
-`ItemNew` and `ItemRemove` carry six fields and `ServiceResolver.Found` carries
-eleven; zbus matches a body against a whole tuple's signature rather than a
-prefix of it, so a tuple that stopped one field early did not read part of the
-announcement, it failed outright and the browse ignored every service it was
-started for. The type aliases in `mdns.rs` are named after those interfaces so
-the arity has one place to be wrong. A browse that finds nothing and a browse
+The mDNS path speaks D-Bus itself: `src/receiver/dbus.c` is a first-party wire
+client -- SASL EXTERNAL over the system bus socket, little-endian marshalling
+of only the signatures Avahi's interfaces use, and a 64 KiB message cap -- and
+`src/receiver/mdns_dbus.c` drives Avahi's browser and resolver over it. Each
+signal body is read against its full signature: `ItemNew` and `ItemRemove`
+carry six fields and `ServiceResolver.Found` carries eleven, and a body that
+does not match is refused whole rather than read partway. Resolvers are freed
+with no-reply calls and capped in number, so a busy network cannot grow the
+browse without bound. A browse that finds nothing and a browse
 that cannot parse anything are otherwise indistinguishable from the outside:
 both are an empty list, which is why this survived alongside a working
 transport.
@@ -98,12 +100,14 @@ operator. The ceiling is policy layered above `omt-protocol`'s absolute
 1920x1080@60 limit, which still bounds every allocation, so no ceiling and no
 operator override can change what the decoder is sized for.
 
-Both ceilings are measured rather than reasoned.
-`crates/vmx-decoder/tests/decode_bench.rs` run on the hardware puts the
-three-worker pool -- the row that decides a tier -- at 6.5 ms per 1080p
-gradient frame on the Pi 5 against a 16.7 ms budget, and 26.4 ms on the Pi 4
-against a 33.3 ms one. Both hold, the Pi 4 with the thinner margin, and a Pi 4
-pointed at a 1080p60 sender refuses it with a message naming its own limit.
+Both ceilings are measured rather than reasoned. The decode benchmark run on
+the hardware put the three-worker pool -- the row that decides a tier -- at
+6.5 ms per 1080p gradient frame on the Pi 5 against a 16.7 ms budget, and
+26.4 ms on the Pi 4 against a 33.3 ms one. Those figures were taken with the
+Rust decoder this C port replaced; `tests/c/bench_vmx.c` is its C counterpart
+(`make -f mk/c.mk BUILD=release bench`) and has to be rerun on both boards
+before the margins are claimed for the C decoder. Its NEON kernels are proven
+bit-exact under emulation, which says nothing about their speed.
 
 The colour conversion has an AArch64 kernel for the same reason the inverse DCT
 does. Once the entropy decode is spread over the pool, packing 1080p into the
@@ -201,7 +205,7 @@ covers the 3.5 s Wi-Fi stalls measured against vMix. `control-omt.sh` waits
 eight seconds after SIGTERM so that budget cannot outlive a shutdown.
 
 TCP reads stay greedy: OMT requires the receiver never block when accepting
-data. Delay lives only in a compressed playout queue (`crates/omt-receiver/src/jitter.rs`),
+data. Delay lives only in a compressed playout queue (`src/receiver/jitter.c`),
 operator-configurable from 0 to 8000 ms on the System page and 0 by default.
 Zero is the official `omtplayer` profile (present as soon as a frame arrives).
 With a delay, HDMI and ALSA start after both queues hold that depth. Video then
@@ -369,7 +373,8 @@ that download. Avahi proxy state, diagnostics, and host actions use separate
 least-privilege bind mounts.
 
 The shipped image contains no Python runtime, C/C++ toolchain, or C++ standard
-library. The Rust receiver and Web service are stripped release binaries.
+library. The receiver and Web service are stripped release binaries of a few
+hundred kilobytes each.
 
 `host-reboot.sh` is installed root-owned. It accepts only a four-line
 versioned reboot record from the pre-created mode-0600 request file. It checks
@@ -417,26 +422,43 @@ for state that is meaningless after a restart.
 capsule with normalized nested paths. `deploy/transaction.sh` stages the files
 under a nonce-specific directory, records the transaction's own manifest in a
 durable journal, rejects symlinked ancestors, and can roll back nested paths
-without trusting a later release's manifest. CLI and native GUI deployment hash
+without trusting a later release's manifest. CLI and terminal deployment hash
 every stable local snapshot, verify every remote SHA-256, recover predecessor
 journals with their installed helpers, promote the v3 set, and only then invoke
 `deploy/host/install.sh`.
 
 ## Operator deployment applications
 
-The same Rust deployer workspace builds for the operator's own machine and for
-Windows x86-64. A Linux workstation publishes both: `scripts/check-deployer.sh
---publish` stages the host package, and `scripts/build-windows-deployer.sh`
-cross-compiles the Windows packages. Both consume the same `Cargo.lock`;
-registry packages are checksum locked and Git dependencies are denied.
-`rpi-omt-deploy` provides human and JSON-lines CLI surfaces, while
-`rpi-omt-deployer` presents responsive egui Setup, Connection, Alpine, Deploy, Manage,
-Wi-Fi, Activity, and About views. Both reuse validators and typed management actions
-from `omt-deployer-core`; secrets are zeroized and never accepted through
-arguments or environment variables. That covers every buffer a secret passes
-through, not only the ones it is stored in: the sudo stdin a deployment holds
-for its whole run, the Wi-Fi passphrase handed to the worker thread, and the
-raw `--secrets-stdin` document are all wiped rather than freed intact.
+The same C deployer builds for the operator's own machine and for Windows
+x86-64. A Linux workstation publishes both: `scripts/check-deployer.sh
+--publish` stages the static-PIE musl package, and
+`scripts/build-windows-deployer.sh` cross-compiles the Windows one against the
+pinned OpenSSL. `rpi-omt-deploy` provides human and JSON-lines CLI surfaces,
+while `rpi-omt-deploy-tui` presents Connection, SD card, Alpine, Deploy,
+Manage, Wi-Fi, Activity, and About views in a terminal -- on Linux and, through
+the console's virtual-terminal mode, on Windows. Both run the jobs in
+`src/deploy/core/jobs.c`; secrets are wiped when freed and never accepted
+through arguments or environment variables. That covers every buffer a secret
+passes through, not only the ones it is stored in: the sudo stdin a deployment
+holds for its whole run, the Wi-Fi passphrase handed to the worker thread, the
+raw `--secrets-stdin` document, and the JSON parser's arena are all wiped
+rather than freed intact.
+
+SSH is first-party too (`src/deploy/ssh`), written on OpenSSL's primitives.
+It offers the ML-KEM-768 + X25519 hybrid key exchange first, then Curve25519,
+group exchange, and the RFC 8268 MODP groups; Ed25519, ECDSA, and RSA host
+keys with SHA-2 signatures only; ChaCha20-Poly1305, AES-GCM, and AES-CTR with
+an HMAC-SHA2 tag. There is no CBC, no SHA-1, and no compression. Strict key
+exchange -- the Terrapin countermeasure -- is mandatory: a server that does not
+offer it is refused. Host keys are checked against OpenSSH `known_hosts`
+(plain, wildcard, negated, hashed, and `@revoked` entries) and an unknown or
+changed key is fatal; negotiation prefers a key type the file already trusts
+for that host. User keys load from OpenSSH's own format, passphrase-protected
+ones through a first-party `bcrypt_pbkdf` whose Blowfish tables are generated
+from pi, or from PEM through OpenSSL. Every parser is fuzzed, and
+`tests/integration/test_ssh_client.sh` holds each algorithm, key format,
+upload path, and refusal to a real OpenSSH server.
+
 The Alpine view uploads `deploy/host/setup-sys.sh` over SFTP or a `cat` exec
 fallback (factory headless sshd often has no SFTP), sets hostname, IPv4 DHCP,
 optional or already-associated Wi-Fi, user `pi`, root/`pi` passwords, US HTTPS
@@ -484,16 +506,16 @@ Fixed management actions cross the same privilege boundary as deployment and
 Wi-Fi: a non-root SSH account uses its bounded sudo-password channel, while a
 root session runs the fixed command directly. Neither account needs membership
 in the Docker group. Status, logs, service restart, and a deferred OS reboot
-are typed actions; the GUI requires a second confirmation before the reboot.
+are typed actions; the terminal application requires a second confirmation before the reboot.
 Host-key verification defaults to OpenSSH's
-`~/.ssh/known_hosts`; the CLI and GUI can select another verified file without
+`~/.ssh/known_hosts`; the CLI and terminal application can select another verified file without
 relaxing strict checking.
 
 An untouched Alpine host has neither sudo nor an active doas rule. When the
-Alpine root password is supplied (the GUI Alpine view, or `bootstrap_root_password`
+Alpine root password is supplied (the Alpine view, or `bootstrap_root_password`
 on the CLI), the native deployers bootstrap through `su` on a bounded SSH PTY. Terminal echo is disabled before the secret
 is sent; only the fixed staged bootstrap is run, and subsequent deployment
-returns to the administrator's sudo credential. The root secret is zeroized
+returns to the administrator's sudo credential. The root secret is wiped
 with the other authentication buffers. Remote commands retain a one-minute
 idle timeout but allow the package installer up to thirty minutes while it is
 still producing progress; the previous two-minute total ceiling could abort a
@@ -507,8 +529,8 @@ stock Alpine can describe its inert rule set as authorization-capable and then
 refuse the actual non-PTY command.
 
 The deployer carries the appliance instead of pointing at it.
-`crates/omt-deployer-core/build.rs` reads `deploy/manifest-v3.txt` and emits one
-`include_bytes!` per member, the ARM64 image archive included, so the operator's
+`tools/gen/gen_capsule.py` reads `deploy/manifest-v3.txt` and emits one
+assembler `.incbin` per member, the ARM64 image archive included, so the operator's
 executable holds every byte the Raspberry Pi receives. That makes the image a
 build input of the deployer -- `make build-arm64` before `make build-deployer`,
 which both build scripts stop and say -- and it makes a deployer of one release
@@ -518,12 +540,12 @@ the mid-upload re-verification that a working tree needs does not apply to them,
 while the Pi's own `sha256sum` is still checked against a digest taken before the
 first byte was sent.
 
-A deployment therefore asks nothing of the machine it runs on, and the GUI has
-no workstation setup at all. The exception is the `--project` developer
+A deployment therefore asks nothing of the machine it runs on, and the terminal
+application has no workstation setup at all. The exception is the `--project` developer
 override, which sources the whole capsule from a checkout and, with
 `--rebuild-image`, builds that tree's archive first. Only then does what the
-machine provides become part of the contract, and `omt-deployer-core`'s `tools`
-module owns it: executable discovery that follows `PATHEXT`, the Windows shell
+machine provides become part of the contract, and `src/deploy/core/tools.c`
+owns it: executable discovery that follows `PATHEXT`, the Windows shell
 locations Git for Windows installs into, the winget packages that supply a
 missing prerequisite, and the plan for invoking the image build. The CLI's
 `prerequisites` subcommand renders that probe; with no project root it reports
@@ -534,51 +556,32 @@ than through GNU Make. The Makefile recipe is a call to the script, so make
 without a POSIX shell hands it to `cmd.exe`, and make with one adds nothing --
 which leaves Git for Windows and Docker Desktop as the only two prerequisites
 an operator has to install. Resolving the build program before spawning it is
-what replaced a bare `ErrorKind::NotFound`, whose text named neither the tool
+what replaced a bare "program not found", whose text named neither the tool
 nor the remedy. Nothing in that path is observable from a Linux publisher, so
 every Windows rule is a pure function tested with the Windows answer supplied,
 and the behaviour of the resulting `.exe` on a real desktop remains a
 validation boundary.
 
-How the deployer's window answers a display is a set of rules, not a set of
-widgets, so they live outside its view alongside the button-gating rules:
-window fit against the monitor, when that fit is still the opening rather
-than a drag across displays, the readable column width, when labels pair
-with their fields, and the zoom bounds. Each is only observable on hardware --
-a 200%-scaled laptop, a 4K desktop, a window dragged to its minimum -- so
-keeping the arithmetic out of egui is what lets `cargo test` cover it without
-one. The opening fit retries until the window is observed to fit, and gives
-up on wall time rather than a frame count, because a `request_repaint` loop
-can burn frames faster than the compositor applies `InnerSize`. The zoom
-bounds are applied to the keyboard shortcuts as well as the
-buttons, which is why egui's own handler is turned off: two clamps for one
-control is the mistake the gating rules exist to prevent.
-
-The native window is not centred by eframe. Both `NativeOptions.centered` and
-`ViewportCommand::center_on_screen` take the primary monitor's size and use
-half of it as an absolute desktop position, never adding that monitor's
-origin, which on a mixed-DPI Windows desk opens the window on the wrong
-display. The position is left unset: Windows then uses `CW_USEDEFAULT` (the
-cursor's display, at that display's scale) and the Linux or macOS window
-manager places a new window on the active display. `fit_window` then shrinks
-to `current_monitor` in the window's own points.
-
-Windows sets per-monitor DPI awareness v2 from winit at process start, so the
-cross-built `.exe` needs no side-by-side manifest and
-`scripts/verify-windows-deployer.sh` gains no assertion for it -- that gate
-reads PE headers and can never observe DPI behaviour. The Linux publisher
-cannot run a Windows or macOS window, so behaviour on those platforms is
-reasoned from the pinned upstream sources rather than observed.
+The terminal application draws into a cell buffer each frame and writes only
+the cells that changed, so a slow SSH session repaints what moved rather than
+the screen. A view with more rows than the terminal scrolls to the focused row
+instead of hiding rows that stay focusable -- on a short terminal that used to
+mean an invisible button that erases the Pi's disk -- and the label gutter
+follows the width so a path being typed stays readable. On Windows the same
+renderer runs through the console's virtual-terminal mode, with key input read
+as console records so F-keys and Ctrl+arrows arrive the same in conhost and
+Windows Terminal. That behaviour on a real Windows desktop is a validation
+boundary: the Linux publisher verifies the `.exe`'s headers, not its console.
 
 ## Trust and legal surfaces
 
 `LICENSE` governs project-owned code. `THIRD_PARTY_NOTICES.txt` covers shipped
-runtime dependencies. The Web and Rust deployer About pages display those
-texts and their build version; the deployer compiles them into its executable
-with `include_str!` rather than reading files beside it, so a
-relocated binary still states its terms. The container publisher generates a
-CycloneDX inventory from `Cargo.lock` and the appliance's installed Alpine
-package database; the deployer publisher inventories its Cargo closure.
+runtime dependencies. The Web and deployer About views display those texts and
+their build version; the deployer compiles them into its executable with the
+capsule rather than reading files beside it, so a relocated binary still states
+its terms. The container publisher generates a CycloneDX inventory of both
+first-party binaries and the appliance's installed Alpine package database; the
+deployer publisher inventories OpenSSL and the static C runtime it carries.
 
 The host is Alpine Linux 3.24 aarch64 in persistent sys mode on a Raspberry Pi
 5 or Pi 4 Model B. One `linux-rpi` kernel covers both. A dual-band radio is a
@@ -586,7 +589,7 @@ support criterion: the appliance is 5 GHz only, because real-world testing
 showed 2.4 GHz packet loss makes OMT playback unusable, so a board that cannot
 leave 2.4 GHz cannot be a host. The installer rejects unsupported distributions
 and board models, and RAM-backed diskless roots; `deploy/lib/board-profile.sh`
-and `crates/omt-deployer-core/src/ops.rs` hold the same table for the host-side
+and `src/deploy/core/ops.c` hold the same table for the host-side
 and workstation-side gates. OpenRC supervises the filtered Avahi proxy and two
 inotify watchers; the Docker workload remains detached with its own restart
 policy.

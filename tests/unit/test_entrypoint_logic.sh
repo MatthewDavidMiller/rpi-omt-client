@@ -25,7 +25,7 @@ run_entrypoint() {
     OMT_STORAGE_PATH="${CASE_DIR}/config/omt" \
     OMT_WEB_CMD="${CASE_DIR}/omt-web" \
     CONTROL_OMT_CMD="${CASE_DIR}/control" \
-    REAL_OMT_WEB="${ROOT}/target/debug/omt-web" \
+    REAL_OMT_WEB="${REAL_OMT_WEB:?set REAL_OMT_WEB to an omt-web binary (tools/test-web.sh does)}" \
     ENTRYPOINT_WEB_RECORD="${CASE_DIR}/web.args" \
     ENTRYPOINT_CONTROL_RECORD="${CASE_DIR}/control.args" \
     WEB_PORT=5443 \
@@ -62,7 +62,7 @@ run_entrypoint_with_runtime() {
     OMT_RUNTIME_DIR="$1" \
     OMT_WEB_CMD="${CASE_DIR}/omt-web" \
     CONTROL_OMT_CMD="${CASE_DIR}/control" \
-    REAL_OMT_WEB="${ROOT}/target/debug/omt-web" \
+    REAL_OMT_WEB="${REAL_OMT_WEB:?set REAL_OMT_WEB to an omt-web binary (tools/test-web.sh does)}" \
     ENTRYPOINT_WEB_RECORD="${CASE_DIR}/web.args" \
     ENTRYPOINT_CONTROL_RECORD="${CASE_DIR}/control.args" \
     WEB_PORT=5443 \

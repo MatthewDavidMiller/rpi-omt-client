@@ -38,24 +38,11 @@ PYTHON_VENV="${OMT_PYTHON_VENV:-${PROJECT_ROOT}/tests/.venv}"
 
 cd "${PROJECT_ROOT}"
 
-if command -v cargo >/dev/null 2>&1; then
-    echo "Running rustfmt and strict Clippy..."
-    cargo fmt --all -- --check
-    cargo clippy --workspace --all-targets --locked \
-        --exclude rpi-omt-deployer -- -D warnings
-    # The egui deployer is a Windows artifact and is linted against the target
-    # it actually ships for. It cannot ride the workspace pass above: that one
-    # builds omt-receiver, which binds ALSA and does not cross-compile to
-    # Windows. Without this the largest single file in the workspace goes
-    # unlinted, since `desktop` is off by default.
-    cargo clippy -p rpi-omt-deployer --all-targets --locked \
-        --target x86_64-pc-windows-gnu \
-        --features rpi-omt-deployer/desktop -- -D warnings
-    echo "Running Rust supply-chain gates..."
-    "${SCRIPT_DIR}/check-supply-chain.sh"
-else
-    missing_tool "cargo"
-fi
+echo "Running the supply-chain gate..."
+"${SCRIPT_DIR}/check-supply-chain.sh"
+
+echo "Running the C static gates..."
+"${SCRIPT_DIR}/check-c.sh"
 
 mapfile -d '' -t SHELL_SCRIPTS < <(
     find "${PROJECT_ROOT}" \

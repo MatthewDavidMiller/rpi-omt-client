@@ -54,6 +54,8 @@ echo "PASS: every tests/unit shell suite is wired into the runner"
 stub_paths=(
     scripts/lint.sh
     tools/test-receiver.sh
+    tools/test-web.sh
+    tools/test-fuzz.sh
     tests/integration/test_container_smoke.sh
     tests/integration/test_omt_network.sh
 )
@@ -93,12 +95,6 @@ cat > "${fixture_root}/test-bin/docker" <<'EOF'
 exit 0
 EOF
 chmod +x "${fixture_root}/test-bin/docker"
-
-cat > "${fixture_root}/test-bin/cargo" <<'EOF'
-#!/bin/bash
-exit 0
-EOF
-chmod +x "${fixture_root}/test-bin/cargo"
 
 cat > "${fixture_root}/tests/.venv/bin/python" <<'EOF'
 #!/bin/bash

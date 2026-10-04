@@ -1,8 +1,8 @@
 # OMT Test Sender
 
-The repository includes a first-party Rust OMT source for repeatable receiver
-testing. It uses the same workspace protocol definitions as the receiver and
-adds no third-party package dependency. It streams:
+The repository includes a first-party C OMT source for repeatable receiver
+testing. It links the same protocol module as the receiver and includes
+nothing but the platform and the repository's own code. It streams:
 
 - reference-encoded VMX1 1920x1080 progressive video at 60 fps, alternating
   the committed gradient and flat conformance frames;
@@ -16,28 +16,28 @@ printed direct `omt://` URI so the endpoint under test is unambiguous.
 
 ## Build and platform support
 
-A normal native build needs only the repository's existing Rust toolchain:
+A normal native build needs only the toolbox:
 
 ```bash
 make build-omt-sender
 ```
 
-The build is locked to `Cargo.lock` and stages the executable under
-`.build/omt-test-sender`. It fetches no OMT source tree, SDK image, codec, or
-sample media: both VMX frames are compiled from `tests/vectors/vmx/`, and FPA1
-audio is produced by Rust code.
+The build stages the executable under `.build/omt-test-sender`. It fetches no
+OMT source tree, SDK image, codec, or sample media: both VMX frames are embedded
+from `tests/vectors/vmx/` with `.incbin`, and FPA1 audio is generated in C.
 
-For Alpine aarch64 on either a Pi 4 or Pi 5, build the static musl artifact:
+For Alpine aarch64 on either a Pi 4 or Pi 5, build the static-PIE musl
+artifact:
 
 ```bash
-make build-omt-sender OMT_SENDER_TARGET=aarch64-unknown-linux-musl
+make build-omt-sender OMT_SENDER_TARGET=aarch64
 ```
 
-This is the same target, linker, and self-contained linking model used for the
-receiver. `make install` provisions the Rust target. The result is:
+It is built in the same emulated Alpine release the receiver is built on. The
+result is:
 
 ```text
-.build/omt-test-sender/artifacts/aarch64-unknown-linux-musl/bin/omt-test-sender
+.build/omt-test-sender/artifacts/aarch64-alpine-linux-musl/bin/omt-test-sender
 ```
 
 A cross-built executable is deliberately not selected by the workstation's
@@ -118,8 +118,8 @@ selection, or HDMI audio when the Pi reports no connected display.
 
 ## Test coverage
 
-`cargo test -p omt-test-sender` parses generated frames with `omt-protocol` and
-checks CLI and timestamp behavior. `tests/unit/test_omt_test_sender.sh` gates
+`tests/native/test_sender_receiver.sh` parses what the sender streams with the
+receiver itself. `tests/unit/test_omt_test_sender.sh` gates
 the dependency contract, ARM64 build path, lifecycle safety, and firewall
 scope. `make test-receiver` also runs a real sender-to-receiver TCP probe before
 cross-checking the ARM64 receiver decoder under emulation.

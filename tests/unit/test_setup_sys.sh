@@ -11,7 +11,7 @@ SETUP_SYS="${ROOT}/deploy/host/setup-sys.sh"
 BOOTSTRAP="${ROOT}/deploy/host/bootstrap.sh"
 INSTALL="${ROOT}/deploy/host/install.sh"
 MANIFEST="${ROOT}/deploy/manifest-v3.txt"
-OPS_RS="${ROOT}/crates/omt-deployer-core/src/ops.rs"
+OPS_C="${ROOT}/src/deploy/core/ops.c"
 
 failures=0
 fail() {
@@ -257,7 +257,7 @@ grep -A80 '^free_boot_media()' "${SETUP_SYS}" | grep 'dev_on_disk' >/dev/null ||
 grep -qxF 'deploy/host/setup-sys.sh' "${MANIFEST}" || \
     fail "deploy/host/setup-sys.sh must ship in the v3 manifest"
 
-grep -Eq 'setup-sys\.sh|alpine_setup' "${OPS_RS}" || \
+grep -Eq 'setup-sys\.sh|alpine_setup' "${OPS_C}" || \
     fail "the native deployer must invoke setup-sys.sh"
 
 # The three host scripts that fetch packages must name the same US HTTPS
@@ -357,10 +357,11 @@ service_freqs="$(
 [[ "${service_freqs}" == "${setup_freqs}" ]] || \
     fail "service-install.sh frequency list does not match setup-sys.sh"
 ops_freqs="$(
-    sed -n 's/^ *"\(5180 [0-9 ]*\)"$/\1/p' "${OPS_RS}"
+    sed -n '/^#define WIFI_FREQ_LIST/,/[^\\]$/p' "${OPS_C}" |
+        sed -n 's/^ *"\(.*\)" *\\\{0,1\}$/\1/p' | tr -d '\n' | sed 's/ *$//'
 )"
 [[ "${ops_freqs}" == "${setup_freqs}" ]] || \
-    fail "ops.rs frequency list does not match setup-sys.sh"
+    fail "ops.c frequency list does not match setup-sys.sh"
 
 # Both writers in this script apply it, not just the one that creates a profile
 # from scratch.

@@ -8,10 +8,11 @@ Build the gate toolbox once:
 make install
 ```
 
-Docker or Podman is the only thing the gates need from a workstation. Rust
-1.97.1 with rustfmt and Clippy, the Windows GNU and musl targets, cargo-deny,
-cargo-vet, Hadolint, ShellCheck, Trivy, mingw-w64, and the Python tooling all
-live inside `tools/toolbox/Dockerfile`; nothing is installed onto the host.
+Docker or Podman is the only thing the gates need from a workstation. GCC and
+Clang with the sanitizer and libFuzzer runtimes, clang-format, cppcheck,
+OpenSSL, OpenSSH's server (the reference the SSH client is held to), mingw-w64,
+Hadolint, ShellCheck, Trivy, and the Python tooling all live inside
+`tools/toolbox/Dockerfile`; nothing is installed onto the host.
 The container build context excludes `target/`: these workstation artifacts
 are rebuilt inside the pinned builder and can otherwise add tens of GiB to
 every context upload after Linux and Windows validation.
@@ -19,9 +20,9 @@ every context upload after Linux and Windows validation.
 when a pinned version changes, because the image tag is a content hash of the
 Dockerfile, the Python requirements, and the pinned installers.
 
-The toolbox is built on the same digest-pinned `rust:1.97.1-alpine3.23` image
-the appliance compiles with, so the gates and the shipped receiver resolve one
-compiler rather than two that can drift. Its musl host is also what makes the
+The toolbox is built on the same digest-pinned `alpine:3.23.5` image the
+appliance compiles with, so the gates and the shipped receiver resolve one
+compiler and one OpenSSL rather than two that can drift. Its musl host is also what makes the
 static Linux deployer a native build rather than a cross-compile.
 
 The repository is bind-mounted at its own absolute path rather than at a fixed
@@ -85,9 +86,11 @@ change crosses a boundary.
 
 | Changed | Run |
 |---|---|
-| `crates/omt-web/`, its templates or static assets | `make test-web`; `make test` when behavior changes materially |
-| Receiver crates, `omt-protocol`, `vmx-decoder`, or the status contract | `make test-receiver` **and** `make test-web` — both assert `tests/schema/playback-status-vectors.json` |
-| Deployer core, SSH, CLI, TUI, or the egui view | `make test-deployer` **and** `make build-windows-deployer` — one source set ships as two packages |
+| `src/web/`, `src/crypto/`, its templates or static assets | `make test-web`; `make test` when behavior changes materially |
+| `src/receiver*`, `src/protocol`, `src/vmx`, or the status contract | `make test-receiver` **and** `make test-web` — both assert `tests/schema/playback-status-vectors.json` |
+| `src/common` | `make test-c`, `make lint`, and the narrow gates of whatever links it |
+| `src/deploy/` (core, SSH, CLI, TUI) | `make test-deployer` **and** `make build-windows-deployer` — one source set ships as two packages |
+| A parser of untrusted input | its suite **and** `make fuzz-smoke` |
 | Shell scripts, installer, OpenRC, or HDMI configuration | `make test-quick` |
 | `deploy/Dockerfile`, entrypoint, or image contents | `make test`, or `./scripts/toolbox.sh ./scripts/test-local.sh --full` |
 | Anything spanning several of the above | `make test-quick`, then `make test` |
@@ -96,16 +99,21 @@ change crosses a boundary.
 ## What each gate covers
 
 For full network, codec, audio, and real-Pi playback validation, build the
-first-party Rust sender with `make build-omt-sender`. Its source-scoped firewall
+first-party C sender with `make build-omt-sender`. Its source-scoped firewall
 setup, lifecycle commands, ARM64 build, and end-to-end checklist are documented
-in [OMT_TEST_SENDER.md](OMT_TEST_SENDER.md). The normal Rust gate compiles and
-tests it; the shell gate also asserts that its manifest adds no third-party
-package dependency. Before calling a sender build Pi-compatible, build
-`aarch64-unknown-linux-musl` and run it on a real Alpine aarch64 Pi. Pi 4 and Pi
+in [OMT_TEST_SENDER.md](OMT_TEST_SENDER.md). The receiver gate compiles it and
+runs it against the receiver; the shell gate also asserts that it includes
+nothing but the platform and the repository's own modules. Before calling a
+sender build Pi-compatible, build it with `--target aarch64` and run it on a
+real Alpine aarch64 Pi. Pi 4 and Pi
 5 share that userspace ABI, while receiver throughput and HDMI behavior still
 require a display-path check on the board being qualified.
 
-`make test-web` builds and tests the Rust HTTPS service. It covers target and
+`make test-web` builds the C HTTPS service under AddressSanitizer and
+UndefinedBehaviorSanitizer, runs its unit suite, drives the built binary
+through the full HTTPS contract in `tests/native/test_web.sh`, and runs the
+container entrypoint suite against it. The server has limits the Rust one
+lacked: header and body timeouts, a connection cap, and a header-size cap. It covers target and
 network validation, state, legacy and current password hashes, persistent
 authentication, secure cookies, CSRF/rate limits, security headers, every
 authenticated page, diagnostics, and runtime adapters.
@@ -114,15 +122,17 @@ Subprocess regressions cover Web deadlines after the direct child exits while a
 descendant retains its pipes, running-child timeouts, interrupted reads, and
 simultaneous output beyond both capture limits. The Web runner uses nonblocking
 reads without reader threads. Deployer tests ensure output is drained after the
-capture limit and cancellation remains active during post-exit pipe collection;
-its cancellable asynchronous readers are dropped with the operation.
+capture limit and cancellation remains active during post-exit pipe collection,
+killing the whole process group.
 Malformed PBKDF2 digest tests reject empty, short, and overlong SHA-256 digests.
 
 Scaler tests compare enlargement and reduction against pixel-centre reference
 sampling with padded strides and untouched bars, including repeated output
 rows. Invalid placement sizes and overflowing strides must return errors.
 
-`make test-receiver` builds and tests the Rust receiver crates. It exercises
+`make test-receiver` builds and tests the C receiver, every suite sanitized,
+and then repeats the C suites on AArch64 under emulation so the NEON kernels
+are checked bit for bit against the portable ones. It exercises
 shared target vectors, bounded wire parsing, CLI exit-status contracts, detail
 sanitization and JSON escaping, playback state/order, heartbeat publication,
 and atomic status replacement. HDMI connector selection is driven against a
@@ -139,32 +149,34 @@ Every stream must decode to the exact bytes the reference produced, in both
 UYVY and BGRX, at one, two, three, and eight workers, so a worker count can
 never change an output byte. The same suite covers repeated decode lifecycles,
 every truncation of a valid stream, and periodic bit flips through the payload,
-none of which may panic, read out of bounds, or allocate past the documented
-caps. The worker-pool unit suite also forces a channel failure after another
-worker has started, proving that the pool drains every outstanding raw-pointer
-job before returning the error.
+none of which may crash, read out of bounds, or allocate past the documented
+caps -- AddressSanitizer would report each. `tests/fuzz/fuzz_vmx.c` feeds the
+decoder arbitrary streams beyond that.
 
-`make test-deployer` builds the Rust core, CLI, and GUI and tests validation,
-quoting, SHA-256, secure tokens, Wi-Fi PSK vectors, bounded processes, and
-manifest-v3 path safety. It also holds the embedded capsule to the manifest it
-ships: that the compiled-in member list is exactly `deploy/manifest-v3.txt`,
-that every embedded name passes the real `valid_manifest_name` rule rather than
-the copy of it in `build.rs`, and that the appliance archive is present, over a
-mebibyte, and gzip. Because the capsule is a build input, this suite needs
-`omt-client-arm64.tar.gz` in the project root; `make build-arm64` produces it
-and both deployer build scripts stop with that instruction when it is absent. The egui application is built with its `desktop`
-feature for the test run as well as the publish build, so the view is compiled
-and linted rather than skipped, and the rules that enable its buttons are
-tested against the same core validators the buttons' actions use. The same run
-covers the rules that answer the display: that a window never opens larger than
-the monitor it landed on and never grows to reach a floor, that an unreadable
-monitor size changes nothing, that the opening fit is not spent after the
-window has moved or after a short wall-clock launch budget, that a resize is
-retried until the window is observed to fit, that the window is not centred
-on the primary monitor, that the form column stops
-widening, that labels stack at the narrowest window, and that zoom steps by a
-tenth, saturates at its bounds, and returns to exactly 100%. None of that
-needs a display attached.
+`make test-deployer` runs `scripts/check-deployer.sh`. Its suites run under
+ASan and UBSan: the core (validation, quoting, SHA-256, secure tokens, Wi-Fi
+PSK vectors, bounded processes, manifest-v3 path safety, the operations' fixed
+scripts and parsers), the SSH client's parts (wire encoding, every cipher and
+MAC round trip, `known_hosts` matching including hashed and revoked entries,
+`bcrypt_pbkdf` against its published vector, user-key signing), and the
+terminal application (input decoding, editing, confirmations, scrolling, and
+rendering checked as text). A separate suite holds the real embedded capsule to
+the manifest it ships: that the compiled-in member list is exactly
+`deploy/manifest-v3.txt`, that every embedded name passes the real
+`dp_valid_manifest_name` rule rather than the generator's copy of it, and that
+the appliance archive is present, over a mebibyte, and gzip. Because the
+capsule is a build input, that suite needs `omt-client-arm64.tar.gz` in the
+project root; `make build-arm64` produces it and both deployer build scripts
+stop with that instruction when it is absent.
+
+`tests/integration/test_ssh_client.sh` then holds the SSH client to OpenSSH's
+own server: an unprivileged `sshd` on loopback, restricted to one algorithm at
+a time, proves every key exchange (ML-KEM hybrid, Curve25519, group exchange,
+the MODP groups), cipher, MAC, and host-key algorithm interoperates; it then
+covers passphrase-protected OpenSSH keys, RSA and PEM keys, both upload paths
+with byte-exact contents, the PTY marker gating `su` needs, and the refusal of
+unknown, changed, revoked, and missing host keys. The gate finishes with the
+static-PIE release build, its ELF header verification, and the CLI contract.
 
 The deployer core tests also pin the initial SD-card configuration to LF line
 endings, hex SSIDs, derived PSKs, uppercase regulatory countries, and an Alpine
@@ -182,8 +194,8 @@ checks, and the one-object-per-line
 `--json` surface. Nothing in it reaches the network -- every invocation is
 local or refused before a connection is opened. The SSH adapter rejects missing
 default or explicitly selected `known_hosts` files and unknown or changed host
-keys; legacy SHA-1 host-key hashes and CBC ciphers are excluded from
-negotiation. An empty SSH password is valid for factory Alpine `root` and tries
+keys; SHA-1 signatures and MACs, CBC ciphers, and compression are not offered,
+and strict key exchange is required. An empty SSH password is valid for factory Alpine `root` and tries
 `none`, password, and keyboard-interactive auth. Privileged command construction is tested for password-backed
 sudo, passwordless sudo, direct root sessions, and the separate root-secret
 gate used to bootstrap untouched Alpine through `su`.
@@ -199,22 +211,23 @@ as populated files, unsafe modes, and symlinks. This protects the fixed-inode
 publication boundary without depending on the human-readable file description
 returned by a particular `stat` implementation.
 
-The supply-chain gate rejects every tracked C/C++ source, Git Cargo dependency,
-or unlocked registry package. `scripts/check-supply-chain.sh` also runs
-`cargo deny` and `cargo vet` against `deny.toml` and `supply-chain/`. Container
+The supply-chain gate, `scripts/check-supply-chain.sh`, allowlists every
+system header a source may include -- so a third-party library cannot arrive as
+a stray `#include` -- pins the Windows OpenSSL by version and SHA-256 to the 3.5
+LTS series, and requires every base image to be pinned by digest. Container
 integration checks that neither Python nor a C++ standard-library payload ships.
 
 The ARM64 artifact contract also pins the receiver-source fingerprint at both
 of Podman's cross-stage COPY boundaries. A receiver change must alter the
 published runtime image instead of merely recompiling an unused builder layer.
-The same contract refuses a broad `COPY crates/ crates/`, which would make
-unrelated deployer edits invalidate the slow ARM64 receiver build.
+The same contract requires `src/deploy/` to stay out of the build context,
+which would otherwise make unrelated deployer edits invalidate the slow ARM64
+receiver build.
 
-Restricted or offline builders use a trusted Cargo registry mirror populated
-with the exact checksums in `Cargo.lock`.
-
-`make build-windows-deployer` cross-compiles the deployment CLI and egui
-application for `x86_64-pc-windows-gnu` and publishes the package. Every
+`make build-windows-deployer` cross-compiles the deployment CLI and terminal
+application for `x86_64-w64-mingw32` against the pinned OpenSSL, which
+`scripts/build-openssl.sh` builds once from its verified tarball, and publishes
+the package. Every
 non-quick local run performs the same cross build with `--no-publish`, which
 compiles and header-verifies the executables without staging a package, so a
 broken cross build stops a commit while both published packages still come off
@@ -335,7 +348,7 @@ decode throughput, so a pass on one is not evidence for another:
 6. confirm the board's decode ceiling with
 
    ```bash
-   cargo test --release -p vmx-decoder --test decode_bench -- --ignored --nocapture
+   make -f mk/c.mk BUILD=release bench
    ```
 
    A cross-built standalone benchmark can read staged vectors from an explicit
@@ -417,12 +430,12 @@ physical tier must state the skipped Pi-specific checks.
 
 `tests/unit/test_cross_file_invariants.py` asserts the constants one file
 computes with and another supplies: the host diagnostics budget spelled out in
-the Rust Web settings, `install.sh`, and `host-diagnostics.sh`, and the HDMI connector
+the Web settings, `install.sh`, and `host-diagnostics.sh`, and the HDMI connector
 names the container launcher, the receiver CLI, and the status contract must
 all accept.
 
 `tests/schema/omt-target-vectors.json` and
-`tests/schema/playback-status-vectors.json` are consumed by the Rust tests.
+`tests/schema/playback-status-vectors.json` are consumed by the C suites.
 Both binaries share `omt-protocol` target validation, while the receiver and
 Web suites assert the status projection. The target vectors publish forbidden
 source-name code points as ranges and the compiled table is asserted against
@@ -435,12 +448,12 @@ staleness threshold.
 
 ## Lint and legal gates
 
-`./scripts/lint.sh` runs rustfmt, Clippy, the supply-chain gate, Bash syntax,
+`./scripts/lint.sh` runs the C static gates (`scripts/check-c.sh`), the supply-chain gate, Bash syntax,
 ShellCheck, Hadolint, yamllint, Ruff, and mypy. The legal gate is:
 
 ```bash
 python3 scripts/check-legal-notices.py
 ```
 
-It checks shipped Rust/Alpine dependencies, legal/About surfaces, OMT
+It checks that OpenSSL, the Unicode data, and the static runtimes carry their notices, legal/About surfaces, OMT
 provenance, SBOM hooks, and the deployment capsule.

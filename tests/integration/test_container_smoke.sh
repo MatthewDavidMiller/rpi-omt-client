@@ -100,9 +100,13 @@ fi
 # Join the caller's bridge when it named one. scripts/toolbox.sh does, because
 # the appliance has to be reachable from inside the toolbox and a rootless
 # Podman container left on its default `pasta` network has no address to reach.
+#
+# The alias is dotted on purpose: curl 8.22 stores a cookie for a dotless host
+# but never sends it back, which made every login lose its CSRF nonce. A name
+# under the reserved .internal domain resolves the same way and keeps cookies.
 smoke_network=()
 if [[ -n "${OMT_SMOKE_NETWORK:-}" ]]; then
-    smoke_network=(--network "${OMT_SMOKE_NETWORK}")
+    smoke_network=(--network "${OMT_SMOKE_NETWORK}" --network-alias "${CONTAINER_NAME}.internal")
 fi
 
 # The tmpfs at /run/omt mirrors deploy/compose.yml: per-boot receiver state is
@@ -131,7 +135,7 @@ if [[ "${OMT_SMOKE_VIA_ENGINE_NETWORK:-0}" == "1" ]]; then
         # the restart this suite performs after rotating the password: rootless
         # Podman hands the container a different address when it comes back, so
         # an address captured here stops answering half way through the run.
-        BASE_URL="https://${CONTAINER_NAME}:5000"
+        BASE_URL="https://${CONTAINER_NAME}.internal:5000"
     else
         # No named network, so no name resolution either: Docker's default
         # bridge is the legacy one, which has no embedded DNS. The address is

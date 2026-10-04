@@ -1,9 +1,9 @@
 {
   "comment": [
-    "Shared contract between the Rust status producer and the Python status consumer.",
-    "Producer: crates/omt-receiver-core/src/lib.rs",
-    "Consumer: crates/omt-web/src/playback.rs",
-    "Python requires set(document) == fields exactly, so a field added on only one",
+    "Shared contract between the receiver's status producer and the Web status consumer.",
+    "Producer: src/receiver_core/status.c",
+    "Consumer: src/web/playback.c",
+    "The consumer requires set(document) == fields exactly, so a field added on only one",
     "side would make every status record unparseable and pin the dashboard to",
     "'Playback status stale'. Both test suites assert against this file.",
     "'events' names PlaybackStateModel methods, applied in order.",

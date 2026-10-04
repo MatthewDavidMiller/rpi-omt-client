@@ -1,0 +1,4 @@
+# libFuzzer allocates its Fuzzer object in its own main() and never frees it;
+# LeakSanitizer reports that at exit. Only libFuzzer's driver file is
+# suppressed, so a leak in any project parser still fails the run.
+leak:FuzzerMain.cpp

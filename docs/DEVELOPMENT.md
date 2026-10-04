@@ -6,34 +6,40 @@ and [CODEBASE_REFERENCE.md](CODEBASE_REFERENCE.md) for which file owns what.
 
 ## Workspace at a glance
 
-A Rust 2024 workspace, a shell deployment capsule, and a container image.
+A C17 tree, a shell deployment capsule, and a container image. OpenSSL is the
+only third-party library; ALSA (on the appliance), the C library, the Linux
+uapi, and Win32 are the platform.
 
-| Crate | Owns |
+| Directory | Owns |
 |---|---|
-| `crates/omt-protocol` | OMT wire transport and shared target validation |
-| `crates/vmx-decoder` | Decode-only VMX1, worker pool, AArch64 NEON kernels |
-| `crates/omt-receiver-core` | Format policy, sanitization, status projection |
-| `crates/omt-receiver` | Linux adapters: DRM/KMS, ALSA, discovery, the `omt-receiver` binary |
-| `crates/omt-web` | HTTPS operator GUI (Axum + rustls), diagnostics, host actions |
-| `crates/omt-test-sender` | First-party OMT A/V test sender |
-| `crates/omt-deployer-core` | Deployment jobs, SSH/SFTP, capsule, SD-card prep, workstation probes |
-| `crates/rpi-omt-deploy` | Deployer CLI (human and JSON-lines surfaces) |
-| `crates/rpi-omt-deploy-tui` | Linux terminal deployer, static musl |
-| `crates/rpi-omt-deployer` | Windows egui deployer |
+| `src/common` | Bounded buffers, strict JSON and XML, NFC, file and process I/O, randomness |
+| `src/protocol` | OMT wire transport and shared target validation |
+| `src/vmx` | Decode-only VMX1, worker pool, AArch64 NEON kernels |
+| `src/receiver_core` | Format policy, video ceilings, status projection |
+| `src/receiver` | Linux adapters: DRM/KMS, ALSA, discovery, D-Bus, the `omt-receiver` binary |
+| `src/sender` | First-party OMT A/V test sender |
+| `src/crypto` | The OpenSSL EVP adapters the Web frontend and deployer share |
+| `src/web` | HTTPS operator GUI (poll loop, OpenSSL TLS), templates, diagnostics |
+| `src/deploy/core` | Deployment jobs, the platform layer, SD-card prep, workstation probes |
+| `src/deploy/ssh` | First-party SSH and SFTP client on OpenSSL primitives |
+| `src/deploy/capsule` | The embedded manifest-v3 capsule |
+| `src/deploy/cli` | `rpi-omt-deploy`, human and JSON-lines surfaces |
+| `src/deploy/tui` | `rpi-omt-deploy-tui`, the terminal deployer for Linux and Windows |
+| `mk/` | The makefiles: flags, libraries, products |
 
 | Directory | Owns |
 |---|---|
 | `deploy/` | Dockerfile, container scripts, host installer, OpenRC services, manifest-v3 capsule |
 | `scripts/` | Build, gate, deploy, and release entry points |
-| `tests/` | Shell, Python, and native suites plus the shared schema vectors |
+| `tests/` | C suites (`tests/c`), fuzz targets (`tests/fuzz`), shell, Python, and native suites, schema vectors |
+| `tools/gen/` | Build-time generators: NFC tables, templates, Blowfish tables, the capsule |
 | `tools/toolbox/` | The image every gate runs inside |
 
-Both deployer frontends run the same jobs from
-`crates/omt-deployer-core/src/jobs.rs`, so a deployment means one thing
-regardless of which one the operator ran. Linux gets a terminal frontend rather
-than a GUI because egui `dlopen`s the operator's glibc-linked graphics driver,
-which no single portable binary can carry; Windows keeps the GUI, where
-`opengl32.dll` is a system library.
+Both deployer frontends run the same jobs from `src/deploy/core/jobs.c`, so a
+deployment means one thing regardless of which one the operator ran. The
+deployer ships as a CLI and a terminal application on both Linux and Windows:
+a terminal frontend opens no graphics stack, so each is one self-contained
+file, and it works over SSH.
 
 ## Workstation contract
 
@@ -57,15 +63,16 @@ wants it locally, but nothing requires it. See
 # Build
 make build-arm64              # appliance image -> omt-client-arm64.tar.gz
 make build-amd64              # local test image
-make build-deployer           # Linux CLI + TUI, static musl
-make build-windows-deployer   # mingw-w64 cross build
+make build-deployer           # Linux CLI + TUI, static-PIE musl
+make build-windows-deployer   # Windows CLI + TUI, mingw-w64 with the pinned OpenSSL
 make build-omt-sender         # OMT A/V test sender
 
 # Verify
-make test-web | test-receiver | test-deployer    # narrow suites
+make test-web | test-receiver | test-deployer    # narrow suites (sanitized)
+make test-c | fuzz-smoke      # every C suite under ASan+UBSan; every fuzz target
 make test-quick               # every unit suite, no container engine (~1m)
 make test                     # + Windows cross build, amd64 image, ARM64 builder stage
-make lint                     # rustfmt, clippy, supply chain, shell, docker, yaml, python, legal
+make lint                     # C static gates, supply chain, shell, docker, yaml, python, legal
 make security-scan            # Trivy filesystem + image
 
 # Run and ship
@@ -82,30 +89,41 @@ of minutes and should never start as a side effect.
 ## Invariants
 
 These are enforced by gates, not by convention — a change that breaks one fails
-a commit rather than shipping.
+a commit rather than shipping. C has no borrow checker, so the gates carry the
+weight the compiler used to.
 
 - **Bounded by default.** Every read, subprocess, allocation, retry, and rate
-  limit carries an explicit ceiling. Unbounded input handling is a defect here
-  even where growth looks impossible.
-- **No unsafe.** `unsafe_code` is `forbid` workspace-wide. `vmx-decoder` alone
-  downgrades it to `deny` for its AArch64 kernels, confining
-  `#![allow(unsafe_code)]` to `crates/vmx-decoder/src/pool.rs`,
-  `crates/vmx-decoder/src/convert/neon.rs`, and
-  `crates/vmx-decoder/src/idct/neon.rs`, with `unsafe_op_in_unsafe_fn` denied.
-- **Clippy `pedantic`, `unwrap_used`, and `expect_used` are `deny`** across the
-  workspace; the allow-list in `Cargo.toml` is the whole exemption set.
-- **No C or C++ sources, no Git dependencies, no unlocked registry packages.**
-  `scripts/check-no-c-sources.sh` and `scripts/check-supply-chain.sh`
-  (`cargo deny` and `cargo vet` over `deny.toml` and `supply-chain/`) enforce
-  it; a new dependency needs a `Cargo.lock` entry and a cargo-vet record.
+  limit carries an explicit ceiling. Buffers are `omt_buf`s created with the
+  most they may ever hold; parsing goes through `omt_span` cursors whose every
+  read is length-checked. Unbounded input handling is a defect here even where
+  growth looks impossible.
+- **The unsafe libc calls do not compile.** `src/common/banned.h` is
+  force-included into every file and poisons `strcpy`, `sprintf`, `strtok`,
+  `atoi`, `gets`, `alloca`, and the rest; `scripts/check-c.sh` refuses
+  `rand`. Length arithmetic uses the checked `omt_add`/`omt_mul` helpers.
+- **Warnings are errors, under both compilers.** `mk/flags.mk` builds with
+  `-Werror -Wconversion -Wsign-conversion` and the rest, hardened
+  (`-ftrivial-auto-var-init=zero`, stack protector and clash protection,
+  `_FORTIFY_SOURCE=3`, full RELRO, PIE). `scripts/check-c.sh` builds with GCC
+  and Clang at debug and release, runs the GCC static analyzer and cppcheck,
+  and checks formatting and every generated source.
+- **Every suite runs sanitized.** The C suites run under AddressSanitizer and
+  UndefinedBehaviorSanitizer with leak detection; every parser that reads
+  untrusted input has a libFuzzer target in `tests/fuzz`, and `make
+  fuzz-smoke` runs them all.
+- **No third-party code but OpenSSL.** `scripts/check-supply-chain.sh`
+  allowlists every system header a source may include, pins the Windows
+  OpenSSL by version and SHA-256 to the 3.5 LTS series, and requires every
+  base image to be pinned by digest. `scripts/check-no-c-sources.sh` keeps C
+  in `src/`, `tests/c`, and `tests/fuzz`.
 - **The security posture is load-bearing.** HTTPS, authentication, CSRF, rate
-  limiting, and source-name validation are asserted by tests. Relaxing one is a
-  deliberate design change, not a refactor.
-- **One version.** `workspace.package.version` in `Cargo.toml` is canonical,
-  `scripts/detect-version.sh` resolves it, and intra-workspace path
-  dependencies must pin that exact version. Artifacts stamp it in at build time,
-  which is why publishing runs from `.githooks/post-commit` rather than the
-  commit gate.
+  limiting, source-name validation, and the deployer's strict host-key and
+  strict-key-exchange SSH are asserted by tests. Relaxing one is a deliberate
+  design change, not a refactor.
+- **One version.** `VERSION` is canonical, `scripts/detect-version.sh`
+  resolves it, and the build stamps it into every binary. Artifacts carry the
+  version of their commit, which is why publishing runs from
+  `.githooks/post-commit` rather than the commit gate.
 - **Shared contracts move together.** `tests/schema/omt-target-vectors.json` and
   `tests/schema/playback-status-vectors.json` are asserted by both the receiver
   and Web suites, and `tests/unit/test_cross_file_invariants.py` pins constants

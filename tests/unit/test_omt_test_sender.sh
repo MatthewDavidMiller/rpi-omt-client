@@ -1,5 +1,5 @@
 #!/bin/bash
-# Contract and lifecycle tests for the first-party Rust OMT A/V sender.
+# Contract and lifecycle tests for the first-party C OMT A/V sender.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -7,7 +7,7 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 BUILD_SCRIPT="${PROJECT_ROOT}/scripts/build-omt-test-sender.sh"
 RUN_SCRIPT="${PROJECT_ROOT}/scripts/omt-test-sender.sh"
 FIREWALL_SCRIPT="${PROJECT_ROOT}/scripts/configure-omt-test-sender-firewall.sh"
-SENDER_MANIFEST="${PROJECT_ROOT}/crates/omt-test-sender/Cargo.toml"
+SENDER_SOURCE="${PROJECT_ROOT}/src/sender/main.c"
 MAKEFILE="${PROJECT_ROOT}/Makefile"
 failures=0
 
@@ -23,42 +23,21 @@ for script in "${BUILD_SCRIPT}" "${RUN_SCRIPT}" "${FIREWALL_SCRIPT}"; do
     [[ -x "${script}" ]] && pass "$(basename "${script}") is executable" ||
         fail "$(basename "${script}") is executable"
 done
-# Read the version rather than restating it. What this checks is that the path
-# edge carries the workspace version, which is what keeps cargo-deny's
-# multiple-versions ban meaningful for registry crates -- a literal here would
-# instead make every release bump fail this gate until somebody edited it.
-WORKSPACE_VERSION="$(
-    sed -n '/^\[workspace\.package\]$/,/^\[/s/^version = "\([^"]*\)"$/\1/p' \
-        "${PROJECT_ROOT}/Cargo.toml"
-)"
-[[ -n "${WORKSPACE_VERSION}" ]] || {
-    echo "FAIL: Cargo.toml declares no [workspace.package] version" >&2
-    exit 1
-}
-require_literal "${SENDER_MANIFEST}" \
-    "omt-protocol = { version = \"${WORKSPACE_VERSION}\", path = \"../omt-protocol\" }" \
-    "sender uses the repository protocol crate at the workspace version"
-dependency_count="$(awk '
-    /^\[dependencies\]$/ { dependencies=1; next }
-    /^\[/ { dependencies=0 }
-    dependencies && /^[A-Za-z0-9_-]+[[:space:]]*=/ { count++ }
-    END { print count + 0 }
-' "${SENDER_MANIFEST}")"
-if [[ "${dependency_count}" -eq 1 ]]; then
-    pass "sender adds no third-party package dependency"
+# The sender is first-party C over the repository's own protocol module.
+sender_includes="$(grep -hoE '^#include [<"][^>"]+[>"]' "${SENDER_SOURCE}" | sort -u)"
+if grep -qvE '^#include (<[a-z/_]+\.h>|"(common|protocol)/[a-z_]+\.h")$' <<<"${sender_includes}"; then
+    fail "sender includes only the platform and the repository's own modules"
 else
-    fail "sender adds no third-party package dependency"
+    pass "sender includes only the platform and the repository's own modules"
 fi
-require_literal "${BUILD_SCRIPT}" 'cargo build --locked --release' \
-    "sender build is locked Rust"
-require_literal "${BUILD_SCRIPT}" 'aarch64-unknown-linux-musl' \
-    "Pi 4 and Pi 5 share an explicit ARM64 musl build"
-require_literal "${BUILD_SCRIPT}" 'CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=rust-lld' \
-    "ARM64 sender uses the receiver-compatible linker"
-require_literal "${BUILD_SCRIPT}" '[[ "${requested_target}" == *-unknown-linux-musl ]]' \
-    "every musl sender build is self-contained"
-require_literal "${BUILD_SCRIPT}" 'RUSTFLAGS=-Clink-self-contained=yes' \
-    "musl sender builds do not require a host musl loader"
+require_literal "${SENDER_SOURCE}" '#include "protocol/omt.h"' \
+    "sender uses the repository protocol module"
+require_literal "${BUILD_SCRIPT}" 'make -s -f mk/c.mk BUILD=release' \
+    "sender build uses the C release build"
+require_literal "${BUILD_SCRIPT}" '--platform linux/arm64' \
+    "Pi 4 and Pi 5 share an explicit ARM64 build"
+require_literal "${BUILD_SCRIPT}" 'LDFLAGS=-static-pie' \
+    "the ARM64 sender is self-contained"
 require_literal "${MAKEFILE}" '$(TOOLBOX) ./scripts/build-omt-test-sender.sh' \
     "the documented sender build needs only the toolbox"
 require_literal "${FIREWALL_SCRIPT}" 'port port=6400-6600 protocol=tcp' \

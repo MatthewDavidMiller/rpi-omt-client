@@ -39,6 +39,6 @@ setuptools==83.0.0
 sortedcontainers==2.4.0
 toml==0.10.2
 typing-extensions==4.15.0
-urllib3==2.7.0
+urllib3==2.8.0
 wrapt==2.1.2
 yamllint==1.38.0

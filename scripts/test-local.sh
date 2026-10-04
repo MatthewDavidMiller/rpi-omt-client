@@ -78,10 +78,10 @@ run_test() {
 }
 
 # ─── Unit Tests ───────────────────────────────────────────────
-run_test "Rust Web frontend" cargo test --locked -p omt-web
-run_test "Rust Web executable" cargo build --locked -p omt-web
+# tools/test-web.sh also runs tests/unit/test_entrypoint_logic.sh, against the
+# omt-web binary it has just built, which is why that suite has no line here.
+run_test "Web frontend (C, sanitized)" "${PROJECT_ROOT}/tools/test-web.sh"
 run_test "OMT Controller" "${PROJECT_ROOT}/tests/unit/test_control_omt.sh"
-run_test "Entrypoint Logic" "${PROJECT_ROOT}/tests/unit/test_entrypoint_logic.sh"
 run_test "Start OMT Script" "${PROJECT_ROOT}/tests/unit/test_start_omt.sh"
 run_test "OMT Test Sender" "${PROJECT_ROOT}/tests/unit/test_omt_test_sender.sh"
 run_test "Host Diagnostics" "${PROJECT_ROOT}/tests/unit/test_host_diagnostics.sh"
@@ -109,14 +109,17 @@ run_test "Python Tooling" "${PROJECT_ROOT}/tests/unit/test_python_tooling.sh"
 run_test "Test Runner Arguments" "${PROJECT_ROOT}/tests/unit/test_test_runner_args.sh"
 run_test "Supply Chain Guardrails" "${PROJECT_ROOT}/tests/unit/test_supply_chain.sh"
 run_test "Lint and syntax" "${PROJECT_ROOT}/scripts/lint.sh"
-run_test "Receiver Core" "${PROJECT_ROOT}/tools/test-receiver.sh"
+run_test "Receiver (C, sanitized)" "${PROJECT_ROOT}/tools/test-receiver.sh"
+if [[ "${QUICK_MODE}" != "true" ]]; then
+    run_test "C Fuzz Smoke" "${PROJECT_ROOT}/tools/test-fuzz.sh"
+fi
 
-# ─── Rust Deployer Tests ─────────────────────────────────────
+# ─── Deployer Tests ──────────────────────────────────────────
 # No mode publishes a deployer package. A package carries the version its
 # commit carries, so `make build-deployer` and `make build-windows-deployer`
 # own publishing and the post-commit hook runs them; this runner only has to
 # prove both builds compile and pass their contracts.
-run_test "Deployer Core, CLI, and GUI" "${PROJECT_ROOT}/scripts/check-deployer.sh"
+run_test "Deployer Core, SSH, CLI, and TUI" "${PROJECT_ROOT}/scripts/check-deployer.sh"
 if [[ "${QUICK_MODE}" != "true" ]]; then
     # Both deployer packages come off this one Linux workstation, so the
     # Windows build is compiled and header-verified in the same gate that

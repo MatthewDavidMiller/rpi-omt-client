@@ -3,7 +3,6 @@ docs/
 tests/
 scripts/*
 !scripts/generate-runtime-sbom.py
-!scripts/cargo_lock.py
 # tools/toolbox/Dockerfile builds from this same context and reads its pinned
 # tool versions out of the tree rather than restating them. These enter the
 # context only; the appliance image never copies them, so its contents and its
@@ -16,7 +15,10 @@ scripts/*
 *.tar.gz
 output/
 build/
-# Cargo artifacts are rebuilt inside the pinned builder and can occupy tens of GiB.
+# The deployer runs on a workstation, never in the appliance; keeping it out of
+# the context means a deployer-only edit cannot invalidate the ARM64 builder.
+src/deploy/
+# Build trees are rebuilt inside the pinned builder.
 target/
 .build/
 work/

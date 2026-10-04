@@ -30,7 +30,7 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 source "${SCRIPT_DIR}/docker-test-env.sh"
 
 DOCKERFILE="${PROJECT_ROOT}/tools/toolbox/Dockerfile"
-CARGO_VOLUME="${OMT_TOOLBOX_CARGO_VOLUME:-omt-toolbox-cargo}"
+HOME_VOLUME="${OMT_TOOLBOX_HOME_VOLUME:-omt-toolbox-home}"
 TOOLBOX_REPO=omt-toolbox
 GATE_NETWORK="${OMT_TOOLBOX_NETWORK:-omt-toolbox-net}"
 
@@ -101,7 +101,20 @@ build_toolbox() {
     echo "=== Building toolbox image ${tag} ===" >&2
     # The build context is the repository root: the image copies the pinned
     # installer scripts and the Python requirements out of the tree itself.
+    #
+    # The platform is explicit because the base images are pinned by manifest
+    # digest, and Podman resolves a digest to whatever variant it already holds
+    # locally: after an ARM64 appliance build or the emulated C suites have
+    # pulled the arm64 variant, an unqualified build would quietly produce an
+    # arm64 toolbox that cannot run the host's own gates.
+    local platform
+    case "$(uname -m)" in
+        x86_64 | amd64) platform="linux/amd64" ;;
+        aarch64 | arm64) platform="linux/arm64" ;;
+        *) echo "ERROR: unsupported workstation architecture $(uname -m)" >&2; return 1 ;;
+    esac
     container_engine_build \
+        --platform "${platform}" \
         -f "${DOCKERFILE}" \
         -t "${tag}" \
         "${PROJECT_ROOT}"
@@ -145,7 +158,7 @@ main() {
     local -a engine_args=(
         run --rm
         -v "$(container_engine_volume "${PROJECT_ROOT}" "${PROJECT_ROOT}")"
-        -v "${CARGO_VOLUME}:/cargo"
+        -v "${HOME_VOLUME}:/toolbox-home"
         # The host's /tmp, for the same reason the repository is mounted at its
         # own path. Gates build fixtures under `mktemp -d` and bind-mount them
         # into containers they start; those paths are resolved by the host
@@ -172,7 +185,7 @@ main() {
         --network "${GATE_NETWORK}"
         -e "OMT_SMOKE_NETWORK=${GATE_NETWORK}"
         -w "${PROJECT_ROOT}"
-        -e HOME=/cargo
+        -e HOME=/toolbox-home
     )
 
     # The same CPU budget the image builds take, for the compiling and linting

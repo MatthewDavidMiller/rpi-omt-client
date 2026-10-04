@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import sys
-import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -22,38 +21,37 @@ def require_text(path: Path, value: str) -> None:
 
 
 def main() -> int:
-    notices = (ROOT / "THIRD_PARTY_NOTICES.txt").read_text(encoding="utf-8").lower()
-    for package in (
-        "serde/serde_json",
-        "clap",
-        "unicode-normalization",
-        "zeroize",
-        "egui",
-        "eframe",
-        # The Linux deployer's frontend. Shipped in the same package as the
-        # Windows one, so it belongs in the same list.
-        "ratatui",
-        "crossterm",
+    notices_text = (ROOT / "THIRD_PARTY_NOTICES.txt").read_text(encoding="utf-8")
+    notices = notices_text.lower()
+    # The third-party code the binaries contain: OpenSSL everywhere, the
+    # Unicode data in the appliance, musl and the mingw runtime in the static
+    # deployers. Each needs its licence text, not only its name.
+    for required in (
+        "openssl",
+        "apache license",
+        "unicode license v3",
+        "musl libc",
+        "mingw-w64 runtime",
+        "gcc runtime library",
     ):
-        if package not in notices:
-            fail(f"Native deployer dependency is missing from notices: {package}")
-    lock = tomllib.loads((ROOT / "Cargo.lock").read_text(encoding="utf-8"))
-    registry_packages = [package for package in lock["package"] if "source" in package]
-    if not registry_packages or any("checksum" not in package for package in registry_packages):
-        fail("Cargo registry graph is not completely checksum locked")
+        if required not in notices:
+            fail(f"THIRD_PARTY_NOTICES.txt omits a shipped component: {required}")
+    for retired in ("cargo.lock", "egui", "ratatui", "rustls"):
+        if retired in notices:
+            fail(f"THIRD_PARTY_NOTICES.txt still lists a retired component: {retired}")
 
     # Every About surface an operator can reach: the appliance's Web page and
-    # both deployer frontends. The terminal one was left out of this list while
-    # its About view carried no legal text at all, which is the drift the list
-    # exists to catch.
+    # the deployer's terminal view, which reproduces LICENSE and the notices
+    # embedded through the capsule.
     for path in (
         ROOT / "LICENSE",
-        ROOT / "crates/omt-web/templates/about.html",
-        ROOT / "crates/rpi-omt-deployer/src/main.rs",
-        ROOT / "crates/rpi-omt-deploy-tui/src/ui.rs",
+        ROOT / "src/web/templates/about.html",
     ):
         require_text(path, COPYRIGHT)
     require_text(ROOT / "LICENSE", "MIT License")
+    require_text(ROOT / "src/deploy/tui/ui.c", "dp_license_text(")
+    require_text(ROOT / "src/deploy/tui/ui.c", "dp_notices_text(")
+    require_text(ROOT / "tools/gen/gen_capsule.py", "THIRD_PARTY_NOTICES.txt")
 
     require_text(ROOT / "third_party/omt/libvmx/LICENSE.txt", "MIT License")
     for component in ("libomtnet", "libvmx", "omtplayer"):
@@ -63,7 +61,6 @@ def main() -> int:
 
     dockerfile = (ROOT / "deploy/Dockerfile").read_text(encoding="utf-8").lower()
     for required in (
-        "cargo.lock",
         "third_party_notices.txt",
         "generate-runtime-sbom.py",
         "runtime-sbom.cdx.json",
@@ -82,8 +79,7 @@ def main() -> int:
     if missing:
         fail(f"deployment manifest omits legal artifacts: {sorted(missing)}")
 
-    count = len(registry_packages)
-    print(f"Legal notice check passed: {count} checksum-locked Rust packages covered.")
+    print("Legal notice check passed.")
     return 0
 
 

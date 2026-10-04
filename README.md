@@ -1,9 +1,10 @@
 # Raspberry Pi OMT Client
 
 Raspberry Pi OMT Client receives Open Media Transport (OMT) video and audio on
-a Raspberry Pi and presents it directly on HDMI. It combines a bounded
-Rust 2024 OMT receiver, direct DRM/KMS video output, ALSA audio, a hardened
-Rust HTTPS Web GUI, and a portable native deployment GUI.
+a Raspberry Pi and presents it directly on HDMI. It combines a bounded C OMT
+receiver, direct DRM/KMS video output, ALSA audio, a hardened HTTPS Web GUI,
+and a self-contained deployer for Linux and Windows. Everything is first-party
+C; OpenSSL is the only third-party library.
 
 The supported appliance hosts are the Raspberry Pi 5 and Raspberry Pi 4
 Model B, each running Alpine Linux 3.24 aarch64 in persistent `sys` mode. The
@@ -36,20 +37,19 @@ embeds it: run `make build-arm64` first, or the deployer build stops and says
 so. Each executable carries the whole manifest-v3 capsule, so an operator needs
 that one file and no checkout.
 
-The Linux build stages a CLI and a terminal application, both linked fully
-static against musl, plus a CycloneDX SBOM, in `.build/deployer-publish/`.
-Static linking is why the Linux deployer is a terminal application rather than
-a GUI: egui reaches the screen by `dlopen`ing libEGL, libGL, libX11, and
-libwayland-client, which are the operator's graphics driver and are linked
-against that machine's glibc. A terminal frontend opens nothing, so one binary
-runs on every distribution -- glibc and musl alike -- and works over SSH.
-`scripts/verify-linux-deployer.sh` reads that guarantee back out of the ELF
-headers rather than trusting the build flags.
+The Linux build stages a CLI and a terminal application, both static-PIE
+binaries against musl with OpenSSL linked in, plus a CycloneDX SBOM, in
+`.build/deployer-publish/`. A terminal frontend opens no graphics stack, so one
+binary runs on every distribution -- glibc and musl alike -- and works over
+SSH. `scripts/verify-linux-deployer.sh` reads that guarantee back out of the
+ELF headers rather than trusting the build flags.
 
-`make build-windows-deployer` cross-compiles the CLI and the egui application
-for Windows x86-64 with mingw-w64 into `.build/deployer-publish-windows/`,
-where `opengl32.dll` is a system library and the GUI costs nothing. Both
-frontends run the same jobs from `omt-deployer-core`.
+`make build-windows-deployer` cross-compiles the same CLI and terminal
+application for Windows x86-64 with mingw-w64 against a checksum-pinned OpenSSL
+3.5 LTS, into `.build/deployer-publish-windows/`; they import only Windows'
+own DLLs. Both frontends run the same jobs from `src/deploy/core/jobs.c`, and
+their SSH client is first-party, built on OpenSSL's primitives and held to a
+real OpenSSH server by the gates.
 
 Docker or Podman is the only thing any of this needs from a workstation:
 `make install` builds the toolbox image that carries every compiler, linter,
@@ -122,7 +122,7 @@ Changing it:
 - [Architecture](docs/ARCHITECTURE.md) — runtime design and the reasoning behind each bound
 - [Codebase reference](docs/CODEBASE_REFERENCE.md) — file-to-responsibility map
 - [Testing](docs/TESTING.md) — gates, hooks, release pipeline, hardware tier
-- [OMT test sender](docs/OMT_TEST_SENDER.md) — first-party Rust test sender
+- [OMT test sender](docs/OMT_TEST_SENDER.md) — first-party C test sender
 
 ## License
 

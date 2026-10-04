@@ -112,9 +112,9 @@ ssh -t <admin>@<ip> "su -c '/bin/sh /tmp/bootstrap.sh'"
 After bootstrap, `sudo` works and every later deploy needs only the SSH user's
 sudo password.
 
-## Rust deployment applications
+## Deployment applications
 
-Build the deployer for the current Linux or Windows host:
+Build the deployer for Linux:
 
 ```bash
 make build-deployer
@@ -127,37 +127,32 @@ machine:
 make build-windows-deployer
 ```
 
-That target cross-compiles with Rust's `x86_64-pc-windows-gnu` target and
-stages both `rpi-omt-deploy.exe` and the egui `rpi-omt-deployer.exe` with the
-license, notices, and CycloneDX SBOM.
+That target cross-compiles with mingw-w64 against a checksum-pinned OpenSSL
+3.5 LTS and stages `rpi-omt-deploy.exe` and `rpi-omt-deploy-tui.exe` with the
+license, notices, and CycloneDX SBOM. Both import only Windows' own DLLs.
 
-The Linux package is different by design: `rpi-omt-deploy` and the terminal
-`rpi-omt-deploy-tui`, both static musl binaries with no shared-library
+The Linux package is the same pair: `rpi-omt-deploy` and the terminal
+`rpi-omt-deploy-tui`, both static-PIE musl binaries with no shared-library
 dependencies at all. The same file runs on Ubuntu, Debian, RHEL, Fedora, Arch,
 and Alpine, needs no runtime to be installed first, and runs over SSH -- which
-is usually how a rack-mounted Pi is reached. There is no Linux GUI: egui would
-`dlopen` the operator's glibc-linked graphics driver and tie the binary to a
-glibc floor, which is exactly the portability this avoids.
-`make install` provisions the cross toolchain along with the rest of the local
-gate tooling.
+is usually how a rack-mounted Pi is reached. The terminal application opens no
+graphics stack, which is what lets one binary run everywhere; on Windows it runs
+in Windows Terminal or the console host.
 
-Building on Windows itself still works: run the commands from a Bash
-environment (Git Bash or MSYS2) with GNU Make and Rust 1.97.1,
-Python 3, and Docker Desktop's Linux engine on `PATH`. Either path emits the
-CLI and egui executables; the appliance build itself
-still runs entirely in the pinned Linux containers.
+Every build runs in the pinned Linux containers, so a Windows workstation
+publishes nothing itself; it runs the published executables.
 
 ### What the deployer carries
 
-The deployer *is* the appliance. `crates/omt-deployer-core/build.rs` compiles
-every member of `deploy/manifest-v3.txt` into the executable, the ARM64 image
+The deployer *is* the appliance. The build compiles every member of
+`deploy/manifest-v3.txt` into the executable with `tools/gen/gen_capsule.py`, the ARM64 image
 archive included, so an operator receives one file and needs no checkout, no
 archive copied in beside it, and no build tooling of any kind. The deployer
 version and the capsule version cannot disagree, because they are the same
 artifact.
 
-Both applications report what they carry: the GUI on its Deploy and About
-views, and the CLI without a connection at all.
+Both applications report what they carry: the terminal application on its
+About view, and the CLI without a connection at all.
 
 ```bash
 rpi-omt-deploy check
@@ -176,7 +171,7 @@ from that tree instead of the embedded one, and `--rebuild-image` additionally
 rebuilds the ARM64 archive there first. It is all-or-nothing on purpose --
 mixing this binary's host scripts with a working tree's image would deploy a
 combination nobody built. Only this path needs local tooling, and only then
-does the Setup report list any:
+does `prerequisites` list any:
 
 | Entry | Needed for | Windows |
 |---|---|---|
@@ -208,53 +203,50 @@ that VM restarts; a `--rebuild-image` deployment registers it again first. On
 Linux the handler belongs in the host's own kernel, where
 `make setup-arm64-emulation` installs it persistently and verifies it as root.
 
-Run `.build/deployer-publish/bin/rpi-omt-deploy-tui` on Linux, or
-`rpi-omt-deployer.exe` on Windows, with a Pi key already trusted in `~/.ssh/known_hosts` and
-administrator SSH/sudo credentials. Nothing else: the capsule is inside it. The Connection view
-accepts an optional sudo password and an optional alternate `known_hosts` path,
-each with a Browse button; the CLI equivalents are the `sudo_password` field in
-`--secrets-stdin` and `--known-hosts <path>`. Factory Alpine images accept `root`
-with an empty SSH password; leave that field blank until Alpine setup has set
-one. The Alpine view's root password is the bootstrap secret for first Deploy
-when the SSH account is not root (`bootstrap_root_password` in the CLI). Connect validates Alpine 3.24
-aarch64 and a supported device-tree model.
+Run `rpi-omt-deploy-tui` (or `rpi-omt-deploy-tui.exe` on Windows) with a Pi
+key already trusted in `~/.ssh/known_hosts` and administrator SSH/sudo
+credentials. Nothing else: the capsule is inside it. F1-F8 switch views, Tab
+and Enter move between fields and run the focused action, and secrets are
+masked until `Ctrl+R`. The Connection view accepts an optional sudo password
+and an optional alternate `known_hosts` path; the CLI equivalents are the
+`sudo_password` field in `--secrets-stdin` and `--known-hosts <path>`. Factory
+Alpine images accept `root` with an empty SSH password; leave that field blank
+until Alpine setup has set one. The Alpine view's root password is the
+bootstrap secret for first Deploy when the SSH account is not root
+(`bootstrap_root_password` in the CLI). Connect validates Alpine 3.24 aarch64
+and a supported device-tree model.
 The Alpine view runs `setup-alpine` equivalent configuration and a persistent
 `sys` install: hostname, optional Wi-Fi (a blank SSID keeps an existing
 boot-partition association), DHCP for IPv4, user `pi` in `wheel`,
 root and `pi` passwords, and US HTTPS apk mirrors. It erases the boot disk and
-reboots, so both deployers confirm it before it starts: the GUI with a
-**Confirm Alpine install** button, the terminal application with a `y`/`n`
-prompt. Deploy uploads, verifies, and installs the embedded capsule, naming
+reboots, so the terminal application confirms it with a `y`/`n` prompt before
+it starts. Deploy uploads, verifies, and installs the embedded capsule, naming
 the archive it carries before it sends it; the only field is the remote
-directory. Web GUI password
-rotation is off by default; enable **Rotate the Web GUI password after deploy**
-on that view to replace the generated credential as part of the same job.
-Manage reads
-container status/logs or restarts the OpenRC service through sudo for a
-non-root SSH account. Restart uses the service boundary so it can also start a
-freshly installed appliance whose container has not been created yet.
+directory. Web GUI password rotation is off by default; enable **Also set the
+Web GUI password** on that view to replace the generated credential as part of
+the same job.
+Manage reads container status/logs or restarts the OpenRC service through sudo
+for a non-root SSH account. Restart uses the service boundary so it can also
+start a freshly installed appliance whose container has not been created yet.
 Manage also offers a confirmed operating-system reboot. A successful Deploy
 already reboots to apply kernel, firmware, and KMS settings, so that reboot
 does not need a separate SSH session. The same view can change the Web GUI
 password or rename the appliance later without redeploying.
-Wi-Fi updates the running
-`wpa_supplicant` through its control socket and stores a derived WPA PSK rather
-than sending the plaintext passphrase to a command line. Existing profiles are
-preserved by default. Clear **Preserve existing Wi-Fi profiles** to leave only
-the submitted profile; when immediate connection is enabled, the new profile
-must associate before the old profiles are removed. Clear **Connect immediately
-after saving** to prepare the appliance for a different location without trying
-the new network. That pauses automatic association, so perform a deferred
-replacement over Ethernet or expect a Wi-Fi SSH session to disconnect.
+Wi-Fi updates the running `wpa_supplicant` through its control socket and
+stores a derived WPA PSK rather than sending the plaintext passphrase to a
+command line. Existing profiles are preserved by default. Clear **Keep other
+saved profiles** to leave only the submitted profile; when immediate connection
+is enabled, the new profile must associate before the old profiles are removed.
+Clear **Connect now** to prepare the appliance for a different location without
+trying the new network. That pauses automatic association, so perform a
+deferred replacement over Ethernet or expect a Wi-Fi SSH session to disconnect.
 
 About shows `LICENSE` and `THIRD_PARTY_NOTICES.txt` from inside the executable:
-`include_str!` compiles both texts in, so the page cannot go blank
+both texts are compiled in with the capsule, so the view cannot go blank
 because the binary was copied somewhere without them. The published packages
 still carry the files as well, for anyone reading the package rather than
-running it. The GUI puts each text behind a collapsing header; the terminal
-application has no such widget, so About is one document there -- version,
-capsule digest, keys, license, notices -- scrolled with PageUp/PageDown,
-Up/Down, Home, and End.
+running it. About is one document -- version, capsule digest, keys, license,
+notices -- scrolled with PageUp/PageDown, Up/Down, Home, and End.
 
 The terminal application fits itself to the window it is given rather than
 requiring a large one. A view with more fields than the terminal has lines
@@ -264,53 +256,9 @@ so the cursor stays visible. `Ctrl+Q` quits, asking first when a job is still
 running: quitting stops watching a deployment rather than stopping it, so
 cancel with `Esc` or `Ctrl+C` first if it should not finish.
 
-The application does not otherwise rely on the working directory it happens to
-inherit from a shell or a desktop shortcut, and it reads no file beside itself:
-the capsule it deploys is compiled in the same way those legal texts are.
-
-### Display scaling and window size
-
-Fonts, spacing, and the initial window follow the display's content scale, so
-the window opens at the same apparent size on a scaled 4K desktop as on a
-1366x768 panel. The native window is not resized while it is being dragged:
-resizing mid-move is what makes a window manager snap it back to the original
-display. Fonts and spacing still follow the new display's scale; zoom remains
-available if the result is smaller or larger than wanted. The opening window
-is then fitted to the monitor it actually landed on, taking at most 90% of
-its width and 85% of its height, so a heavily scaled panel -- 1366x768 at
-200% scaling leaves only 683x384 points in total -- never gets a window
-larger than itself. That opening fit retries until the compositor has applied
-the size, stops if the window is dragged, and gives up after a short
-wall-clock budget rather than a frame count.
-
-The window is not centred by eframe. That path uses the primary monitor's
-size as an absolute desktop position, which on Windows with several displays
-(especially mixed scale factors) opens the window on the wrong monitor. The
-position is left unset so Windows `CW_USEDEFAULT` and the Linux/macOS window
-manager place it on the display the operator is using; the opening fit then
-sizes it to that display in the window's own points.
-
-The window can be dragged down to 420x320 points. Every view scrolls rather
-than clipping, the navigation and the Manage buttons wrap, and labels move from
-beside their fields to above them, so no control becomes unreachable at that
-size. Forms stop widening at a readable column and stay centred, so a host name
-does not get a field the width of a 4K desktop.
-
-The status bar reports the display scale the deployer detected and the current
-zoom. Zoom runs from 60% to 300% in steps of 10, through the `-`, `+`, and
-`Reset` buttons or `Ctrl` with `+`, `-`, and `0` (`Cmd` on macOS); the buttons
-and the shortcuts share one rule, so they cannot disagree. Zoom applies for the
-session and is not written to disk.
-
-If an X11 session reports the wrong scale -- the status bar shows a display
-scale that does not match the desktop's setting -- set `Xft.dpi` in the X
-resources, or override it directly:
-
-```bash
-WINIT_X11_SCALE_FACTOR=2 .build/deployer-publish/bin/rpi-omt-deployer
-```
-
-Wayland and Windows report their scale per monitor and need no override.
+The application does not rely on the working directory it happens to inherit,
+and it reads no file beside itself: the capsule it deploys is compiled in the
+same way those legal texts are.
 
 ## CLI deployment
 
@@ -448,12 +396,12 @@ a password manager before Docker's bounded logs rotate. The persistent
 recover the plaintext, and upgrading or redeploying preserves that hash rather
 than generating another password.
 
-The desktop deployment application's **Logs** action and the CLI deployer's
+The terminal deployer's **Logs** action and the CLI deployer's
 `logs` command show the same container output, so they can also be used while
 the first-start message is still retained.
 
-Password rotation is optional. On the desktop deployer's **Deploy** view, enable
-**Rotate the Web GUI password after deploy**, enter and confirm a 12-128 byte
+Password rotation is optional. On the terminal deployer's **Deploy** view, enable
+**Also set the Web GUI password**, enter and confirm a 12-128 byte
 password, then deploy. The same change is available later from **Manage**
 without redeploying: enter and confirm the password and select
 **Change Web GUI password**. Either path restarts the appliance and signs out

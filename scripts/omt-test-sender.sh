@@ -1,5 +1,5 @@
 #!/bin/bash
-# Bounded lifecycle wrapper for the developer-side Rust OMT test sender.
+# Bounded lifecycle wrapper for the developer-side C OMT test sender.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

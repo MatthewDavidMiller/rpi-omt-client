@@ -23,3 +23,9 @@ exclude = ["tests/.venv"]
 
 # scripts/lint.sh runs a second, relaxed mypy pass over tests/: real type errors
 # are caught, but pytest fixtures and cases need not be annotated.
+
+# The D-Bus interop test drives a real bus with the system's dbus-python and
+# PyGObject, which ship no type information and are not in the venv.
+[[tool.mypy.overrides]]
+module = ["dbus", "dbus.*", "gi", "gi.*"]
+ignore_missing_imports = true

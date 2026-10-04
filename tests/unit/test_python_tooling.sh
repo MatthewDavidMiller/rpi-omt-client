@@ -26,14 +26,19 @@ mkdir -p \
     "${FIXTURE}/fake-bin" \
     "${OUTSIDE}"
 cp "${ROOT}/scripts/lint.sh" "${FIXTURE}/scripts/lint.sh"
-cp "${ROOT}/scripts/check-supply-chain.sh" "${FIXTURE}/scripts/check-supply-chain.sh"
+# The C and supply-chain gates read the real tree; this test is about the
+# Python tooling, so they are stand-ins here.
+for gate in check-supply-chain.sh check-c.sh; do
+    printf '#!/bin/bash\nexit 0\n' >"${FIXTURE}/scripts/${gate}"
+    chmod +x "${FIXTURE}/scripts/${gate}"
+done
 touch \
     "${FIXTURE}/deploy/Dockerfile" \
     "${FIXTURE}/deploy/compose.yml" \
     "${FIXTURE}/docker-compose.dev.yml" \
     "${FIXTURE}/.yamllint.yml"
 
-for command_name in cargo cargo-deny cargo-vet shellcheck hadolint; do
+for command_name in shellcheck hadolint; do
     cat > "${FIXTURE}/fake-bin/${command_name}" <<'EOF'
 #!/bin/bash
 exit 0

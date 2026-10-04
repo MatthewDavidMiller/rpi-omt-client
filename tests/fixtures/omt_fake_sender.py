@@ -3,10 +3,10 @@
 
 This older fixture intentionally sends filler rather than decodable VMX media;
 it remains useful for narrow ingest and error-path tests. For a legitimate A/V
-source backed by reference-encoded VMX frames, use the first-party Rust sender
+source backed by reference-encoded VMX frames, use the first-party C sender
 documented in ``docs/OMT_TEST_SENDER.md``.
 
-This speaks only the framing in `crates/omt-protocol`: a 16-byte frame header
+This speaks only the framing in `src/protocol/omt.c`: a 16-byte frame header
 followed by `data_length` bytes, which for video begin with the 32-byte video
 header and for audio with the 24-byte audio header. The media itself is filler.
 That is sufficient for `omt-receiver probe`, which parses headers and never

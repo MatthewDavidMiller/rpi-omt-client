@@ -6,14 +6,11 @@ from __future__ import annotations
 import argparse
 import json
 import re
-import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-
-from cargo_lock import LockGraph  # noqa: E402
-
-# The image ships the receiver and Rust Web binaries; the deployer never enters it.
+# The image ships the receiver and Web binaries; the deployer never enters it.
+# Both are first-party C with no vendored code: everything they link -- musl,
+# alsa-lib, OpenSSL -- is an Alpine package, which the apk database records.
 RUNTIME_ROOTS = ["omt-receiver", "omt-web"]
 
 
@@ -50,27 +47,38 @@ def alpine_components(installed_database: str) -> list[dict[str, object]]:
     return components
 
 
-def rust_components(path: str) -> list[dict[str, object]]:
-    return [
+def first_party_components(version: str) -> list[dict[str, object]]:
+    components: list[dict[str, object]] = [
         {
-            "type": "library",
+            "type": "application",
             "name": name,
             "version": version,
-            "purl": purl,
-            "properties": [{"name": "runtime", "value": "Rust"}],
+            "licenses": [{"license": {"id": "MIT"}}],
+            "properties": [{"name": "language", "value": "C"}],
         }
-        for name, version, purl in LockGraph(path).closure(RUNTIME_ROOTS)
+        for name in RUNTIME_ROOTS
     ]
+    # The NFC tables compiled into both binaries are derived from this data.
+    components.append(
+        {
+            "type": "data",
+            "name": "unicode-character-database",
+            "version": "16.0.0",
+            "licenses": [{"license": {"id": "Unicode-3.0"}}],
+        }
+    )
+    return components
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", required=True)
     parser.add_argument("--version", default="unknown")
-    parser.add_argument("--cargo-lock", required=True)
     parser.add_argument("--apk-installed", default="/lib/apk/db/installed")
     arguments = parser.parse_args()
-    components = alpine_components(arguments.apk_installed) + rust_components(arguments.cargo_lock)
+    components = alpine_components(arguments.apk_installed) + first_party_components(
+        arguments.version
+    )
     document = {
         "bomFormat": "CycloneDX",
         "specVersion": "1.6",

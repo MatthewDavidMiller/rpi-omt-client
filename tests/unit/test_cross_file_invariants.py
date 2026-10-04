@@ -14,19 +14,20 @@ import re
 
 from conftest import REPO_ROOT
 
-WEB_SETTINGS = REPO_ROOT / "crates" / "omt-web" / "src" / "settings.rs"
-WEB_PLAYBACK = REPO_ROOT / "crates" / "omt-web" / "src" / "playback.rs"
-WEB_STATE = REPO_ROOT / "crates" / "omt-web" / "src" / "state.rs"
+WEB_SETTINGS = REPO_ROOT / "src" / "web" / "settings.c"
+WEB_PLAYBACK = REPO_ROOT / "src" / "web" / "playback.c"
+WEB_STATE = REPO_ROOT / "src" / "web" / "state.c"
+WEB_STATE_H = REPO_ROOT / "src" / "web" / "state.h"
 INSTALLER = REPO_ROOT / "deploy" / "host" / "install.sh"
 HOST_DIAGNOSTICS = REPO_ROOT / "deploy" / "host" / "host-diagnostics.sh"
 START_OMT = REPO_ROOT / "deploy" / "container" / "start-omt.sh"
-RECEIVER_MAIN = REPO_ROOT / "crates" / "omt-receiver" / "src" / "main.rs"
+RECEIVER_MAIN = REPO_ROOT / "src" / "receiver" / "main.c"
 
 
 def test_host_diagnostics_budget_agrees_across_every_file_that_states_it():
     """The container reports this ceiling; the host unit is what enforces it."""
     configured = re.search(
-        r'integer\("OMT_DIAGNOSTICS_HOST_BUDGET_SECONDS", (\d+), 1\)',
+        r'integer\("OMT_DIAGNOSTICS_HOST_BUDGET_SECONDS", (\d+), 1,',
         WEB_SETTINGS.read_text(encoding="utf-8"),
     )
     assert configured is not None
@@ -56,7 +57,8 @@ def test_every_layer_accepts_the_same_hdmi_connector_names():
     launcher_names = set(launcher.group(1).split("|"))
 
     receiver = re.search(
-        r'matches!\(\s*preference\.as_str\(\),\s*"auto"([^)]*)\)',
+        r'!\(strcmp\(preference, "auto"\) == 0'
+        r'((?:\s*\|\|\s*strcmp\(preference, "[A-Za-z0-9-]+"\) == 0)+)\)',
         RECEIVER_MAIN.read_text(encoding="utf-8"),
     )
     assert receiver is not None, "the receiver no longer restricts --connector"
@@ -67,7 +69,7 @@ def test_every_layer_accepts_the_same_hdmi_connector_names():
     # status contract carries it and the selectable names besides.
     web_names = set(
         re.findall(
-            r'\["none", "(HDMI-A-[12])", "(HDMI-A-[12])"\]',
+            r'\{"none", "(HDMI-A-[12])", "(HDMI-A-[12])"\}',
             WEB_PLAYBACK.read_text(encoding="utf-8"),
         )[0]
     ) | {"none"}
@@ -75,8 +77,9 @@ def test_every_layer_accepts_the_same_hdmi_connector_names():
 
 
 BOARD_PROFILE = REPO_ROOT / "deploy" / "lib" / "board-profile.sh"
-RECEIVER_CORE = REPO_ROOT / "crates" / "omt-receiver-core" / "src" / "lib.rs"
-DEPLOYER_OPS = REPO_ROOT / "crates" / "omt-deployer-core" / "src" / "ops.rs"
+RECEIVER_CORE = REPO_ROOT / "src" / "receiver_core" / "core.h"
+RECEIVER_CEILING = REPO_ROOT / "src" / "receiver_core" / "ceiling.c"
+DEPLOYER_OPS = REPO_ROOT / "src" / "deploy" / "core" / "ops.c"
 
 
 def _shell_ceilings() -> list[str]:
@@ -87,18 +90,19 @@ def _shell_ceilings() -> list[str]:
     )
 
 
-def test_every_shipped_board_ceiling_is_covered_by_the_rust_web_tests():
+def test_every_shipped_board_ceiling_is_covered_by_the_web_parser():
     ceilings = _shell_ceilings()
     assert len(ceilings) == 2, "board-profile.sh no longer defines two board tiers"
-    assert "parse_video_ceiling" in WEB_STATE.read_text(encoding="utf-8")
+    assert "omt_parse_video_ceiling" in WEB_STATE.read_text(encoding="utf-8")
 
 
 def test_the_absolute_video_limits_agree_across_all_three_implementations():
-    """Shell and the two Rust crates each bound a ceiling independently. They are what
-    `omt-protocol` sizes its allocations for, so a layer that allowed more would
+    """Shell, the receiver, and the Web state each bound a ceiling independently. They
+    are what the protocol module sizes its allocations for, so a layer that allowed more would
     promise what the decoder cannot deliver."""
     shell = BOARD_PROFILE.read_text(encoding="utf-8")
-    rust = RECEIVER_CORE.read_text(encoding="utf-8")
+    receiver = RECEIVER_CEILING.read_text(encoding="utf-8")
+    core = RECEIVER_CORE.read_text(encoding="utf-8")
     web = WEB_STATE.read_text(encoding="utf-8")
     for name, value in (
         ("WIDTH", 1920),
@@ -106,26 +110,26 @@ def test_the_absolute_video_limits_agree_across_all_three_implementations():
         ("FPS", 60),
     ):
         assert f"HOST_ABSOLUTE_MAX_{name}={value}" in shell
-        assert f"const CEILING_MAX_{name}: i32 = {value};" in rust
+        assert f"#define CEILING_MAX_{name} {value}" in receiver
         assert str(value) in web
     assert "HOST_MAX_CEILING_SHAPES=4" in shell
-    assert "const CEILING_MAX_SHAPES: usize = 4;" in rust
-    assert "CEILING_MIN_DIMENSION: i32 = 16;" in rust
+    assert "#define OMT_CEILING_MAX_SHAPES 4" in core
+    assert "#define CEILING_MIN_DIMENSION 16" in receiver
 
 
 def test_the_supported_board_table_agrees_between_the_host_and_the_deployer():
-    """`board-profile.sh` gates the install on the Pi; `ops.rs` and `deploy.sh`
+    """`board-profile.sh` gates the install on the Pi; `ops.c` and `deploy.sh`
     gate the upload from the workstation. A board only one of them accepts is a
     deployment that either refuses a supported Pi or uploads to a board the
     installer will then reject."""
     shell = BOARD_PROFILE.read_text(encoding="utf-8")
-    rust_prefixes = re.search(
-        r"const SUPPORTED_BOARDS: \[&str; 2\] = \[(.*?)\];",
+    deployer_prefixes = re.search(
+        r"SUPPORTED_BOARDS\[\] = \{(.*?)\};",
         DEPLOYER_OPS.read_text(encoding="utf-8"),
         re.DOTALL,
     )
-    assert rust_prefixes is not None, "ops.rs no longer lists the supported boards"
-    for prefix in re.findall(r'"([^"]+)"', rust_prefixes.group(1)):
+    assert deployer_prefixes is not None, "ops.c no longer lists the supported boards"
+    for prefix in re.findall(r'"([^"]+)"', deployer_prefixes.group(1)):
         assert f'"{prefix}"' in shell, f"{prefix} is accepted by the deployer but not the installer"
 
     # `make deploy` reuses the shell table rather than restating it, which is
@@ -148,18 +152,18 @@ def test_no_supported_board_has_a_2_4_ghz_only_radio():
         re.DOTALL,
     )
     assert supported is not None, "board-profile.sh no longer lists the supported boards"
-    rust_prefixes = re.search(
-        r"const SUPPORTED_BOARDS: \[&str; \d+\] = \[(.*?)\];",
+    deployer_prefixes = re.search(
+        r"SUPPORTED_BOARDS\[\] = \{(.*?)\};",
         deployer,
         re.DOTALL,
     )
-    assert rust_prefixes is not None
+    assert deployer_prefixes is not None
 
     # Every Pi Zero, and the Pi 3 tier whose Model B has no 5 GHz radio.
     single_band = ("Zero", "Pi 3")
     for source, text in (
         ("host_supported_boards", supported.group(1)),
-        ("SUPPORTED_BOARDS", rust_prefixes.group(1)),
+        ("SUPPORTED_BOARDS", deployer_prefixes.group(1)),
     ):
         for name in re.findall(r'"([^"]+)"', text):
             for banned in single_band:
@@ -185,12 +189,12 @@ def test_docker_api_wait_agrees_between_the_installer_and_openrc():
 
 def test_playback_status_stale_floor_stays_above_the_receiver_heartbeat():
     heartbeat = re.search(
-        r"pub const HEARTBEAT: Duration = Duration::from_millis\((\d+)\)",
+        r"#define OMT_HEARTBEAT_MS (\d+)u",
         RECEIVER_CORE.read_text(encoding="utf-8"),
     )
     assert heartbeat is not None, "receiver-core no longer publishes HEARTBEAT"
     stale = re.search(
-        r'"OMT_PLAYBACK_STATUS_STALE_SECONDS",\s*\n\s*(\d+),\s*\n\s*(\d+)',
+        r'"OMT_PLAYBACK_STATUS_STALE_SECONDS",\s*(\d+),\s*(\d+)',
         WEB_SETTINGS.read_text(encoding="utf-8"),
     )
     assert stale is not None, "web settings no longer pin the stale default and floor"
@@ -210,11 +214,11 @@ def test_pcap_memory_ceiling_agrees_between_host_and_web():
         re.MULTILINE,
     )
     web = re.search(
-        r"const PCAP_MAX_BYTES: usize = (\d+) \* 1024 \* 1024;",
-        (REPO_ROOT / "crates" / "omt-web" / "src" / "diagnostics.rs").read_text(encoding="utf-8"),
+        r"#define PCAP_MAX_BYTES \((\d+) \* 1024 \* 1024\)",
+        (REPO_ROOT / "src" / "web" / "diagnostics.h").read_text(encoding="utf-8"),
     )
     assert host is not None, "host-diagnostics.sh no longer pins PCAP_MAX_BYTES"
-    assert web is not None, "diagnostics.rs no longer pins PCAP_MAX_BYTES"
+    assert web is not None, "diagnostics.h no longer pins PCAP_MAX_BYTES"
     assert int(host.group(1)) == int(web.group(1)) * 1024 * 1024
     assert int(host.group(1)) == 8 * 1024 * 1024
 
@@ -222,12 +226,10 @@ def test_pcap_memory_ceiling_agrees_between_host_and_web():
 def test_body_budget_is_shorter_than_sigterm_grace():
     """A mid-frame read must finish inside SIGTERM's wait, or SIGKILL tears
     the receiver down while it still holds /dev/dri."""
-    channel = (REPO_ROOT / "crates" / "omt-receiver" / "src" / "channel.rs").read_text(
-        encoding="utf-8"
-    )
+    channel = (REPO_ROOT / "src" / "receiver" / "channel.h").read_text(encoding="utf-8")
     control = (REPO_ROOT / "deploy" / "container" / "control-omt.sh").read_text(encoding="utf-8")
     budget = re.search(
-        r"const BODY_BUDGET: Duration = Duration::from_secs\((\d+)\)",
+        r"#define OMT_BODY_BUDGET_MS (\d+)000u",
         channel,
     )
     term = re.search(
@@ -235,16 +237,16 @@ def test_body_budget_is_shorter_than_sigterm_grace():
         control,
         re.DOTALL,
     )
-    assert budget is not None, "channel.rs no longer pins BODY_BUDGET"
+    assert budget is not None, "channel.h no longer pins OMT_BODY_BUDGET_MS"
     assert term is not None, "control-omt.sh no longer waits after SIGTERM"
     grace_seconds = int(term.group(1)) / 10
     assert int(budget.group(1)) < grace_seconds
     assert int(budget.group(1)) >= 6
     timeout = re.search(
-        r'seconds\("OMT_CONTROL_TIMEOUT_SECONDS", ([0-9.]+), false\)',
+        r'seconds\("OMT_CONTROL_TIMEOUT_SECONDS", ([0-9.]+), false,',
         WEB_SETTINGS.read_text(encoding="utf-8"),
     )
-    assert timeout is not None, "settings.rs no longer pins the control timeout"
+    assert timeout is not None, "settings.c no longer pins the control timeout"
     assert float(timeout.group(1)) > grace_seconds
 
 
@@ -253,17 +255,17 @@ def test_playout_delay_default_and_ceiling_agree_across_every_layer():
     the playout delay's default and range. A launcher default the Web page does
     not show, or a ceiling the receiver refuses, is a playback that silently
     runs with a delay nobody chose -- or never starts."""
-    state = WEB_STATE.read_text(encoding="utf-8")
-    default = re.search(r"pub const DEFAULT_PLAYOUT_DELAY_MS: u64 = (\d+);", state)
-    ceiling = re.search(r"pub const MAX_PLAYOUT_DELAY_MS: u64 = (\d+);", state)
-    assert default is not None, "state.rs no longer pins DEFAULT_PLAYOUT_DELAY_MS"
-    assert ceiling is not None, "state.rs no longer pins MAX_PLAYOUT_DELAY_MS"
+    state = WEB_STATE_H.read_text(encoding="utf-8")
+    default = re.search(r"#define OMT_DEFAULT_PLAYOUT_DELAY_MS (\d+)u", state)
+    ceiling = re.search(r"#define OMT_MAX_PLAYOUT_DELAY_MS (\d+)u", state)
+    assert default is not None, "state.h no longer pins OMT_DEFAULT_PLAYOUT_DELAY_MS"
+    assert ceiling is not None, "state.h no longer pins OMT_MAX_PLAYOUT_DELAY_MS"
     launcher = re.search(
         r'omt-web playout-delay \\\n\s*"\$\{OMT_PLAYOUT_DELAY_FILE\}" (\d+)\)',
         START_OMT.read_text(encoding="utf-8"),
     )
     receiver = re.search(
-        r'options\.number\("--playout-delay", (\d+), (\d+), (\d+)\)',
+        r'number\(o, "--playout-delay", (\d+), (\d+), (\d+), &delay, err\)',
         RECEIVER_MAIN.read_text(encoding="utf-8"),
     )
     assert launcher is not None, "start-omt.sh no longer passes a playout delay default"
@@ -272,8 +274,6 @@ def test_playout_delay_default_and_ceiling_agree_across_every_layer():
     assert receiver.group(1) == default.group(1)
     assert receiver.group(2) == "0"
     assert receiver.group(3) == ceiling.group(1)
-    assert "Duration::from_millis(playout_delay)" in RECEIVER_MAIN.read_text(encoding="utf-8")
-    template = (REPO_ROOT / "crates" / "omt-web" / "templates" / "system.html").read_text(
-        encoding="utf-8"
-    )
+    assert "po.playout_delay_ms = delay;" in RECEIVER_MAIN.read_text(encoding="utf-8")
+    template = (REPO_ROOT / "src" / "web" / "templates" / "system.html").read_text(encoding="utf-8")
     assert f'max="{ceiling.group(1)}"' in template
