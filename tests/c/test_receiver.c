@@ -2,7 +2,7 @@
  * SPDX-License-Identifier: MIT
  *
  * Port of the omt-receiver crate's unit tests: the channel's timing contract
- * against live loopback sockets, the playout queue, connector selection over
+ * against live loopback sockets, the frame handoff, connector selection over
  * a scratch sysfs tree, the scaler, mode selection, decode classification,
  * the running details, the interleaver, discovery parsing, and the D-Bus
  * marshalling.
@@ -22,7 +22,7 @@
 #include "receiver/connector.h"
 #include "receiver/dbus.h"
 #include "receiver/discovery.h"
-#include "receiver/jitter.h"
+#include "receiver/handoff.h"
 #include "receiver/play.h"
 #include "receiver/scale.h"
 #include "receiver/video_drm.h"
@@ -199,7 +199,7 @@ static void a_failed_reconnect_leaves_the_channel_down(void) {
     omt_channel_free(&c);
 }
 
-/* -------------------------------------------------------------- jitter */
+/* ------------------------------------------------------------- handoff */
 
 static omt_frame video_frame(size_t payload, int32_t n, int32_t d) {
     omt_frame f = {0};
@@ -229,103 +229,47 @@ static omt_frame audio_frame(int32_t samples, int32_t rate) {
     return f;
 }
 
-static uint64_t push(omt_queue *q, omt_frame f, bool playing) {
-    return omt_queue_push(q, &f, playing);
-}
+static uint64_t push(omt_queue *q, omt_frame f) { return omt_queue_push(q, &f); }
 
+/* Video is one slot: each frame replaces whatever the display has not taken,
+ * so nothing waits behind the newest picture. */
 static void queue_contract(void) {
     omt_queue q;
-    omt_queue_init(&q, OMT_QUEUE_VIDEO, 0, OMT_VIDEO_BYTE_CAP);
-    CHECK(!omt_queue_filled(&q));
-    CHECK_INT(push(&q, video_frame(32, 30, 1), false), 0);
-    CHECK(omt_queue_filled(&q));
-    CHECK(push(&q, video_frame(32, 30, 1), true) >= 1);
+    omt_queue_init(&q, OMT_QUEUE_VIDEO, OMT_VIDEO_BYTE_CAP);
+    CHECK(omt_queue_empty(&q));
+    CHECK_INT(push(&q, video_frame(32, 30, 1)), 0);
     CHECK_INT(q.count, 1);
-    omt_queue_free(&q);
-
-    omt_queue_init(&q, OMT_QUEUE_VIDEO, 4000000000ull, OMT_VIDEO_BYTE_CAP);
-    for (int i = 0; i < 4; i++) {
-        CHECK(!omt_queue_filled(&q));
-        (void)push(&q, video_frame(64, 1, 1), false);
-    }
-    CHECK(omt_queue_filled(&q));
-    CHECK(omt_queue_duration_ns(&q) == 4000000000ull);
+    CHECK_INT(push(&q, video_frame(48, 30, 1)), 1);
+    CHECK_INT(push(&q, video_frame(64, 30, 1)), 1);
+    CHECK_INT(q.count, 1);
     omt_frame out;
-    for (int i = 0; i < 4; i++) {
-        CHECK(omt_queue_pop(&q, &out));
-        omt_frame_free(&out);
-    }
-    CHECK(!omt_queue_pop(&q, &out));
+    CHECK(omt_queue_pop(&q, &out));
+    CHECK_INT(out.len, OMT_VIDEO_HEADER_SIZE + 64);
+    omt_frame_free(&out);
+    CHECK(!omt_queue_pop(&q, &out) && omt_queue_empty(&q) && q.bytes == 0);
     omt_queue_free(&q);
 
-    omt_queue_init(&q, OMT_QUEUE_VIDEO, 8000000000ull, 250);
-    CHECK_INT(push(&q, video_frame(80, 1, 1), false), 0);
-    CHECK_INT(push(&q, video_frame(80, 1, 1), false), 0);
-    CHECK(push(&q, video_frame(80, 1, 1), false) >= 1);
-    CHECK(q.bytes <= 250 && q.count <= 2);
-    omt_queue_free(&q);
-
-    omt_queue_init(&q, OMT_QUEUE_VIDEO, 4000000000ull, OMT_VIDEO_BYTE_CAP);
+    /* Metadata, the wrong media kind, and an over-cap frame are refused
+     * without disturbing what is held. */
+    omt_queue_init(&q, OMT_QUEUE_VIDEO, 250);
     omt_frame meta = {0};
     meta.header.frame_type = OMT_FRAME_METADATA;
-    CHECK_INT(omt_queue_push(&q, &meta, false), 0);
-    CHECK(omt_queue_empty(&q) && q.bytes == 0);
+    CHECK_INT(omt_queue_push(&q, &meta), 0);
+    CHECK(omt_queue_empty(&q));
+    CHECK_INT(push(&q, audio_frame(960, 48000)), 0);
+    CHECK(omt_queue_empty(&q));
+    CHECK_INT(push(&q, video_frame(80, 30, 1)), 0);
+    CHECK_INT(push(&q, video_frame(400, 30, 1)), 0);
+    CHECK(q.count == 1 && q.bytes <= 250);
     omt_queue_free(&q);
 
-    omt_queue_init(&q, OMT_QUEUE_VIDEO, 2000000000ull, OMT_VIDEO_BYTE_CAP);
-    (void)push(&q, video_frame(32, 1, 1), false);
-    (void)push(&q, video_frame(32, 1, 1), false);
-    CHECK(omt_queue_filled(&q));
-    (void)push(&q, video_frame(32, 1, 1), true);
-    CHECK(omt_queue_duration_ns(&q) <= 2000000000ull);
-    CHECK_INT(q.count, 2);
-    omt_queue_free(&q);
-}
-
-static void audio_queue_contract(void) {
-    omt_audio_header h = {0, 48000, 48000, 2, 3};
-    uint64_t ns;
-    CHECK(omt_audio_interval_ns(&h, &ns) && ns == 1000000000ull);
-    omt_queue q;
-    omt_queue_init(&q, OMT_QUEUE_AUDIO, 2000000000ull, OMT_AUDIO_BYTE_CAP);
-    (void)push(&q, audio_frame(48000, 48000), false);
-    (void)push(&q, audio_frame(48000, 48000), false);
-    CHECK(omt_queue_filled(&q));
-    omt_queue_free(&q);
-
-    omt_queue_init(&q, OMT_QUEUE_AUDIO, 0, OMT_AUDIO_BYTE_CAP);
-    (void)push(&q, audio_frame(960, 48000), false);
-    CHECK(omt_queue_filled(&q));
-    omt_queue_keep_latest_only(&q);
-    for (int i = 0; i < 4; i++) CHECK_INT(push(&q, audio_frame(960, 48000), true), 0);
-    CHECK_INT(q.count, 5);
-    omt_queue_free(&q);
-
-    omt_queue_init(&q, OMT_QUEUE_AUDIO, 0, OMT_AUDIO_BYTE_CAP);
-    uint64_t dropped = 0;
-    for (int i = 0; i < 12; i++) dropped += push(&q, audio_frame(960, 48000), true);
-    CHECK_INT(q.count, 5);
-    CHECK_INT(dropped, 7);
-    omt_queue_free(&q);
-
-    omt_queue_init(&q, OMT_QUEUE_AUDIO, 250000000ull, OMT_AUDIO_BYTE_CAP);
-    for (int i = 0; i < 20; i++) (void)push(&q, audio_frame(960, 48000), true);
-    CHECK_INT(q.count, 17);
-    omt_queue_free(&q);
-
-    omt_queue_init(&q, OMT_QUEUE_VIDEO, 0, OMT_VIDEO_BYTE_CAP);
-    (void)push(&q, video_frame(32, 30, 1), false);
-    (void)push(&q, video_frame(32, 30, 1), false);
-    omt_queue_keep_latest_only(&q);
-    CHECK_INT(q.count, 1);
-    omt_queue_free(&q);
-
-    omt_queue_init(&q, OMT_QUEUE_VIDEO, 0, OMT_VIDEO_BYTE_CAP);
+    /* The frame just superseded is the buffer the next receive reuses. */
+    omt_queue_init(&q, OMT_QUEUE_VIDEO, OMT_VIDEO_BYTE_CAP);
     uint8_t *spare;
     size_t cap;
     omt_queue_take_spare(&q, &spare, &cap);
     CHECK(spare == NULL && cap == 0);
-    for (int i = 0; i < 10; i++) (void)push(&q, video_frame(64, 30, 1), true);
+    for (int i = 0; i < 10; i++) (void)push(&q, video_frame(64, 30, 1));
     CHECK_INT(q.spare_count, OMT_SPARE_BUFFERS);
     omt_queue_take_spare(&q, &spare, &cap);
     CHECK(cap >= 64);
@@ -333,14 +277,37 @@ static void audio_queue_contract(void) {
     omt_queue_recycle(&q, NULL, 0);
     CHECK_INT(q.spare_count, OMT_SPARE_BUFFERS - 1);
     omt_queue_free(&q);
+}
 
-    omt_fill_gate gate;
-    omt_gate_init(&gate);
-    CHECK(!omt_gate_audio_ready(&gate));
-    omt_gate_set_video(&gate, true);
-    CHECK(omt_gate_video_ready(&gate) && !omt_gate_audio_ready(&gate));
-    omt_gate_set_audio_missing(&gate);
-    CHECK(omt_gate_audio_ready(&gate));
+/* Audio keeps arrival order for the ALSA ring and sheds only a backlog past
+ * OMT_AUDIO_BACKLOG_NS. */
+static void audio_queue_contract(void) {
+    omt_audio_header h = {0, 48000, 48000, 2, 3};
+    uint64_t ns;
+    CHECK(omt_audio_interval_ns(&h, &ns) && ns == 1000000000ull);
+    omt_audio_header bad = {0, 0, 960, 2, 3};
+    CHECK(!omt_audio_interval_ns(&bad, &ns));
+
+    omt_queue q;
+    omt_queue_init(&q, OMT_QUEUE_AUDIO, OMT_AUDIO_BYTE_CAP);
+    /* 20 ms frames: five fit the 100 ms backlog, the rest push out the oldest. */
+    for (int i = 0; i < 5; i++) CHECK_INT(push(&q, audio_frame(960, 48000)), 0);
+    CHECK_INT(q.count, 5);
+    uint64_t dropped = 0;
+    for (int i = 0; i < 7; i++) dropped += push(&q, audio_frame(960, 48000));
+    CHECK_INT(q.count, 5);
+    CHECK_INT(dropped, 7);
+    CHECK_INT(push(&q, video_frame(32, 30, 1)), 0);
+    CHECK_INT(q.count, 5);
+    omt_queue_free(&q);
+
+    /* A single frame longer than the backlog is still played, not discarded. */
+    omt_queue_init(&q, OMT_QUEUE_AUDIO, OMT_AUDIO_BYTE_CAP);
+    CHECK_INT(push(&q, audio_frame(48000, 48000)), 0);
+    CHECK_INT(q.count, 1);
+    CHECK_INT(push(&q, audio_frame(48000, 48000)), 1);
+    CHECK_INT(q.count, 1);
+    omt_queue_free(&q);
 }
 
 /* ----------------------------------------------------------- connector */
@@ -499,16 +466,21 @@ static void scaler_contract(void) {
     size_t reduced[4] = {0, 2, 3, 5};
     for (size_t i = 0; i < 4; i++) CHECK_INT(omt_scale_sample(i, 4, 6), reduced[i]);
 
-    uint8_t source[64], dst[64];
-    for (int i = 0; i < 64; i++) source[i] = (uint8_t)i;
+    /* The tables the decode resamples with: identity at the same size,
+     * pixel-centre samples otherwise, rows never decreasing. */
     omt_scaler s;
     omt_err err;
     CHECK(omt_placement_fit(4, 4, 4, 4, &p));
-    CHECK(omt_scaler_init(&s, 4, 4, 16, p, &err));
-    CHECK(omt_scaler_render(&s, source, 64, dst, 64, 16, &err));
-    CHECK(memcmp(source, dst, 64) == 0);
-    CHECK(!omt_scaler_render(&s, source, 64, dst, 63, 16, &err));
+    CHECK(omt_scaler_init(&s, 4, 4, p, &err));
+    for (uint32_t i = 0; i < 4; i++) CHECK(s.rows[i] == i && s.columns[i] == i);
     omt_scaler_free(&s);
+    CHECK(omt_placement_fit(1920, 1080, 1280, 720, &p));
+    CHECK(omt_scaler_init(&s, 1920, 1080, p, &err));
+    for (size_t y = 1; y < p.height; y++) CHECK(s.rows[y] >= s.rows[y - 1]);
+    CHECK(s.rows[p.height - 1] < 1080 && s.columns[p.width - 1] < 1920);
+    CHECK_INT(s.columns[1], omt_scale_sample(1, 1280, 1920));
+    omt_scaler_free(&s);
+    CHECK(!omt_scaler_init(&s, 0, 4, p, &err));
 }
 
 /* --------------------------------------------------------- mode select */
@@ -603,33 +575,32 @@ static void decode_classification(void) {
 static void running_details(void) {
     char out[512];
     const char *base = "Playing OMT video.";
-    omt_describe_running(base, 0, 0, 0, 0, 0, out, sizeof(out));
+    omt_describe_running(base, 0, 0, 0, out, sizeof(out));
     CHECK_STR(out, base);
-    omt_describe_running(base, 0, 0, 2, 0, 0, out, sizeof(out));
+    omt_describe_running(base, 2, 0, 0, out, sizeof(out));
     CHECK_STR(out, "Playing OMT video. 2 video reconnect(s) in this session.");
-    omt_describe_running(base, 0, 0, 0, 3, 0, out, sizeof(out));
+    omt_describe_running(base, 0, 3, 0, out, sizeof(out));
     CHECK_STR(out, "Playing OMT video. 3 skipped frame(s) in this session.");
-    omt_describe_running(base, 0, 0, 2, 3, 0, out, sizeof(out));
+    omt_describe_running(base, 2, 3, 0, out, sizeof(out));
     CHECK_STR(out,
               "Playing OMT video. 2 video reconnect(s) and 3 skipped frame(s) in this session.");
-    omt_describe_running(base, 4000, 4000, 0, 0, 0, out, sizeof(out));
-    CHECK_STR(out, "Playing OMT video. 4000 ms playout delay (~4000 ms buffered).");
-    omt_describe_running(base, 250, 233, 0, 0, 0, out, sizeof(out));
-    CHECK_STR(out, "Playing OMT video. 250 ms playout delay (~200 ms buffered).");
-    omt_describe_running(base, 4000, 1000, 0, 0, 2, out, sizeof(out));
-    CHECK(strstr(out, "4000 ms playout delay") && strstr(out, "2 buffer underrun(s)") &&
+    omt_describe_running(base, 0, 0, 4, out, sizeof(out));
+    CHECK_STR(out, "Playing OMT video. 4 frame(s) replaced by a newer one before display in this "
+                   "session.");
+    omt_describe_running(base, 1, 0, 4, out, sizeof(out));
+    CHECK(strstr(out, "1 video reconnect(s)") && strstr(out, "4 frame(s) replaced") &&
           !strstr(out, "skipped frame"));
-    omt_describe_running(base, 0, 0, UINT64_MAX, 0, 0, out, sizeof(out));
+    omt_describe_running(base, UINT64_MAX, 0, 0, out, sizeof(out));
     CHECK(strstr(out, "18446744073709551615") != NULL);
 
     omt_running_detail cache;
     memset(&cache, 0, sizeof(cache));
-    const char *p = omt_running_detail_get(&cache, base, 500, 433, 0, 0, 0);
-    CHECK(strstr(p, "~400 ms buffered") != NULL);
-    p = omt_running_detail_get(&cache, base, 500, 466, 0, 0, 0);
-    CHECK(strstr(p, "~400 ms buffered") != NULL);
-    p = omt_running_detail_get(&cache, base, 500, 500, 0, 0, 0);
-    CHECK(strstr(p, "~500 ms buffered") != NULL);
+    const char *p = omt_running_detail_get(&cache, base, 0, 0, 0);
+    CHECK_STR(p, base);
+    p = omt_running_detail_get(&cache, base, 0, 0, 2);
+    CHECK(strstr(p, "2 frame(s) replaced") != NULL);
+    p = omt_running_detail_get(&cache, "Playing OMT video and audio.", 0, 0, 2);
+    CHECK(omt_has_prefix(p, "Playing OMT video and audio."));
 
     omt_describe_audio(0, out, sizeof(out));
     CHECK_STR(out, "Playing OMT video and audio.");

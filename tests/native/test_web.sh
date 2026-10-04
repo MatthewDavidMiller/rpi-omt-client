@@ -4,7 +4,7 @@
 #
 # Black-box contract for omt-web over real HTTPS: the routes, cookies, CSRF,
 # rate limits, security headers, TLS versions, connection handling, the
-# playout-delay round trip, password rotation, and the support bundle.
+# absent playout delay, password rotation, and the support bundle.
 #
 # Usage: tests/native/test_web.sh /path/to/omt-web
 set -euo pipefail
@@ -148,17 +148,13 @@ grep -Fq "OMT discovery saved and running." "${ROOT}/body" || fail "the flash me
 status "${URL}/" >/dev/null
 grep -Fq "OMT discovery saved and running." "${ROOT}/body" && fail "a flash is shown only once"
 
-# The playout delay round trip.
-for case in "250|{\"schema\":2,\"milliseconds\":250}" "8001|{\"schema\":2,\"milliseconds\":250}" \
-    "%2B5|{\"schema\":2,\"milliseconds\":250}" "8000|{\"schema\":2,\"milliseconds\":8000}" "|" "0|"; do
-    value="${case%%|*}"
-    expected="${case#*|}"
-    expect_eq "$(status --data "csrf_token=${token}&playout_delay=${value}" "${URL}/system/playout-delay")" 303 "delay ${value}"
-    actual="$(cat "${ROOT}/playout_delay.json" 2>/dev/null || true)"
-    expect_eq "${actual}" "${expected}" "saved delay for '${value}'"
-done
-printf '{"schema":1,"seconds":4}\n' > "${ROOT}/playout_delay.json"
-expect_eq "$("${WEB}" playout-delay "${ROOT}/playout_delay.json" 0)" 0 "a seconds-era file is ignored"
+# There is no playout delay: no route sets one, no page offers one, and the
+# helper the launcher once called is gone.
+expect_eq "$(status --data "csrf_token=${token}&playout_delay=250" "${URL}/system/playout-delay")" 404 "no delay route"
+[[ ! -e "${ROOT}/playout_delay.json" ]] || fail "a playout delay was saved"
+status "${URL}/system" >/dev/null
+grep -Fqi "playout" "${ROOT}/body" && fail "the System page still offers a playout delay"
+"${WEB}" playout-delay "${ROOT}/playout_delay.json" 0 >/dev/null 2>&1 && fail "omt-web playout-delay still exists"
 
 # Video limit and network settings.
 expect_eq "$(status --data "csrf_token=${token}&video_limit=1920x1080%4030,1280x720%4060" "${URL}/system/video-limit")" 303 "video limit"

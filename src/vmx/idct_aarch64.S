@@ -4,7 +4,8 @@
  * AArch64 inverse DCT: the kernel the appliance runs.
  *
  * void vmx_idct_neon(const int16_t block[64], const uint16_t matrix[64],
- *                    uint8_t *dst, size_t stride, int16_t add_value);
+ *                    uint8_t *dst, size_t stride, int16_t add_value,
+ *                    unsigned rows);
  *
  * It computes exactly what idct_scalar.c computes and must agree with it bit
  * for bit; tests/c/test_vmx.c and the committed conformance vectors check
@@ -20,6 +21,13 @@
  * land in lanes 4..7 in reverse column order; the column pass works lane by
  * lane, so that order is carried through it and undone by one tbl per pair of
  * output rows.
+ *
+ * Sparse blocks. `rows` says only rows 0..rows-1 can be nonzero, and a zero
+ * row's pass is exactly zero: even and odd sums of 0, plus the 1024 rounding
+ * term, shifted down by 11. So when rows <= 4 the row pass runs one row at a
+ * time over just those rows and leaves the rest as the zeros they already
+ * are. Most blocks of most pictures end their coefficients in the first few
+ * rows.
  *
  * Column pass. A line-for-line transcription of idct_scalar.c's column_pass,
  * with its register names in the comments. mulhi by an even constant c is
@@ -63,6 +71,24 @@
         sqshrn2 v\b\().8h, v27.4s, #11
 .endm
 
+/* One row through the row pass, in place: row v\a, its table de-interleaved
+ * into v16-v19, the rounding constant in v28. */
+.macro row a
+        smull   v20.4s, v16.4h, v\a\().h[0]
+        smull   v21.4s, v18.4h, v\a\().h[1]
+        smlal   v20.4s, v17.4h, v\a\().h[2]
+        smlal   v21.4s, v19.4h, v\a\().h[3]
+        smlal2  v20.4s, v16.8h, v\a\().h[4]
+        smlal2  v21.4s, v18.8h, v\a\().h[5]
+        smlal2  v20.4s, v17.8h, v\a\().h[6]
+        smlal2  v21.4s, v19.8h, v\a\().h[7]
+        add     v20.4s, v20.4s, v28.4s
+        add     v24.4s, v20.4s, v21.4s
+        sub     v25.4s, v20.4s, v21.4s
+        sqshrn  v\a\().4h, v24.4s, #11
+        sqshrn2 v\a\().8h, v25.4s, #11
+.endm
+
 /* d = (s * COS_4_16) >> 16, the exact high half; clobbers v1 and v3. */
 .macro mulhi_cos4 d, s
         smull   v1.4s, v\s\().4h, v27.4h
@@ -96,22 +122,46 @@ VMX_FUNCTION(vmx_idct_neon)
         sshr    v6.8h, v6.8h, #4
         sshr    v7.8h, v7.8h, #4
 
-        /* Row pass. */
+        /* Row pass. x10 walks the tables; x9 stays at their start. */
         movi    v28.4s, #4, lsl #8              // IRND_INV_ROW = 1024
-        ld2     {v16.8h, v17.8h}, [x9], #32     // vmx_tab_i_04
-        ld2     {v18.8h, v19.8h}, [x9], #32
+        mov     x10, x9
+        cmp     w5, #4
+        b.ls    2f
+        ld2     {v16.8h, v17.8h}, [x10], #32    // vmx_tab_i_04
+        ld2     {v18.8h, v19.8h}, [x10], #32
         rows    0, 4
-        ld2     {v16.8h, v17.8h}, [x9], #32     // vmx_tab_i_17
-        ld2     {v18.8h, v19.8h}, [x9], #32
+        ld2     {v16.8h, v17.8h}, [x10], #32    // vmx_tab_i_17
+        ld2     {v18.8h, v19.8h}, [x10], #32
         rows    1, 7
-        ld2     {v16.8h, v17.8h}, [x9], #32     // vmx_tab_i_26
-        ld2     {v18.8h, v19.8h}, [x9], #32
+        ld2     {v16.8h, v17.8h}, [x10], #32    // vmx_tab_i_26
+        ld2     {v18.8h, v19.8h}, [x10], #32
         rows    2, 6
-        ld2     {v16.8h, v17.8h}, [x9], #32     // vmx_tab_i_35
-        ld2     {v18.8h, v19.8h}, [x9], #32
+        ld2     {v16.8h, v17.8h}, [x10], #32    // vmx_tab_i_35
+        ld2     {v18.8h, v19.8h}, [x10], #32
         rows    3, 5
-
+        b       3f
+2:      /* Rows 4-7 are zero; rows 0..rows-1 each get their own pass. */
+        ld2     {v16.8h, v17.8h}, [x10], #32    // vmx_tab_i_04
+        ld2     {v18.8h, v19.8h}, [x10], #32
+        row     0
+        cmp     w5, #2
+        b.lo    3f
+        ld2     {v16.8h, v17.8h}, [x10], #32    // vmx_tab_i_17
+        ld2     {v18.8h, v19.8h}, [x10], #32
+        row     1
+        cmp     w5, #3
+        b.lo    3f
+        ld2     {v16.8h, v17.8h}, [x10], #32    // vmx_tab_i_26
+        ld2     {v18.8h, v19.8h}, [x10], #32
+        row     2
+        cmp     w5, #4
+        b.lo    3f
+        ld2     {v16.8h, v17.8h}, [x10], #32    // vmx_tab_i_35
+        ld2     {v18.8h, v19.8h}, [x10], #32
+        row     3
+3:
         /* Column pass. v24-v27: TG_1/2, TG_2/2, TG_3/2, COS_4. */
+        add     x9, x9, #256                    // past the four row tables
         ld1     {v24.8h, v25.8h, v26.8h, v27.8h}, [x9], #64
         movi    v28.8h, #1
         movi    v29.8h, #32                     // IRND_INV_COL

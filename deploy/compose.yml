@@ -6,8 +6,8 @@ services:
     # Reap receiver descendants after failures and forward termination cleanly
     # instead of making the Web process act as an init system as well.
     init: true
-    # Compressed playout queue (up to 256 MiB of VMX) plus DRM, decoder
-    # scratch, and omt-web. The host floor is 1 GiB; this cap is half of that.
+    # DRM scanout buffers, decoder scratch, the frames in flight, and omt-web.
+    # The host floor is 1 GiB; this cap is half of that.
     mem_limit: "${OMT_CONTAINER_MEMORY_LIMIT:-512m}"
     memswap_limit: "${OMT_CONTAINER_MEMORY_LIMIT:-512m}"
     pids_limit: 64

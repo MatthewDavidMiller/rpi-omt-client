@@ -14,7 +14,7 @@
 #include "receiver/audio_alsa.h"
 #include "receiver/connector.h"
 #include "receiver/discovery.h"
-#include "receiver/jitter.h"
+#include "receiver/handoff.h"
 #include "receiver/video_drm.h"
 
 #define DETAIL 1024
@@ -55,17 +55,11 @@ static void wait_with_heartbeat(uint64_t total_ms, omt_playback_status *status,
     }
 }
 
-void omt_describe_running(const char *base, uint64_t delay_ms, uint64_t buffered_ms,
-                          uint64_t reconnects, uint64_t skipped, uint64_t underruns, char *out,
-                          size_t size) {
+void omt_describe_running(const char *base, uint64_t reconnects, uint64_t skipped, uint64_t dropped,
+                          char *out, size_t size) {
     omt_buf b;
     omt_buf_init(&b, size);
-    if (delay_ms == 0)
-        omt_buf_puts(&b, base);
-    else
-        omt_buf_printf(
-            &b, "%s %llu ms playout delay (~%llu ms buffered).", base, (unsigned long long)delay_ms,
-            (unsigned long long)(buffered_ms / OMT_BUFFERED_STEP_MS * OMT_BUFFERED_STEP_MS));
+    omt_buf_puts(&b, base);
     if (reconnects > 0 && skipped > 0)
         omt_buf_printf(&b, " %llu video reconnect(s) and %llu skipped frame(s) in this session.",
                        (unsigned long long)reconnects, (unsigned long long)skipped);
@@ -74,28 +68,22 @@ void omt_describe_running(const char *base, uint64_t delay_ms, uint64_t buffered
                        (unsigned long long)reconnects);
     else if (skipped > 0)
         omt_buf_printf(&b, " %llu skipped frame(s) in this session.", (unsigned long long)skipped);
-    if (underruns > 0)
-        omt_buf_printf(&b, " %llu buffer underrun(s) in this session.",
-                       (unsigned long long)underruns);
+    if (dropped > 0)
+        omt_buf_printf(&b, " %llu frame(s) replaced by a newer one before display in this session.",
+                       (unsigned long long)dropped);
     snprintf(out, size, "%s", omt_buf_cstr(&b));
     omt_buf_free(&b);
 }
 
-const char *omt_running_detail_get(omt_running_detail *d, const char *base, uint64_t delay_ms,
-                                   uint64_t buffered_ms, uint64_t reconnects, uint64_t skipped,
-                                   uint64_t underruns) {
-    uint64_t steps = buffered_ms / OMT_BUFFERED_STEP_MS;
+const char *omt_running_detail_get(omt_running_detail *d, const char *base, uint64_t reconnects,
+                                   uint64_t skipped, uint64_t dropped) {
     if (!d->valid || d->reconnects != reconnects || d->skipped != skipped ||
-        d->underruns != underruns || d->delay_ms != delay_ms || d->buffered_steps != steps ||
-        strcmp(d->base, base) != 0) {
+        d->dropped != dropped || strcmp(d->base, base) != 0) {
         d->reconnects = reconnects;
         d->skipped = skipped;
-        d->underruns = underruns;
-        d->delay_ms = delay_ms;
-        d->buffered_steps = steps;
+        d->dropped = dropped;
         snprintf(d->base, sizeof(d->base), "%s", base);
-        omt_describe_running(base, delay_ms, buffered_ms, reconnects, skipped, underruns, d->text,
-                             sizeof(d->text));
+        omt_describe_running(base, reconnects, skipped, dropped, d->text, sizeof(d->text));
         d->valid = true;
     }
     return d->text;
@@ -111,26 +99,27 @@ void omt_describe_audio(uint64_t underruns, char *out, size_t size) {
                  (unsigned long long)underruns);
 }
 
-/* Moves the frame just received into the queue when it is the wanted kind,
- * handing the channel a recycled buffer to read the next one into. */
-static bool accept_frame(omt_channel *c, omt_queue *q, omt_frame_type kind, bool playing) {
+/* Hands the frame just received to the queue when it is the wanted kind,
+ * giving the channel a recycled buffer to read the next one into. Frames the
+ * queue drops to make way are added to `dropped`. */
+static bool accept_frame(omt_channel *c, omt_queue *q, omt_frame_type kind, uint64_t *dropped) {
     if (c->frame.header.frame_type != kind) return false;
     uint8_t *spare;
     size_t cap;
     omt_queue_take_spare(q, &spare, &cap);
     omt_frame frame;
     omt_channel_take_frame(c, &frame, spare, cap);
-    (void)omt_queue_push(q, &frame, playing);
+    *dropped += omt_queue_push(q, &frame);
     return true;
 }
 
 /* Reads frames already in the kernel buffer, each on the drain slice. */
-static int drain_ready(omt_channel *c, omt_queue *q, omt_frame_type kind, bool playing,
-                       bool *received, omt_err *err) {
+static int drain_ready(omt_channel *c, omt_queue *q, omt_frame_type kind, bool *received,
+                       uint64_t *dropped, omt_err *err) {
     for (;;) {
         omt_recv_status st = omt_channel_receive(c, omt_now_ms() + OMT_DRAIN_SLICE_MS, err);
         if (st == OMT_RECV_OK)
-            *received |= accept_frame(c, q, kind, playing);
+            *received |= accept_frame(c, q, kind, dropped);
         else if (st == OMT_RECV_WOULD_BLOCK)
             return 0;
         else
@@ -141,15 +130,15 @@ static int drain_ready(omt_channel *c, omt_queue *q, omt_frame_type kind, bool p
 /* Copies every complete frame the socket will give without stalling the
  * accept path, then waits until `wait_until` for the next one. Returns -1 on
  * a channel error. */
-static int drain(omt_channel *c, omt_queue *q, omt_frame_type kind, bool playing,
-                 uint64_t wait_until, bool *received, omt_err *err) {
+static int drain(omt_channel *c, omt_queue *q, omt_frame_type kind, uint64_t wait_until,
+                 bool *received, uint64_t *dropped, omt_err *err) {
     *received = false;
-    if (drain_ready(c, q, kind, playing, received, err) < 0) return -1;
+    if (drain_ready(c, q, kind, received, dropped, err) < 0) return -1;
     if (omt_remaining_ms(wait_until) == 0) return 0;
     omt_recv_status st = omt_channel_receive(c, wait_until, err);
     if (st == OMT_RECV_OK) {
-        *received |= accept_frame(c, q, kind, playing);
-        return drain_ready(c, q, kind, playing, received, err);
+        *received |= accept_frame(c, q, kind, dropped);
+        return drain_ready(c, q, kind, received, dropped, err);
     }
     return st == OMT_RECV_WOULD_BLOCK ? 0 : -1;
 }
@@ -163,8 +152,6 @@ typedef struct {
     omt_playback_status *status;
     atomic_bool active;
     atomic_bool *stop;
-    uint64_t delay_ms;
-    omt_fill_gate *gate;
     bool status_failed;
 } audio_context;
 
@@ -198,18 +185,16 @@ static void *audio_loop(void *raw) {
             uint64_t reported = 0;
             uint64_t stall_at = omt_now_ms() + OMT_MEDIA_STALL_MS;
             omt_queue queue;
-            omt_queue_init(&queue, OMT_QUEUE_AUDIO, ctx->delay_ms * 1000000ull, OMT_AUDIO_BYTE_CAP);
-            bool playing = false, has_filled = false;
-            uint64_t filled_at = 0;
+            omt_queue_init(&queue, OMT_QUEUE_AUDIO, OMT_AUDIO_BYTE_CAP);
+            uint64_t trimmed = 0;
             while (wanted(ctx)) {
                 /* Paced by the device, not the wall clock: while audio is
                  * queued and the ring is full, wake once a period. */
-                bool feeding = playing && !omt_queue_empty(&queue);
-                uint64_t wait_until =
-                    omt_now_ms() + (feeding ? OMT_AUDIO_FEED_MS : OMT_RECEIVE_SLICE_MS);
+                uint64_t wait_until = omt_now_ms() + (omt_queue_empty(&queue) ? OMT_RECEIVE_SLICE_MS
+                                                                              : OMT_AUDIO_FEED_MS);
                 bool received;
-                if (drain(&channel, &queue, OMT_FRAME_AUDIO, playing, wait_until, &received, &err) <
-                    0) {
+                if (drain(&channel, &queue, OMT_FRAME_AUDIO, wait_until, &received, &trimmed,
+                          &err) < 0) {
                     if (!omt_channel_connected(&channel)) {
                         failure = err;
                         break;
@@ -217,19 +202,10 @@ static void *audio_loop(void *raw) {
                 } else if (received) {
                     stall_at = omt_now_ms() + OMT_MEDIA_STALL_MS;
                 }
-                if (!playing && omt_queue_filled(&queue)) {
-                    omt_gate_set_audio(ctx->gate, true);
-                    if (!has_filled) {
-                        filled_at = omt_now_ms();
-                        has_filled = true;
-                    }
-                    bool peer_ok = ctx->delay_ms == 0 || omt_gate_video_ready(ctx->gate);
-                    if (peer_ok || omt_now_ms() >= filled_at + OMT_PEER_WAIT_MS) playing = true;
-                }
-                /* An empty queue while playing is the steady state: what was
-                 * queued is in the ring. The underrun that matters is ALSA's. */
+                /* An empty queue is the steady state: what arrived is already
+                 * in the ring. The underrun that matters is ALSA's. */
                 bool written = false;
-                while (playing && omt_audio_room(output)) {
+                while (omt_audio_room(output)) {
                     omt_frame frame;
                     if (!omt_queue_pop(&queue, &frame)) break;
                     bool ok = omt_audio_write(output, &frame, ctx->device, &err);
@@ -245,13 +221,6 @@ static void *audio_loop(void *raw) {
                 if (underruns != reported) {
                     reported = underruns;
                     omt_describe_audio(underruns, detail, sizeof(detail));
-                    /* A delay is a promise of that much cushion; the ring ran
-                     * dry, so rebuild it before playing on, as video does. */
-                    if (ctx->delay_ms != 0) {
-                        playing = false;
-                        has_filled = false;
-                        omt_gate_set_audio(ctx->gate, false);
-                    }
                 }
                 if (written) audio_status(ctx, OMT_AUDIO_RUNNING, detail);
                 if (omt_queue_empty(&queue) && omt_now_ms() >= stall_at) {
@@ -262,7 +231,6 @@ static void *audio_loop(void *raw) {
             }
             omt_queue_free(&queue);
         } else {
-            omt_gate_set_audio_missing(ctx->gate);
             failure = err;
         }
         omt_audio_free(output);
@@ -289,8 +257,7 @@ typedef struct {
 } audio_worker;
 
 static void audio_start(audio_worker *w, const omt_endpoint *ep, const omt_hdmi *connector,
-                        omt_playback_status *status, atomic_bool *stop, uint64_t delay_ms,
-                        omt_fill_gate *gate) {
+                        omt_playback_status *status, atomic_bool *stop) {
     memset(w, 0, sizeof(*w));
     w->ctx = calloc(1, sizeof(audio_context));
     omt_connector described;
@@ -302,8 +269,6 @@ static void audio_start(audio_worker *w, const omt_endpoint *ep, const omt_hdmi 
         w->ctx->status = status;
         atomic_init(&w->ctx->active, true);
         w->ctx->stop = stop;
-        w->ctx->delay_ms = delay_ms;
-        w->ctx->gate = gate;
         pthread_attr_t attr;
         if (pthread_attr_init(&attr) == 0) {
             pthread_attr_setstacksize(&attr, OMT_AUDIO_STACK);
@@ -318,7 +283,6 @@ static void audio_start(audio_worker *w, const omt_endpoint *ep, const omt_hdmi 
         }
     }
     if (!w->running) {
-        omt_gate_set_audio_missing(gate);
         omt_err err;
         if (omt_status_audio(status, OMT_AUDIO_FAILED,
                              "Audio unavailable: unable to create bounded-stack worker.",
@@ -360,36 +324,32 @@ static bool session(const omt_play_options *o, const omt_hdmi *connector,
         omt_video_close(&output);
         return false;
     }
-    omt_fill_gate gate;
-    omt_gate_init(&gate);
     audio_worker audio;
-    audio_start(&audio, &endpoint, connector, status, stop, o->playout_delay_ms, &gate);
+    audio_start(&audio, &endpoint, connector, status, stop);
     omt_connector described;
     omt_hdmi_describe(connector, &described);
-    char fill_detail[128];
-    if (o->playout_delay_ms == 0)
-        snprintf(fill_detail, sizeof(fill_detail), "Waiting for OMT media.");
-    else
-        snprintf(fill_detail, sizeof(fill_detail), "Waiting for %llu ms playout buffer.",
-                 (unsigned long long)o->playout_delay_ms);
     omt_err err;
-    note_status(logged, omt_status_video(status, OMT_VIDEO_STARTING, fill_detail, &described, &err),
-                &err);
+    note_status(
+        logged,
+        omt_status_video(status, OMT_VIDEO_STARTING, "Waiting for OMT media.", &described, &err),
+        &err);
 
     uint64_t last_frame = omt_now_ms() + OMT_MEDIA_GRACE_MS;
     uint64_t stall_at = omt_now_ms() + OMT_MEDIA_STALL_MS;
     uint64_t next_connector_check = omt_now_ms();
     bool failed = false;
-    uint64_t reconnects = 0, skipped = 0, underruns = 0;
+    uint64_t reconnects = 0, skipped = 0, dropped = 0;
     uint32_t attempts = 0;
     omt_running_detail running;
     memset(&running, 0, sizeof(running));
     omt_queue queue;
-    omt_queue_init(&queue, OMT_QUEUE_VIDEO, o->playout_delay_ms * 1000000ull, OMT_VIDEO_BYTE_CAP);
-    bool playing = false, has_filled = false, has_interval = false;
-    uint64_t next_due_ns = 0, filled_at = 0, interval_ns = 0;
+    omt_queue_init(&queue, OMT_QUEUE_VIDEO, OMT_VIDEO_BYTE_CAP);
     char detail[DETAIL];
 
+    /* No playout clock: each frame is decoded and flipped as soon as it
+     * arrives, and the display's own refresh is the only pacing. While a
+     * frame is being decoded, whatever arrives behind it waits in the
+     * socket; the next drain keeps only the newest of those. */
     while (!stopped(stop)) {
         if (omt_now_ms() >= next_connector_check) {
             next_connector_check = omt_now_ms() + OMT_CONNECTOR_POLL_MS;
@@ -399,21 +359,9 @@ static bool session(const omt_play_options *o, const omt_hdmi *connector,
                 break;
             }
         }
-        /* Presentation is paced in nanoseconds so 59.94 does not drift. */
-        uint64_t now_ns = (uint64_t)(omt_now_seconds() * 1e9);
-        uint64_t now = omt_now_ms();
-        bool present_due = playing && now_ns >= next_due_ns;
-        uint64_t wait_until;
-        if (present_due)
-            wait_until = now;
-        else if (playing) {
-            uint64_t due_ms = next_due_ns / 1000000u + (next_due_ns % 1000000u ? 1 : 0);
-            wait_until = due_ms < now + OMT_RECEIVE_SLICE_MS ? due_ms : now + OMT_RECEIVE_SLICE_MS;
-        } else
-            wait_until = now + OMT_RECEIVE_SLICE_MS;
-
         bool received;
-        if (drain(&video, &queue, OMT_FRAME_VIDEO, playing, wait_until, &received, &err) == 0) {
+        if (drain(&video, &queue, OMT_FRAME_VIDEO, omt_now_ms() + OMT_RECEIVE_SLICE_MS, &received,
+                  &dropped, &err) == 0) {
             if (received) {
                 attempts = 0;
                 last_frame = omt_now_ms() + OMT_MEDIA_GRACE_MS;
@@ -458,76 +406,36 @@ static bool session(const omt_play_options *o, const omt_hdmi *connector,
             }
         }
 
-        if (omt_queue_filled(&queue)) {
-            omt_gate_set_video(&gate, true);
-            if (!has_filled) {
-                filled_at = omt_now_ms();
-                has_filled = true;
-            }
-            bool peer_ok = o->playout_delay_ms == 0 || omt_gate_audio_ready(&gate);
-            bool waited = omt_now_ms() >= filled_at + OMT_PEER_WAIT_MS;
-            if (!playing && (peer_ok || waited)) {
-                playing = true;
-                next_due_ns = (uint64_t)(omt_now_seconds() * 1e9);
-                if (o->playout_delay_ms == 0) omt_queue_keep_latest_only(&queue);
-            }
-        }
-
-        if (playing && (uint64_t)(omt_now_seconds() * 1e9) >= next_due_ns) {
-            omt_frame frame;
-            if (omt_queue_pop(&queue, &frame)) {
-                uint64_t interval;
-                if (frame.has_video && omt_video_interval_ns(&frame.video, &interval)) {
-                    interval_ns = interval;
-                    has_interval = true;
-                }
-                bool interlaced = frame.has_video && (frame.video.flags & 1u) != 0;
-                omt_present outcome = omt_video_present(&output, &frame, detail, sizeof(detail));
-                omt_err st;
-                if (outcome == OMT_PRESENTED || outcome == OMT_PRESENT_SKIPPED) {
-                    if (outcome == OMT_PRESENT_SKIPPED) skipped++;
-                    next_due_ns += has_interval ? interval_ns : 33000000ull;
-                    const char *base = omt_video_presentation_detail(&output, interlaced);
-                    const char *text = omt_running_detail_get(
-                        &running, base, o->playout_delay_ms,
-                        omt_queue_duration_ns(&queue) / 1000000u, reconnects, skipped, underruns);
-                    note_status(logged,
-                                omt_status_video(status, OMT_VIDEO_RUNNING, text, &described, &st),
-                                &st);
-                } else if (outcome == OMT_PRESENT_UNSUPPORTED) {
-                    note_status(logged,
-                                omt_status_video(status, OMT_VIDEO_UNSUPPORTED_FORMAT, detail,
-                                                 &described, &st),
-                                &st);
-                } else {
-                    omt_err_set(failure, "%s", detail);
-                    failed = true;
-                    omt_queue_recycle(&queue, frame.payload, frame.cap);
-                    break;
-                }
-                omt_queue_recycle(&queue, frame.payload, frame.cap);
-            } else {
-                underruns++;
-                playing = false;
-                has_filled = false;
-                omt_gate_set_video(&gate, false);
-                const char *text =
-                    omt_running_detail_get(&running, omt_video_presentation_detail(&output, false),
-                                           o->playout_delay_ms, 0, reconnects, skipped, underruns);
-                omt_err st;
+        omt_frame frame;
+        if (omt_queue_pop(&queue, &frame)) {
+            bool interlaced = frame.has_video && (frame.video.flags & 1u) != 0;
+            omt_present outcome = omt_video_present(&output, &frame, detail, sizeof(detail));
+            omt_queue_recycle(&queue, frame.payload, frame.cap);
+            omt_err st;
+            if (outcome == OMT_PRESENTED || outcome == OMT_PRESENT_SKIPPED) {
+                if (outcome == OMT_PRESENT_SKIPPED) skipped++;
+                const char *text = omt_running_detail_get(
+                    &running, omt_video_presentation_detail(&output, interlaced), reconnects,
+                    skipped, dropped);
                 note_status(logged,
                             omt_status_video(status, OMT_VIDEO_RUNNING, text, &described, &st),
                             &st);
+            } else if (outcome == OMT_PRESENT_UNSUPPORTED) {
+                note_status(
+                    logged,
+                    omt_status_video(status, OMT_VIDEO_UNSUPPORTED_FORMAT, detail, &described, &st),
+                    &st);
+            } else {
+                omt_err_set(failure, "%s", detail);
+                failed = true;
+                break;
             }
-        }
-
-        if (omt_queue_empty(&queue) && omt_now_ms() >= stall_at) {
+        } else if (omt_now_ms() >= stall_at) {
             omt_err_set(failure, "No video frames for %u seconds on a connected socket.",
                         OMT_MEDIA_STALL_MS / 1000);
             failed = true;
             break;
-        }
-        if (omt_queue_empty(&queue) && !playing && omt_now_ms() >= last_frame) {
+        } else if (omt_now_ms() >= last_frame) {
             omt_err st;
             note_status(logged,
                         omt_status_video(status, OMT_VIDEO_RETRYING, "Waiting for video frames.",

@@ -28,9 +28,6 @@
 /* Added before each reconnect attempt after the first. */
 #define OMT_RECOVER_BACKOFF_MS 250u
 #define OMT_RECOVER_TIMEOUT_MS 1000u
-/* After one queue has filled, how long to wait for the other. */
-#define OMT_PEER_WAIT_MS 1000u
-#define OMT_BUFFERED_STEP_MS 100u
 /* The audio worker's wake interval while the ring is at its target. */
 #define OMT_AUDIO_FEED_MS 20u
 /* Receive slice used to copy frames already in the kernel buffer. */
@@ -41,31 +38,27 @@ typedef struct {
     const char *preference;
     uint64_t retry_ms;
     omt_video_ceiling ceiling;
-    uint64_t playout_delay_ms;
 } omt_play_options;
 
 /* Runs until `stop` is raised, then reports a stopped document. */
 void omt_play_run(const omt_play_options *options, omt_playback_status *status, atomic_bool *stop);
 
-/* The running detail with this session's delay, buffer, and counts; rebuilt
- * only when something it names changes. */
+/* The running detail with this session's counts; rebuilt only when something
+ * it names changes. `skipped` counts frames the decoder refused; `dropped`
+ * counts frames a newer one replaced before the display could take them. */
 typedef struct {
-    uint64_t delay_ms;
-    uint64_t buffered_steps;
     uint64_t reconnects;
     uint64_t skipped;
-    uint64_t underruns;
+    uint64_t dropped;
     char base[256];
     char text[512];
     bool valid;
 } omt_running_detail;
 
-const char *omt_running_detail_get(omt_running_detail *d, const char *base, uint64_t delay_ms,
-                                   uint64_t buffered_ms, uint64_t reconnects, uint64_t skipped,
-                                   uint64_t underruns);
-void omt_describe_running(const char *base, uint64_t delay_ms, uint64_t buffered_ms,
-                          uint64_t reconnects, uint64_t skipped, uint64_t underruns, char *out,
-                          size_t size);
+const char *omt_running_detail_get(omt_running_detail *d, const char *base, uint64_t reconnects,
+                                   uint64_t skipped, uint64_t dropped);
+void omt_describe_running(const char *base, uint64_t reconnects, uint64_t skipped, uint64_t dropped,
+                          char *out, size_t size);
 void omt_describe_audio(uint64_t underruns, char *out, size_t size);
 
 #endif

@@ -77,8 +77,8 @@ cards can expose the same connector name and the attached display may be behind
 any of them.
 
 The runtime is capped at 512 MiB and 64 processes on every board. At 1080p it
-uses three DRM scanout buffers, a compressed playout queue of up to 256 MiB,
-bounded network frames, and a persistent pool of
+uses three DRM scanout buffers, one compressed video frame and at most
+100 ms of audio in flight, bounded network frames, and a persistent pool of
 VMX workers with 128 KiB stacks (created once per decoder, not per frame).
 Each worker owns one slice of YUV scratch rather than every slice of the frame,
 and bitstream readers grow to the loaded payload instead of memset-ing the
@@ -135,6 +135,12 @@ only because no BT.601 or BT.709 channel can come near the 16-bit limit. Each
 of those is a claim about every input, so the suites prove it: the conversion
 is compared on every (Y, U, V) under both coefficient sets, and the transform
 on random, saturating, and single-coefficient blocks under every quality.
+The transform also skips the row passes of empty rows. The entropy decoder
+knows the last zig-zag position it wrote, which bounds the rows that can hold a
+coefficient, and a zero row's pass is exactly zero, so blocks whose
+coefficients end in the first four rows -- most blocks of most pictures -- run
+only those rows' passes. That is worth about a fifth of a 1080p gradient
+decode on a Pi 4 and costs a dense block one compare.
 
 What the assembly gives up is the sanitizers and the fuzzer, which see only C.
 That is acceptable for these two kernels and no others: each reads one fixed
@@ -174,15 +180,19 @@ modes outside the fixed 1920x1080 envelope are never selected. Only a display
 offering no usable mode at all is now reported as `unsupported-format`, and the
 running status names both sizes so a resample is visible rather than silent.
 
-The resample is nearest-neighbour with pixel-centre sampling, and it is the
-filter the budget allows: the Pi 4 tier already spends 26.4 ms of its 33.3 ms
-interval decoding a 1080p frame, so a bilinear pass over the destination would
-not fit. It costs one intermediate frame of ordinary memory, at most 8 MiB
-against the 512 MiB container, and only for a session that needs it.
-When enlargement maps adjacent destination rows to the same source row, the
-scaler copies the already resampled pixels. It preserves padding and black bars
-and needs no additional buffer. Geometry and destination extent checks reject
-zero-sized placements and overflowing strides before rendering.
+The resample is nearest-neighbour with pixel-centre sampling, the filter a
+decode-bound board has room for. It runs inside the decode
+(`vmx_decode_bgrx_placed`) rather than after it: `scale.c` builds one table of
+source columns and one of source rows, and each worker converts only the source
+rows its slices contribute, gathers each into a destination row, and stores it
+into the scanout buffer once. The resample therefore runs on the whole worker
+pool, a downscale never converts rows nobody sees, an enlargement converts each
+source row once however many destination rows repeat it, and there is no
+intermediate frame. On a Pi 4 that took a 1080p source into a 1280x720 mode
+from 12.8 ms to 7.1 ms a frame and into a 3840x2160 mode from 37.4 ms -- over
+the 30 fps interval -- to 17.0 ms. Every table index and the destination extent
+are checked before any worker runs; pixels outside the placed area, the black
+bars, are never written.
 
 HDMI audio is resolved rather than assumed. The Pi 4 and Pi 5 register one ALSA
 card per output, `vc4hdmi0` and `vc4hdmi1`. The receiver reads
@@ -237,22 +247,20 @@ covers the 3.5 s Wi-Fi stalls measured against vMix. `control-omt.sh` waits
 eight seconds after SIGTERM so that budget cannot outlive a shutdown.
 
 TCP reads stay greedy: OMT requires the receiver never block when accepting
-data. Delay lives only in a compressed playout queue (`src/receiver/jitter.c`),
-operator-configurable from 0 to 8000 ms on the System page and 0 by default.
-Zero is the official `omtplayer` profile (present as soon as a frame arrives).
-With a delay, HDMI and ALSA start after both queues hold that depth. Video then
-paces at the announced frame rate. Audio is paced by the HDMI audio device
-instead: the worker tops the ALSA ring up to 160 ms whenever it falls below,
-so the sender's clock, the Pi's clock, and the sink's clock cannot drift the
-ring dry. Video sheds frames to stay live -- at delay 0 it keeps only the
-newest -- but audio is never trimmed to one frame, because every audio frame
-shed is a gap in the sound; a playing audio queue sheds only past the delay
-plus 100 ms. The queue stores VMX and FPA1, not decoded frames, and is capped
-at 256 MiB of video payload and the configured delay plus 0.5 s. vMix drops in-flight extras when its send pool
-fills, so after a stall the Pi plays through frames already queued and then
-jumps to live — a pre-roll cushion, not a catch-up reel. If the stall lasts
-longer than the remaining buffer the last DRM frame is held, a buffer underrun
-is counted, and the TCP session stays up while the queue refills. Kernel
+data. There is no playout buffer. An OMT sender keeps none, so frames held on
+the Pi would only put the picture further behind it; decode speed, not a
+cushion, is what keeps playback live. `src/receiver/handoff.c` hands each
+frame on as soon as its consumer can take it. Video is a single slot: a frame
+is decoded and flipped as soon as it arrives, the display's refresh is the only
+pacing, and a frame a newer one replaces before the display took it is dropped
+and counted in the playing detail. Audio cannot skip ahead, so it queues in
+arrival order and is paced by the HDMI audio device: the worker tops the ALSA
+ring up to 160 ms whenever it falls below, so the sender's clock, the Pi's
+clock, and the sink's clock cannot drift the ring dry, and a backlog past
+100 ms -- a sender running ahead of the sink -- sheds its oldest frames. vMix
+drops in-flight extras when its send pool fills, so after a stall the next
+frames are live rather than a catch-up burst; the last picture stays on screen
+meanwhile. Kernel
 `SO_RCVBUF` is 8 MiB, matching libomtnet `NETWORK_RECEIVE_BUFFER`.
 
 A closed video socket no longer tears down HDMI and audio with it. The play

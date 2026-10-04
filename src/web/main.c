@@ -3,7 +3,7 @@
  *
  * omt-web: the appliance's HTTPS operator interface, and the small helper
  * commands the container scripts call (initialize, set-password,
- * play-target, video-ceiling, playout-delay).
+ * play-target, video-ceiling).
  */
 #include <errno.h>
 #include <signal.h>
@@ -92,16 +92,10 @@ int main(int argc, char **argv) {
         omt_buf_free(&value);
         return 0;
     }
-    if (argc == 4 && strcmp(argv[1], "playout-delay") == 0) {
-        uint64_t ms;
-        if (!omt_effective_playout_delay(argv[2], argv[3], &ms, &err)) return fail(err.msg);
-        printf("%llu\n", (unsigned long long)ms);
-        return 0;
-    }
     if (argc != 1)
         return fail(
             "usage: omt-web [initialize | set-password | play-target PATH | video-ceiling PATH "
-            "BOARD_DEFAULT | playout-delay PATH DEFAULT]");
+            "BOARD_DEFAULT]");
 
     static omt_app app;
     if (!omt_app_init(&app, &settings, &err)) return fail(err.msg);

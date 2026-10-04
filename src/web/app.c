@@ -555,9 +555,6 @@ static void do_direct(request_ctx *r, const omt_form *f, omt_action_result *out)
 static void do_video_limit(request_ctx *r, const omt_form *f, omt_action_result *out) {
     omt_playback_save_video_limit(&r->app->playback, field(f, "video_limit"), out);
 }
-static void do_playout_delay(request_ctx *r, const omt_form *f, omt_action_result *out) {
-    omt_playback_save_playout_delay(&r->app->playback, field(f, "playout_delay"), out);
-}
 
 static void refresh_sources(request_ctx *r) {
     omt_form form;
@@ -763,14 +760,6 @@ static void system_get(request_ctx *r) {
     omt_video_limit limit;
     omt_playback_video_limit(&r->app->playback, &limit);
     tv_set(a, ctx, "video_limit", video_limit_tv(a, &limit));
-    omt_playout_delay_view delay;
-    omt_playback_playout_delay(&r->app->playback, &delay);
-    tv *d = tv_map(a);
-    tv_set_int(a, d, "milliseconds", (int64_t)delay.milliseconds);
-    tv_set_int(a, d, "default_milliseconds", (int64_t)delay.default_milliseconds);
-    tv_set_bool(a, d, "overridden", delay.overridden);
-    tv_set_str(a, d, "error", delay.error);
-    tv_set(a, ctx, "playout_delay", d);
     render(r, "system.html", ctx, 200);
 }
 
@@ -839,7 +828,6 @@ static void restart_playback(request_ctx *r) { post_action(r, "/", do_restart); 
 static void clear_playback(request_ctx *r) { post_action(r, "/", do_clear); }
 static void direct_source(request_ctx *r) { post_action(r, "/settings/network", do_direct); }
 static void video_limit_post(request_ctx *r) { post_action(r, "/system", do_video_limit); }
-static void playout_delay_post(request_ctx *r) { post_action(r, "/system", do_playout_delay); }
 static void diagnostics_discovery(request_ctx *r) { diagnostics_action(r, DIAG_DISCOVERY); }
 static void diagnostics_runtime(request_ctx *r) { diagnostics_action(r, DIAG_RUNTIME); }
 static void diagnostics_direct(request_ctx *r) { diagnostics_action(r, DIAG_DIRECT); }
@@ -869,7 +857,6 @@ static const struct {
     {"/diagnostics/download", NULL, diagnostics_download},
     {"/system", system_get, NULL},
     {"/system/video-limit", NULL, video_limit_post},
-    {"/system/playout-delay", NULL, playout_delay_post},
     {"/system/reboot", reboot_get, reboot_post},
     {"/about", about, NULL},
 };

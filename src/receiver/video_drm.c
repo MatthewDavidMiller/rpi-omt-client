@@ -126,7 +126,6 @@ static void release(omt_video_output *o) {
     for (size_t i = 0; i < o->cfg.surface_count; i++) destroy_surface(o->fd, &o->cfg.surfaces[i]);
     vmx_decoder_free(o->cfg.decoder);
     if (o->cfg.scaled) omt_scaler_free(&o->cfg.scaler);
-    free(o->cfg.scaled_frame);
     memset(&o->cfg, 0, sizeof(o->cfg));
 }
 
@@ -435,17 +434,13 @@ static omt_present configure(omt_video_output *o, const omt_video_header *h, cha
             result = OMT_PRESENT_UNSUPPORTED;
             goto done;
         }
-        cfg.scaled_len = width * 4 * height;
-        cfg.scaled_frame = calloc(cfg.scaled_len, 1);
-        if (!cfg.scaled_frame) {
-            snprintf(detail, size, "Unable to reserve the scaled video frame");
-            goto done;
-        }
-        if (!omt_scaler_init(&cfg.scaler, width, height, width * 4, placement, &err)) {
+        if (!omt_scaler_init(&cfg.scaler, width, height, placement, &err)) {
             snprintf(detail, size, "%s", err.msg);
             goto done;
         }
         cfg.scaled = true;
+        cfg.placed = (vmx_placement){placement.x,      placement.y,        placement.width,
+                                     placement.height, cfg.scaler.columns, cfg.scaler.rows};
     }
     for (size_t i = 0; i < OMT_DRM_BUFFERS; i++) {
         if (!create_surface(o->fd, mode.hdisplay, mode.vdisplay, &cfg.surfaces[i], detail, size))
@@ -484,7 +479,6 @@ done:
     for (size_t i = 0; i < cfg.surface_count; i++) destroy_surface(o->fd, &cfg.surfaces[i]);
     vmx_decoder_free(cfg.decoder);
     if (cfg.scaled) omt_scaler_free(&cfg.scaler);
-    free(cfg.scaled_frame);
     free(modes);
     return result;
 }
@@ -535,20 +529,14 @@ omt_present omt_video_present(omt_video_output *o, const omt_frame *frame, char 
     if (st != VMX_OK) return omt_classify_decode(st, c->presented, &c->skips, detail, size);
     /* Decoding happens before the outstanding flip is retired: with three
      * surfaces the target is neither on screen nor queued, which is what the
-     * third buffer is for. */
-    if (c->scaled) {
-        st = vmx_decode_bgrx(c->decoder, c->scaled_frame, c->scaled_len, c->scaler.source_stride);
-        if (st != VMX_OK) return omt_classify_decode(st, c->presented, &c->skips, detail, size);
-        omt_err err;
-        if (!omt_scaler_render(&c->scaler, c->scaled_frame, c->scaled_len, surface->map,
-                               surface->size, surface->pitch, &err)) {
-            snprintf(detail, size, "%s", err.msg);
-            return OMT_PRESENT_FAILED;
-        }
-    } else {
+     * third buffer is for. A scaled mode resamples inside the decode, on the
+     * whole worker pool, straight into the surface. */
+    if (c->scaled)
+        st = vmx_decode_bgrx_placed(c->decoder, surface->map, surface->size, surface->pitch,
+                                    &c->placed);
+    else
         st = vmx_decode_bgrx(c->decoder, surface->map, surface->size, surface->pitch);
-        if (st != VMX_OK) return omt_classify_decode(st, c->presented, &c->skips, detail, size);
-    }
+    if (st != VMX_OK) return omt_classify_decode(st, c->presented, &c->skips, detail, size);
     if (!retire_flip(o, detail, size)) return OMT_PRESENT_FAILED;
     struct omt_drm_mode_crtc_page_flip flip = {
         .crtc_id = c->crtc, .fb_id = surface->framebuffer, .flags = OMT_DRM_MODE_PAGE_FLIP_EVENT};

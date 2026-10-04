@@ -185,6 +185,114 @@ static void rejects_undersized_destinations(void) {
     omt_buf_free(&compressed);
 }
 
+/* Pixel-centre nearest-neighbour samples, the rule the receiver's scaler
+ * builds its tables with. */
+static uint32_t *samples(size_t destination, size_t source) {
+    uint32_t *t = test_alloc(destination * sizeof(uint32_t));
+    for (size_t i = 0; i < destination; i++) {
+        size_t c = ((2 * i + 1) * source) / (2 * destination);
+        t[i] = (uint32_t)(c < source ? c : source - 1);
+    }
+    return t;
+}
+
+/* A placed decode is a full decode followed by a gather: every placed pixel
+ * matches, and nothing outside the placed area is touched. */
+static void placed_decodes_match_decode_then_gather(void) {
+    vector vectors[32];
+    size_t n = load_vectors(vectors, 32);
+    CHECK(n > 0);
+    for (size_t i = 0; i < n; i++) {
+        const vector *v = &vectors[i];
+        omt_buf compressed;
+        CHECK(read_stream(v, &compressed));
+        size_t full_len = v->width * v->height * 4;
+        uint8_t *full = test_alloc(full_len);
+        vmx_decoder *d = make(v, 3);
+        CHECK_INT(vmx_decoder_load(d, compressed.data, compressed.len), VMX_OK);
+        CHECK_INT(vmx_decode_bgrx(d, full, full_len, v->width * 4), VMX_OK);
+        /* Shrunk into the top-left, enlarged and letterboxed, and placed at
+         * its own size off-centre. */
+        size_t shapes[][6] = {
+            {v->width, v->height, 0, 0, v->width * 2 / 3 + 1, v->height * 2 / 3 + 1},
+            {v->width * 3, v->height * 2 + 9, 7, 5, v->width * 2 + 3, v->height * 2},
+            {v->width + 6, v->height + 2, 3, 1, v->width, v->height},
+        };
+        for (size_t c = 0; c < OMT_ARRAY_LEN(shapes); c++)
+            for (size_t workers = 1; workers <= 4; workers += 3) {
+                size_t mode_w = shapes[c][0], mode_h = shapes[c][1];
+                uint32_t *columns = samples(shapes[c][4], v->width);
+                uint32_t *rows = samples(shapes[c][5], v->height);
+                vmx_placement p = {shapes[c][2], shapes[c][3], shapes[c][4],
+                                   shapes[c][5], columns,      rows};
+                size_t stride = mode_w * 4 + 12, len = stride * mode_h;
+                uint8_t *expected = test_alloc(len), *actual = test_alloc(len);
+                memset(expected, 0xA5, len);
+                memset(actual, 0xA5, len);
+                for (size_t y = 0; y < p.height; y++)
+                    for (size_t x = 0; x < p.width; x++)
+                        memcpy(expected + (p.y + y) * stride + (p.x + x) * 4,
+                               full + (size_t)p.rows[y] * v->width * 4 + (size_t)p.columns[x] * 4,
+                               4);
+                vmx_decoder *placed = make(v, workers);
+                CHECK_INT(vmx_decoder_load(placed, compressed.data, compressed.len), VMX_OK);
+                CHECK_INT(vmx_decode_bgrx_placed(placed, actual, len, stride, &p), VMX_OK);
+                CHECK_MSG(memcmp(expected, actual, len) == 0, "%s shape %zu with %zu workers",
+                          v->label, c, workers);
+                vmx_decoder_free(placed);
+                free(columns);
+                free(rows);
+                free(expected);
+                free(actual);
+            }
+        vmx_decoder_free(d);
+        free(full);
+        omt_buf_free(&compressed);
+    }
+}
+
+/* Every index a worker follows is checked before any worker runs. */
+static void placed_decodes_reject_bad_placements(void) {
+    vector vectors[32];
+    CHECK(load_vectors(vectors, 32) > 0);
+    const vector *v = &vectors[0];
+    omt_buf compressed;
+    CHECK(read_stream(v, &compressed));
+    vmx_decoder *d = make(v, 2);
+    CHECK_INT(vmx_decoder_load(d, compressed.data, compressed.len), VMX_OK);
+    uint32_t *columns = samples(v->width, v->width), *rows = samples(v->height, v->height);
+    size_t stride = v->width * 4, len = stride * v->height;
+    uint8_t *out = test_alloc(len);
+    vmx_placement p = {0, 0, v->width, v->height, columns, rows};
+    CHECK_INT(vmx_decode_bgrx_placed(d, out, len, stride, &p), VMX_OK);
+    CHECK_INT(vmx_decode_bgrx_placed(d, out, len, stride, NULL), VMX_INVALID_DIMENSIONS);
+    CHECK_INT(vmx_decode_bgrx_placed(d, out, len - 1, stride, &p), VMX_OUTPUT_SIZE);
+    CHECK_INT(vmx_decode_bgrx_placed(d, out, len, stride - 4, &p), VMX_OUTPUT_SIZE);
+    vmx_placement shifted = p;
+    shifted.x = 1;
+    CHECK_INT(vmx_decode_bgrx_placed(d, out, len, stride, &shifted), VMX_OUTPUT_SIZE);
+    shifted = p;
+    shifted.y = SIZE_MAX;
+    CHECK_INT(vmx_decode_bgrx_placed(d, out, len, stride, &shifted), VMX_OUTPUT_SIZE);
+    vmx_placement empty = p;
+    empty.width = 0;
+    CHECK_INT(vmx_decode_bgrx_placed(d, out, len, stride, &empty), VMX_INVALID_DIMENSIONS);
+    columns[v->width - 1] = (uint32_t)v->width;
+    CHECK_INT(vmx_decode_bgrx_placed(d, out, len, stride, &p), VMX_INVALID_DIMENSIONS);
+    columns[v->width - 1] = 0;
+    rows[1] = rows[0] + 3;
+    rows[2] = rows[0];
+    CHECK_INT(vmx_decode_bgrx_placed(d, out, len, stride, &p), VMX_INVALID_DIMENSIONS);
+    rows[2] = rows[1];
+    rows[v->height - 1] = (uint32_t)v->height;
+    CHECK_INT(vmx_decode_bgrx_placed(d, out, len, stride, &p), VMX_INVALID_DIMENSIONS);
+    free(columns);
+    free(rows);
+    free(out);
+    vmx_decoder_free(d);
+    omt_buf_free(&compressed);
+}
+
 static void rejects_unsupported_geometry(void) {
     size_t cases[][3] = {{8, 32, 1},  {1922, 1080, 1}, {64, 8, 1}, {64, 1082, 1},
                          {65, 32, 1}, {64, 32, 0},     {64, 32, 9}};
@@ -327,7 +435,7 @@ static bool reference_plane(vmx_slice_streams *s, size_t stride, int16_t bias,
             dc_prediction = block[0];
             uint8_t *target = dst + row * stride + column;
             if (decoded_terms)
-                vmx_idct(block, matrix, target, stride, bias);
+                vmx_idct(block, matrix, target, stride, bias, 8);
             else
                 vmx_broadcast_dc(block[0], target, stride, bias);
         }
@@ -407,8 +515,8 @@ static void idct_kernels_agree_bit_for_bit(void) {
         int16_t biases[] = {0, 128};
         for (int b = 0; b < 2; b++) {
             uint8_t expected[64], actual[64];
-            vmx_idct_scalar(block, matrix, expected, 8, biases[b]);
-            vmx_idct(block, matrix, actual, 8, biases[b]);
+            vmx_idct_scalar(block, matrix, expected, 8, biases[b], 8);
+            vmx_idct(block, matrix, actual, 8, biases[b], 8);
             CHECK_MSG(memcmp(expected, actual, 64) == 0, "round %d bias %d", round, biases[b]);
         }
     }
@@ -423,12 +531,30 @@ static void idct_kernels_agree_bit_for_bit(void) {
                 int16_t block[64] = {0};
                 block[position] = values[v];
                 uint8_t expected[64], actual[64];
-                vmx_idct_scalar(block, matrix, expected, 8, 128);
-                vmx_idct(block, matrix, actual, 8, 128);
+                unsigned rows = (unsigned)position / 8 + 1;
+                vmx_idct_scalar(block, matrix, expected, 8, 128, 8);
+                vmx_idct(block, matrix, actual, 8, 128, rows);
                 CHECK_MSG(memcmp(expected, actual, 64) == 0, "quality %zu position %d value %d",
                           quality, position, values[v]);
             }
     }
+    /* Every row bound: coefficients confined to rows 0..rows-1, so a kernel
+     * that skips the empty rows must still produce the full transform. */
+    for (unsigned rows = 1; rows <= 8; rows++)
+        for (int round = 0; round < 400; round++) {
+            int16_t block[64] = {0};
+            for (unsigned i = 0; i < rows * 8; i++) {
+                uint64_t raw = xorshift(&state);
+                block[i] = round % 2 ? (int16_t)(uint16_t)(raw & 0xFFFF)
+                                     : (int16_t)((int)(raw % 512) - 256);
+            }
+            uint16_t matrix[64];
+            vmx_decode_matrix((size_t)round % VMX_QUALITY_COUNT, matrix);
+            uint8_t expected[64], actual[64];
+            vmx_idct_scalar(block, matrix, expected, 8, 128, 8);
+            vmx_idct(block, matrix, actual, 8, 128, rows);
+            CHECK_MSG(memcmp(expected, actual, 64) == 0, "rows %u round %d", rows, round);
+        }
 }
 
 static void convert_kernels_agree_bit_for_bit(void) {
@@ -485,6 +611,8 @@ int main(void) {
     RUN(repeated_lifecycles_are_stable);
     RUN(rejects_malformed_and_truncated_streams);
     RUN(rejects_undersized_destinations);
+    RUN(placed_decodes_match_decode_then_gather);
+    RUN(placed_decodes_reject_bad_placements);
     RUN(rejects_unsupported_geometry);
     RUN(bit_reader_matches_the_reference);
     RUN(plane_helpers_match_the_reference);

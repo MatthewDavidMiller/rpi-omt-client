@@ -39,7 +39,7 @@ static int usage(void) {
     fprintf(stderr,
             "Usage: omt-receiver --version | discover --wait-ms N --json | probe --target TARGET "
             "--timeout-ms N --json | play --target TARGET --connector auto|HDMI-A-1|HDMI-A-2 "
-            "--status-file PATH --video-ceiling WIDTHxHEIGHT@FPS[,...] --playout-delay MS\n");
+            "--status-file PATH --video-ceiling WIDTHxHEIGHT@FPS[,...]\n");
     return 2;
 }
 
@@ -285,11 +285,11 @@ static void on_signal(int signal_number) {
 }
 
 static int play(const options *o, omt_err *err) {
-    const char *names[] = {"--target",        "--connector",     "--status-file",
-                           "--retry-seconds", "--video-ceiling", "--playout-delay"};
+    const char *names[] = {"--target", "--connector", "--status-file", "--retry-seconds",
+                           "--video-ceiling"};
     const char *target, *path;
-    uint64_t retry, delay;
-    if (!allowed(o, names, 6, err) || !(target = required(o, "--target", err)) ||
+    uint64_t retry;
+    if (!allowed(o, names, 5, err) || !(target = required(o, "--target", err)) ||
         !(path = required(o, "--status-file", err)) ||
         !number(o, "--retry-seconds", 2, 1, 30, &retry, err))
         return -1;
@@ -303,7 +303,6 @@ static int play(const options *o, omt_err *err) {
     if (!omt_ceiling_parse(ceiling_opt && ceiling_opt->value ? ceiling_opt->value : "1920x1080@60",
                            &po.ceiling, err))
         return -1;
-    if (!number(o, "--playout-delay", 0, 0, 8000, &delay, err)) return -1;
     if (!omt_is_valid_target(target, strlen(target)) ||
         !(strcmp(preference, "auto") == 0 || strcmp(preference, "HDMI-A-1") == 0 ||
           strcmp(preference, "HDMI-A-2") == 0)) {
@@ -328,7 +327,6 @@ static int play(const options *o, omt_err *err) {
     po.target = target;
     po.preference = preference;
     po.retry_ms = retry * 1000;
-    po.playout_delay_ms = delay;
     omt_play_run(&po, &status, &stop_requested);
     omt_status_destroy(&status);
     return 0;

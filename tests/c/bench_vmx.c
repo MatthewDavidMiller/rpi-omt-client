@@ -14,8 +14,8 @@
  * decides a tier: if it cannot sustain the frame interval its ceiling
  * promises, lower that board's profile.
  *
- * Only 1080p and 480p geometries are committed as vectors, so a 720p tier is
- * bracketed rather than measured directly. VMX_VECTOR_DIR overrides where the
+ * Only 1080p and 480p geometries are committed as large vectors, so a 720p
+ * tier is bracketed rather than measured directly. VMX_VECTOR_DIR overrides where the
  * vectors are read from, for a run on a board without the checkout.
  */
 #include <stdio.h>
@@ -35,6 +35,10 @@ static const struct {
     {"gradient-1920x1080-709", 1920, 1080, VMX_BT709},
     {"flat-1920x1080-709", 1920, 1080, VMX_BT709},
     {"gradient-720x480-601", 720, 480, VMX_BT601},
+    /* Small, but every block is dense, and edges is all row 0: per-block cost
+     * at both ends of the sparsity the transform's fast path depends on. */
+    {"noise-128x80-709", 128, 80, VMX_BT709},
+    {"edges-320x176-709", 320, 176, VMX_BT709},
 };
 
 static double now_ms(void) {

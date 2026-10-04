@@ -67,42 +67,18 @@ printf '%s\n' '{"schema":1,"ceiling":"1280x720@30"}' \
 OMT_VIDEO_CEILING='1920x1080@60' run_start auto |
     grep -Fq '<--video-ceiling><1280x720@30>'
 
-# ─── Playout delay ───────────────────────────────────────────────────────────
+# ─── No playout delay ────────────────────────────────────────────────────────
 
-# No saved override: the default of 0 ms reaches the receiver.
-run_start auto | grep -Fq '<--playout-delay><0>'
-
-# A saved override replaces the default.
-printf '%s\n' '{"schema":2,"milliseconds":250}' \
-    > "${CASE_DIR}/config/playout_delay.json"
-run_start auto | grep -Fq '<--playout-delay><250>'
-
-# A seconds-era override is discarded rather than converted or refused, so an
-# upgrade cannot stop playback from starting.
-printf '%s\n' '{"schema":1,"seconds":4}' \
-    > "${CASE_DIR}/config/playout_delay.json"
-run_start auto | grep -Fq '<--playout-delay><0>'
-
-# A corrupt override fails the launch rather than falling back to a delay
-# nobody chose.
+# The receiver presents frames as they arrive, so the launcher passes no
+# delay, and a delay file an earlier release saved -- even a corrupt one --
+# cannot stop playback from starting after an upgrade.
+run_start auto | grep -Fq -- '--playout-delay' && {
+    echo "the launcher still passes a playout delay" >&2
+    exit 1
+}
 printf '%s\n' '{"schema":2,"milliseconds":8001}' \
     > "${CASE_DIR}/config/playout_delay.json"
-if run_start auto >/dev/null 2>&1; then
-    echo "out-of-range saved playout delay was accepted" >&2
-    exit 1
-fi
-printf '%s\n' '{"schema":3,"milliseconds":1}' \
-    > "${CASE_DIR}/config/playout_delay.json"
-if run_start auto >/dev/null 2>&1; then
-    echo "invalid playout delay schema was accepted" >&2
-    exit 1
-fi
-printf '%s\n' '{"schema":2,"seconds":1}' \
-    > "${CASE_DIR}/config/playout_delay.json"
-if run_start auto >/dev/null 2>&1; then
-    echo "a schema 2 playout delay in seconds was accepted" >&2
-    exit 1
-fi
+run_start auto | grep -Fq '<play><--target>'
 rm -f "${CASE_DIR}/config/playout_delay.json"
 
 # A corrupt override fails the launch rather than falling back to a ceiling

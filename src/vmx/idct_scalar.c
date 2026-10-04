@@ -181,7 +181,9 @@ static OMT_ALWAYS_INLINE void column_pass(const i16x8 rows[8], i16x8 bias, uint8
 }
 
 void vmx_idct_scalar(const int16_t block[64], const uint16_t matrix[64], uint8_t *dst,
-                     size_t stride, int16_t add_value) {
+                     size_t stride, int16_t add_value, unsigned nonzero_rows) {
+    /* The portable kernel is the definition: it always runs every row. */
+    (void)nonzero_rows;
     /* Dequantise. The block is already in row-major order (see
      * vmx_zigzag_natural). The reference multiplies in 16 bits, keeping the
      * wraparound, then shifts down by four. */

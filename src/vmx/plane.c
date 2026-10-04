@@ -51,6 +51,7 @@ bool vmx_decode_plane(vmx_slice_streams *s, size_t stride, int16_t bias, const u
             memset(block, 0, sizeof(block));
             bool decoded_terms = pending < 64;
             uint32_t guard = 0;
+            uint32_t last = 0; /* the highest zig-zag position written */
             while (pending < 64) {
                 if (++guard > MAX_SYMBOLS_PER_BLOCK) return false;
                 /* With at least VMX_LOOKAHEAD_BITS unread, a code the table
@@ -64,9 +65,10 @@ bool vmx_decode_plane(vmx_slice_streams *s, size_t stride, int16_t bias, const u
                                              (64 - VMX_LOOKAHEAD_BITS)];
                 if (entry != 0) {
                     s->ac.bits_left -= (int32_t)((entry >> 16) & 0xFFu);
-                    if (entry >> 24 == VMX_LOOKAHEAD_VALUE)
+                    if (entry >> 24 == VMX_LOOKAHEAD_VALUE) {
+                        last = pending;
                         block[vmx_zigzag_natural[pending++]] = (int16_t)(uint16_t)entry;
-                    else
+                    } else
                         pending += entry & 0xFFFFu;
                 } else if (vmx_bits_bit_bare(&s->ac) == 1) {
                     if (vmx_bits_bit_bare(&s->ac) == 1) {
@@ -80,7 +82,10 @@ bool vmx_decode_plane(vmx_slice_streams *s, size_t stride, int16_t bias, const u
                 } else {
                     int32_t width = vmx_bits_zeros_bare(&s->ac) + 2;
                     uint64_t value = vmx_bits_bits_bare(&s->ac, width);
-                    if (pending < 64) block[vmx_zigzag_natural[pending]] = vmx_mag_sign(value);
+                    if (pending < 64) {
+                        last = pending;
+                        block[vmx_zigzag_natural[pending]] = vmx_mag_sign(value);
+                    }
                     pending += 1;
                 }
                 vmx_bits_reload(&s->ac);
@@ -102,7 +107,7 @@ bool vmx_decode_plane(vmx_slice_streams *s, size_t stride, int16_t bias, const u
 
             uint8_t *target = dst + row * stride + column;
             if (decoded_terms)
-                vmx_idct(block, matrix, target, stride, bias);
+                vmx_idct(block, matrix, target, stride, bias, vmx_rows_used[last]);
             else
                 vmx_broadcast_dc(block[0], target, stride, bias);
         }

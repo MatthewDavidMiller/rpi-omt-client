@@ -59,8 +59,7 @@ typedef struct {
     vmx_decoder *decoder;
     bool scaled;
     omt_scaler scaler;
-    uint8_t *scaled_frame;
-    size_t scaled_len;
+    vmx_placement placed; /* the scaler's tables, as the decoder takes them */
     omt_video_format format;
     char progressive_detail[256];
     char interlaced_detail[256];

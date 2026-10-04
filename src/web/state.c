@@ -11,8 +11,6 @@
 
 #define SOURCE_LIMIT 1024
 #define CEILING_LIMIT 256
-#define DELAY_LIMIT 64
-#define DELAY_SCHEMA 2
 
 /* Reads a strict JSON record; on any failure `err` carries the serde-style
  * reason with the caller's prefix. */
@@ -253,88 +251,4 @@ uint64_t omt_pixel_rate(const char *value) {
         if (!comma) return best;
         shape = comma + 1;
     }
-}
-
-bool omt_parse_playout_delay(const char *value, uint64_t *out, omt_err *err) {
-    omt_span t = omt_utf8_trim(value, strlen(value));
-    if (t.len == 0 || omt_ascii_ieq((const char *)t.p, t.len, "auto")) {
-        *out = OMT_DEFAULT_PLAYOUT_DELAY_MS;
-        return true;
-    }
-    uint64_t v;
-    if (!all_digits((const char *)t.p, t.len) ||
-        !omt_parse_u64((const char *)t.p, t.len, UINT64_MAX, &v)) {
-        omt_err_set(err,
-                    "Invalid playout delay: %.*s. Expected a whole number of milliseconds from 0 "
-                    "to %u.",
-                    (int)t.len, (const char *)t.p, OMT_MAX_PLAYOUT_DELAY_MS);
-        return false;
-    }
-    if (v > OMT_MAX_PLAYOUT_DELAY_MS) {
-        omt_err_set(err, "Playout delay %llu ms is outside 0-%u.", (unsigned long long)v,
-                    OMT_MAX_PLAYOUT_DELAY_MS);
-        return false;
-    }
-    *out = v;
-    return true;
-}
-
-int omt_read_playout_delay(const char *path, uint64_t *out, omt_err *err) {
-    omt_json_doc doc;
-    omt_json *root = NULL;
-    omt_buf raw;
-    int r = read_record(path, DELAY_LIMIT, "saved playout delay", &doc, &root, &raw, err);
-    if (r <= 0) return r;
-    int result = -1;
-    uint64_t schema, ms;
-    /* The schema is read alone first, so a schema-1 (seconds) file from
-     * before milliseconds is recognised without its other field failing the
-     * strict shape. It is treated as absent: the default moved to 0 at the
-     * same time, and refusing it would block playback after an upgrade. */
-    if (root->type != OMT_JSON_OBJECT || !omt_json_as_u64(omt_json_get(root, "schema"), &schema) ||
-        schema > 255) {
-        omt_err_set(err, "saved playout delay is invalid JSON: unexpected record shape");
-    } else if (schema == 1) {
-        result = 0;
-    } else if (schema != DELAY_SCHEMA) {
-        omt_err_set(err, "saved playout delay has an invalid schema");
-    } else {
-        const char *fields[] = {"schema", "milliseconds"};
-        if (!omt_json_only_keys(root, fields, 2) ||
-            !omt_json_as_u64(omt_json_get(root, "milliseconds"), &ms)) {
-            omt_err_set(err, "saved playout delay is invalid JSON: unexpected record shape");
-        } else if (ms > OMT_MAX_PLAYOUT_DELAY_MS) {
-            omt_err_set(err, "Playout delay %llu ms is outside 0-%u.", (unsigned long long)ms,
-                        OMT_MAX_PLAYOUT_DELAY_MS);
-        } else {
-            *out = ms;
-            result = 1;
-        }
-    }
-    omt_json_doc_free(&doc);
-    omt_buf_free(&raw);
-    return result;
-}
-
-bool omt_effective_playout_delay(const char *path, const char *def, uint64_t *out, omt_err *err) {
-    uint64_t fallback;
-    if (!omt_parse_playout_delay(def, &fallback, err)) return false;
-    int r = omt_read_playout_delay(path, out, err);
-    if (r < 0) return false;
-    if (r == 0) *out = fallback;
-    return true;
-}
-
-bool omt_save_playout_delay(const char *path, const uint64_t *milliseconds, omt_err *err) {
-    if (!milliseconds) return omt_remove_file_durable(path, err);
-    if (*milliseconds > OMT_MAX_PLAYOUT_DELAY_MS) {
-        omt_err_set(err, "Playout delay %llu ms is outside 0-%u.",
-                    (unsigned long long)*milliseconds, OMT_MAX_PLAYOUT_DELAY_MS);
-        return false;
-    }
-    if (*milliseconds == OMT_DEFAULT_PLAYOUT_DELAY_MS) return omt_remove_file_durable(path, err);
-    char text[64];
-    snprintf(text, sizeof(text), "{\"schema\":%d,\"milliseconds\":%llu}\n", DELAY_SCHEMA,
-             (unsigned long long)*milliseconds);
-    return omt_atomic_replace(path, text, strlen(text), DELAY_LIMIT, err);
 }

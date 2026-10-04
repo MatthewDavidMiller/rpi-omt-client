@@ -35,7 +35,6 @@ typedef struct {
     double source_cache_ttl_s;
     char source_target_file[OMT_PATH_MAX];
     char video_ceiling_file[OMT_PATH_MAX];
-    char playout_delay_file[OMT_PATH_MAX];
     char board_label[256];
     char board_video_ceiling[256];
     char playback_status_file[OMT_PATH_MAX];

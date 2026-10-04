@@ -128,9 +128,13 @@ capture limit and cancellation remains active during post-exit pipe collection,
 killing the whole process group.
 Malformed PBKDF2 digest tests reject empty, short, and overlong SHA-256 digests.
 
-Scaler tests compare enlargement and reduction against pixel-centre reference
-sampling with padded strides and untouched bars, including repeated output
-rows. Invalid placement sizes and overflowing strides must return errors.
+Scaler tests check the placement tables against pixel-centre sampling. The
+VMX suite holds the placed decode to a full decode followed by a gather, byte
+for byte, for reduction, letterboxed enlargement, and an off-centre placement at
+one and four workers, with padded strides and every byte outside the placed area
+untouched; it rejects out-of-range columns and rows, decreasing rows, and an
+undersized or overflowing destination. `fuzz_vmx` decodes every input through a
+placement as well.
 
 `make test-receiver` builds and tests the C receiver, every suite sanitized,
 and then repeats the C suites on AArch64 so the assembly kernels are checked
@@ -404,18 +408,14 @@ decode throughput, so a pass on one is not evidence for another:
      is armed only by a channel that reports itself disconnected. This is the
      shape a firewall, a NAT timeout, or an access point that forgets the
      association produces — and the same shape as a 3.5 s Wi-Fi HOL stall
-     against vMix. With the playout delay set to 4000 ms, induce ~3.5 s of
-     delay on the video port (or equivalent Wi-Fi latency) and confirm:
-     picture and sound continue from the queue, no `OMT frame was truncated
-     by a timeout`, no session rebuild, and the dashboard names ~4000 ms of
-     buffer. The picture is 4 s behind the sender by design. A stall longer than the remaining
-     buffer holds the last DRM frame, counts a buffer underrun, and keeps TCP
-     up while the queue refills; vMix will have dropped in-flight extras, so
-     the next frames are live rather than a catch-up burst. Only after the
-     queue is empty and the socket stays quiet for `MEDIA_STALL` must the
+     against vMix. Induce ~3.5 s of delay on the video port (or equivalent
+     Wi-Fi latency) and confirm: the last picture stays on screen, no
+     `OMT frame was truncated by a timeout`, no session rebuild, and the
+     picture resumes live rather than replaying the stall. Only after the
+     socket stays quiet for `MEDIA_STALL` must the
      session fail with `No video frames for 15 seconds on a connected socket.`
      and rebuild. A session that sits in `Waiting for video frames.`
-     indefinitely is the regression this step exists to catch. Jitter-buffer
+     indefinitely is the regression this step exists to catch. These
      checks must use a shape the board can decode: Pi 4 is 1080p30 or 720p60,
      and 1080p60 must still report `unsupported-format`;
 10. confirm a held frame on damaged input. Nothing off the board proves that a

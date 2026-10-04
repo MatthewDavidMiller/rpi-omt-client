@@ -49,13 +49,6 @@ typedef struct {
 } omt_video_limit;
 
 typedef struct {
-    uint64_t milliseconds;
-    uint64_t default_milliseconds;
-    bool overridden;
-    char error[256];
-} omt_playout_delay_view;
-
-typedef struct {
     char names[OMT_MAX_CHOICES][OMT_SOURCE_NAME_MAX_BYTES + 1];
     size_t count;
 } omt_source_choices;
@@ -79,8 +72,6 @@ void omt_playback_restart(omt_playback *p, omt_action_result *out);
 void omt_playback_clear(omt_playback *p, omt_action_result *out);
 void omt_playback_video_limit(const omt_playback *p, omt_video_limit *out);
 void omt_playback_save_video_limit(omt_playback *p, const char *value, omt_action_result *out);
-void omt_playback_playout_delay(const omt_playback *p, omt_playout_delay_view *out);
-void omt_playback_save_playout_delay(omt_playback *p, const char *value, omt_action_result *out);
 void omt_playback_summary_read(omt_playback *p, omt_playback_summary *out);
 
 /* Parses `omt-receiver discover --json` output: deduplicated, sorted, and

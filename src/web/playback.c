@@ -318,43 +318,6 @@ void omt_playback_save_video_limit(omt_playback *p, const char *value, omt_actio
     restart_after(p, label, out);
 }
 
-void omt_playback_playout_delay(const omt_playback *p, omt_playout_delay_view *out) {
-    memset(out, 0, sizeof(*out));
-    out->default_milliseconds = OMT_DEFAULT_PLAYOUT_DELAY_MS;
-    uint64_t saved;
-    omt_err err;
-    int r = omt_read_playout_delay(p->settings->playout_delay_file, &saved, &err);
-    if (r < 0) {
-        out->milliseconds = OMT_DEFAULT_PLAYOUT_DELAY_MS;
-        omt_strlcpy(out->error, err.msg, sizeof(out->error));
-        return;
-    }
-    out->milliseconds = r > 0 ? saved : OMT_DEFAULT_PLAYOUT_DELAY_MS;
-    out->overridden = out->milliseconds != OMT_DEFAULT_PLAYOUT_DELAY_MS;
-}
-
-void omt_playback_save_playout_delay(omt_playback *p, const char *value, omt_action_result *out) {
-    uint64_t parsed;
-    omt_err err;
-    if (!omt_parse_playout_delay(value, &parsed, &err)) {
-        failure_text(out, err.msg);
-        return;
-    }
-    /* An explicit 0 and an empty field leave the same state behind. */
-    bool persist = parsed != OMT_DEFAULT_PLAYOUT_DELAY_MS;
-    if (!omt_save_playout_delay(p->settings->playout_delay_file, persist ? &parsed : NULL, &err)) {
-        failure_text(out, err.msg);
-        return;
-    }
-    char label[128];
-    if (!persist)
-        snprintf(label, sizeof(label), "Playout delay restored to %u ms",
-                 OMT_DEFAULT_PLAYOUT_DELAY_MS);
-    else
-        snprintf(label, sizeof(label), "Playout delay set to %llu ms", (unsigned long long)parsed);
-    restart_after(p, label, out);
-}
-
 static bool member(const char *value, const char *const *set, size_t n) {
     for (size_t i = 0; i < n; i++)
         if (strcmp(value, set[i]) == 0) return true;

@@ -55,4 +55,26 @@ vmx_status vmx_decode_uyvy(vmx_decoder *decoder, uint8_t *output, size_t output_
 /* BGRX is the byte order the DRM scanout reads as XRGB8888. */
 vmx_status vmx_decode_bgrx(vmx_decoder *decoder, uint8_t *output, size_t output_len, size_t stride);
 
+/* The largest placed area a decode accepts, which bounds each worker's row
+ * buffer. Wider than any mode a supported board drives. */
+#define VMX_MAX_PLACED_WIDTH 8192u
+#define VMX_MAX_PLACED_HEIGHT 8192u
+
+/* Nearest-neighbour placement of the picture into a destination of another
+ * size: destination pixel (x + i, y + j) takes source pixel (columns[i],
+ * rows[j]). `rows` must be non-decreasing; every entry must lie inside the
+ * decoder's geometry. */
+typedef struct {
+    size_t x, y, width, height;
+    const uint32_t *columns; /* `width` entries */
+    const uint32_t *rows;    /* `height` entries */
+} vmx_placement;
+
+/* BGRX, resampled into `placement` within the output. Each worker converts
+ * only the source rows its slices contribute and stores each placed row once,
+ * so the resample runs on the whole pool and no full-size intermediate frame
+ * is written. Pixels outside the placed area are left untouched. */
+vmx_status vmx_decode_bgrx_placed(vmx_decoder *decoder, uint8_t *output, size_t output_len,
+                                  size_t stride, const vmx_placement *placement);
+
 #endif

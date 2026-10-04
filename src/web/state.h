@@ -1,8 +1,8 @@
 /* Copyright (c) 2026 Matthew David Miller
  * SPDX-License-Identifier: MIT
  *
- * The operator's saved choices: the OMT target, the video ceiling override,
- * and the playout delay. Each lives in a small strict-JSON file that is read
+ * The operator's saved choices: the OMT target and the video ceiling
+ * override. Each lives in a small strict-JSON file that is read
  * with a size cap and replaced atomically.
  */
 #ifndef OMT_WEB_STATE_H
@@ -12,9 +12,6 @@
 #include "common/buf.h"
 #include "common/err.h"
 #include "protocol/omt.h"
-
-#define OMT_DEFAULT_PLAYOUT_DELAY_MS 0u
-#define OMT_MAX_PLAYOUT_DELAY_MS 8000u
 
 typedef struct {
     bool direct;
@@ -36,15 +33,5 @@ OMT_NODISCARD bool omt_effective_video_ceiling(const char *path, const char *boa
                                                omt_buf *out, omt_err *err);
 OMT_NODISCARD bool omt_save_video_ceiling(const char *path, const char *ceiling, omt_err *err);
 uint64_t omt_pixel_rate(const char *value);
-
-OMT_NODISCARD bool omt_parse_playout_delay(const char *value, uint64_t *out, omt_err *err);
-/* 1 with an override, 0 when none is saved (or a schema-1 file from before
- * milliseconds), -1 on an invalid file. */
-int omt_read_playout_delay(const char *path, uint64_t *out, omt_err *err);
-OMT_NODISCARD bool omt_effective_playout_delay(const char *path, const char *def, uint64_t *out,
-                                               omt_err *err);
-/* Saves, or removes the file for NULL or the default. */
-OMT_NODISCARD bool omt_save_playout_delay(const char *path, const uint64_t *milliseconds,
-                                          omt_err *err);
 
 #endif

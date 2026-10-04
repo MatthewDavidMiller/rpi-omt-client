@@ -44,6 +44,14 @@ static const uint8_t vmx_zigzag_natural[64] = {
     41, 34, 27, 20, 13, 6,  7,  14, 21, 28, 35, 42, 49, 56, 57, 50, 43, 36, 29, 22, 15, 23,
     30, 37, 44, 51, 58, 59, 52, 45, 38, 31, 39, 46, 53, 60, 61, 54, 47, 55, 62, 63,
 };
+/* How many leading rows of a block can hold a coefficient once the stream has
+ * written zig-zag position p: rows below that count are certainly zero. The
+ * inverse transform skips their row passes, whose output for a zero row is
+ * exactly zero. */
+static const uint8_t vmx_rows_used[64] = {
+    1, 1, 2, 3, 3, 3, 3, 3, 3, 4, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 6, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
+    7, 7, 7, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8,
+};
 static const int16_t vmx_tab_i_04[32] = {
     16384,  21407,  16384, 8867,  16384,  -8867,  16384, -21407, 16384, 8867,   -16384,
     -21407, -16384, 21407, 16384, -8867,  22725,  19266, 19266,  -4520, 12873,  -22725,
@@ -96,11 +104,14 @@ static inline int16_t vmx_wrap_mul16(int16_t a, int16_t b) {
 
 /* --- kernels ---------------------------------------------------------- */
 
+/* `rows` (1..8) is how many leading rows may be nonzero; every row from
+ * `rows` on must be all zero. A kernel may use it to skip work, never to
+ * change a result. */
 void vmx_idct_scalar(const int16_t block[64], const uint16_t matrix[64], uint8_t *dst,
-                     size_t stride, int16_t add_value);
+                     size_t stride, int16_t add_value, unsigned rows);
 #if defined(__aarch64__)
 void vmx_idct_neon(const int16_t block[64], const uint16_t matrix[64], uint8_t *dst, size_t stride,
-                   int16_t add_value);
+                   int16_t add_value, unsigned rows);
 #define vmx_idct vmx_idct_neon
 #else
 #define vmx_idct vmx_idct_scalar

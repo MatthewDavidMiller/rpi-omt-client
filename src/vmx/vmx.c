@@ -35,11 +35,14 @@ typedef struct {
     size_t rows; /* rows of this slice inside the visible image */
 } vmx_slice;
 
-/* Reused YUV planes for one slice at a time. */
+/* Reused YUV planes for one slice at a time, and for a placed decode, one
+ * converted source row and one gathered destination row. */
 typedef struct {
     uint8_t *luma;
     uint8_t *blue;
     uint8_t *red;
+    uint8_t *source_row;
+    uint8_t *placed_row;
 } plane_scratch;
 
 typedef enum { PIXELS_UYVY, PIXELS_BGRX } pixel_format;
@@ -50,6 +53,7 @@ typedef struct {
     size_t stride;
     pixel_format pixels;
     const int16_t *coefficients;
+    const vmx_placement *placement; /* NULL for an unscaled decode */
 } frame_job;
 
 struct vmx_decoder;
@@ -72,6 +76,11 @@ struct vmx_decoder {
     int32_t dc_shift;
     bool loaded;
     plane_scratch scratch[VMX_MAX_WORKERS];
+    /* Placed decodes: the destination rows slice i fills are
+     * [slice_first[i], slice_first[i + 1]), and each worker's placed_row
+     * holds placed_capacity bytes. */
+    size_t *slice_first;
+    size_t placed_capacity;
 
     /* The pool: workers - 1 threads, scratch[i + 1] belonging to thread i. */
     pthread_t threads[VMX_MAX_WORKERS];
@@ -128,6 +137,35 @@ static bool decode_slice(vmx_decoder *d, size_t index, plane_scratch *scratch) {
                           scratch->red, chroma_len))
         return false;
 
+    if (job->placement) {
+        /* Rows are non-decreasing, so consecutive destination rows that take
+         * the same source row reuse the one already converted and gathered. */
+        const vmx_placement *p = job->placement;
+        size_t first_source = index * VMX_SLICE_HEIGHT;
+        size_t row_bytes = p->width * 4;
+        size_t converted = SIZE_MAX;
+        for (size_t y = d->slice_first[index]; y < d->slice_first[index + 1]; y++) {
+            size_t source = p->rows[y];
+            if (source != converted) {
+                size_t row = source - first_source;
+                vmx_bgra_row(scratch->luma + row * d->luma_stride,
+                             scratch->blue + row * d->chroma_stride,
+                             scratch->red + row * d->chroma_stride, d->width, scratch->source_row,
+                             job->coefficients);
+                for (size_t x = 0; x < p->width; x++)
+                    memcpy(scratch->placed_row + 4 * x,
+                           scratch->source_row + 4 * (size_t)p->columns[x], 4);
+                converted = source;
+            }
+            /* One contiguous store per row into what is usually a
+             * write-combined scanout mapping. */
+            size_t offset = (p->y + y) * job->stride + p->x * 4;
+            if (offset > job->output_len || job->output_len - offset < row_bytes) return false;
+            memcpy(job->output + offset, scratch->placed_row, row_bytes);
+        }
+        return true;
+    }
+
     size_t bytes_per_pixel = job->pixels == PIXELS_UYVY ? 2 : 4;
     size_t row_bytes = d->width * bytes_per_pixel;
     for (size_t row = 0; row < slice->rows; row++) {
@@ -179,17 +217,20 @@ static void *worker_main(void *raw) {
     return NULL;
 }
 
-static bool scratch_init(plane_scratch *s, size_t luma_stride, size_t chroma_stride) {
+static bool scratch_init(plane_scratch *s, size_t width, size_t luma_stride, size_t chroma_stride) {
     s->luma = calloc(luma_stride, VMX_SLICE_HEIGHT);
     s->blue = calloc(chroma_stride, VMX_SLICE_HEIGHT);
     s->red = calloc(chroma_stride, VMX_SLICE_HEIGHT);
-    return s->luma && s->blue && s->red;
+    s->source_row = calloc(width, 4);
+    return s->luma && s->blue && s->red && s->source_row;
 }
 
 static void scratch_free(plane_scratch *s) {
     free(s->luma);
     free(s->blue);
     free(s->red);
+    free(s->source_row);
+    free(s->placed_row);
 }
 
 void vmx_decoder_free(vmx_decoder *d) {
@@ -209,6 +250,7 @@ void vmx_decoder_free(vmx_decoder *d) {
         vmx_bits_free(&d->slices[i].streams.ac);
     }
     free(d->slices);
+    free(d->slice_first);
     for (size_t i = 0; i < VMX_MAX_WORKERS; i++) scratch_free(&d->scratch[i]);
     free(d);
 }
@@ -231,7 +273,8 @@ vmx_status vmx_decoder_new(size_t width, size_t height, vmx_color_space color_sp
     size_t dc_capacity = d->luma_stride * VMX_SLICE_HEIGHT * 2;
     size_t ac_capacity = d->luma_stride * VMX_SLICE_HEIGHT * 4;
     d->slices = calloc(slice_count, sizeof(vmx_slice));
-    if (!d->slices) goto fail;
+    d->slice_first = calloc(slice_count + 1, sizeof(size_t));
+    if (!d->slices || !d->slice_first) goto fail;
     for (size_t i = 0; i < slice_count; i++) {
         size_t visible = height > i * VMX_SLICE_HEIGHT ? height - i * VMX_SLICE_HEIGHT : 0;
         d->slices[i].rows = visible < VMX_SLICE_HEIGHT ? visible : VMX_SLICE_HEIGHT;
@@ -242,7 +285,7 @@ vmx_status vmx_decoder_new(size_t width, size_t height, vmx_color_space color_sp
     }
     d->workers = workers < slice_count ? workers : slice_count;
     for (size_t i = 0; i < d->workers; i++)
-        if (!scratch_init(&d->scratch[i], d->luma_stride, d->chroma_stride)) goto fail;
+        if (!scratch_init(&d->scratch[i], width, d->luma_stride, d->chroma_stride)) goto fail;
     vmx_decode_matrix(0, d->matrix);
 
     if (pthread_mutex_init(&d->lock, NULL) != 0) goto fail;
@@ -349,12 +392,53 @@ vmx_status vmx_decoder_load(vmx_decoder *d, const uint8_t *input, size_t len) {
     return VMX_OK;
 }
 
-static vmx_status decode(vmx_decoder *d, uint8_t *output, size_t output_len, size_t stride,
-                         size_t minimum_stride, pixel_format pixels) {
-    if (!d->loaded) return VMX_EMPTY;
-    size_t needed;
-    if (stride < minimum_stride || !omt_mul(stride, d->height, &needed) || output_len < needed)
+/* Checks a placement against this decoder and the output it is written into,
+ * then readies the per-slice row ranges and the workers' row buffers. Every
+ * index a worker will follow is bounded here, before any worker runs. */
+static vmx_status prepare_placement(vmx_decoder *d, const vmx_placement *p, size_t output_len,
+                                    size_t stride) {
+    if (!p->columns || !p->rows || p->width == 0 || p->height == 0 ||
+        p->width > VMX_MAX_PLACED_WIDTH || p->height > VMX_MAX_PLACED_HEIGHT)
+        return VMX_INVALID_DIMENSIONS;
+    for (size_t x = 0; x < p->width; x++)
+        if (p->columns[x] >= d->width) return VMX_INVALID_DIMENSIONS;
+    for (size_t y = 0; y < p->height; y++)
+        if (p->rows[y] >= d->height || (y > 0 && p->rows[y] < p->rows[y - 1]))
+            return VMX_INVALID_DIMENSIONS;
+    size_t right, last_row, end;
+    if (!omt_add(p->x, p->width, &right) || !omt_mul(right, (size_t)4, &right) || stride < right ||
+        !omt_add(p->y, p->height - 1, &last_row) || !omt_mul(last_row, stride, &end) ||
+        !omt_add(end, right, &end) || end > output_len)
         return VMX_OUTPUT_SIZE;
+    size_t row_bytes = p->width * 4;
+    if (row_bytes > d->placed_capacity) {
+        for (size_t i = 0; i < d->workers; i++) {
+            uint8_t *grown = realloc(d->scratch[i].placed_row, row_bytes);
+            if (!grown) return VMX_WORKER_FAILURE;
+            d->scratch[i].placed_row = grown;
+        }
+        d->placed_capacity = row_bytes;
+    }
+    size_t y = 0;
+    for (size_t i = 0; i <= d->slice_count; i++) {
+        while (y < p->height && p->rows[y] < i * VMX_SLICE_HEIGHT) y++;
+        d->slice_first[i] = y;
+    }
+    return VMX_OK;
+}
+
+static vmx_status decode(vmx_decoder *d, uint8_t *output, size_t output_len, size_t stride,
+                         size_t minimum_stride, pixel_format pixels,
+                         const vmx_placement *placement) {
+    if (!d->loaded) return VMX_EMPTY;
+    if (placement) {
+        vmx_status st = prepare_placement(d, placement, output_len, stride);
+        if (st != VMX_OK) return st;
+    } else {
+        size_t needed;
+        if (stride < minimum_stride || !omt_mul(stride, d->height, &needed) || output_len < needed)
+            return VMX_OUTPUT_SIZE;
+    }
     for (size_t i = 0; i < d->slice_count; i++) {
         vmx_bits_reset(&d->slices[i].streams.dc);
         vmx_bits_reset(&d->slices[i].streams.ac);
@@ -364,6 +448,7 @@ static vmx_status decode(vmx_decoder *d, uint8_t *output, size_t output_len, siz
     d->job.stride = stride;
     d->job.pixels = pixels;
     d->job.coefficients = d->color_space == VMX_BT601 ? vmx_yuv_rgb_601 : vmx_yuv_rgb_709;
+    d->job.placement = placement;
     atomic_store_explicit(&d->next, 0, memory_order_relaxed);
     atomic_store_explicit(&d->failed, false, memory_order_relaxed);
 
@@ -386,9 +471,15 @@ static vmx_status decode(vmx_decoder *d, uint8_t *output, size_t output_len, siz
 }
 
 vmx_status vmx_decode_uyvy(vmx_decoder *d, uint8_t *output, size_t output_len, size_t stride) {
-    return decode(d, output, output_len, stride, d->width * 2, PIXELS_UYVY);
+    return decode(d, output, output_len, stride, d->width * 2, PIXELS_UYVY, NULL);
 }
 
 vmx_status vmx_decode_bgrx(vmx_decoder *d, uint8_t *output, size_t output_len, size_t stride) {
-    return decode(d, output, output_len, stride, d->width * 4, PIXELS_BGRX);
+    return decode(d, output, output_len, stride, d->width * 4, PIXELS_BGRX, NULL);
+}
+
+vmx_status vmx_decode_bgrx_placed(vmx_decoder *d, uint8_t *output, size_t output_len, size_t stride,
+                                  const vmx_placement *placement) {
+    if (!placement) return VMX_INVALID_DIMENSIONS;
+    return decode(d, output, output_len, stride, 0, PIXELS_BGRX, placement);
 }

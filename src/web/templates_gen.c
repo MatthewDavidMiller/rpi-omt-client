@@ -443,31 +443,7 @@ static void system_content(omt_buf *out, const tv_scope *scope) {
     tv_render(out, (tv_truthy(tv_attr(tv_lookup(scope, "video_limit"), "overridden")) ? tv_attr(tv_lookup(scope, "video_limit"), "effective") : &lit_10));
     omt_buf_append(out, "\">\n            <p class=\"field-help\" id=\"video_limit_help\">One or more WIDTHxHEIGHT@FPS\n               limits, separated by commas, such as\n               <code>1920x1080@30,1280x720@60</code>. Video is accepted when it fits\n               within any one of them. Leave empty to use this board's default of\n               ", 322);
     tv_render(out, tv_attr(tv_lookup(scope, "video_limit"), "board_default"));
-    omt_buf_append(out, ".</p>\n        </div>\n        <button type=\"submit\" class=\"button\">Save video limit</button>\n    </form>\n</section>\n<section class=\"card\" aria-labelledby=\"playout-delay-heading\">\n    <h2 id=\"playout-delay-heading\">Playout delay</h2>\n    <p>Video and audio can wait in a compressed queue before HDMI so a Wi-Fi\n       stall plays through from frames already received. The picture is this\n       many milliseconds behind the sender. The default is\n       <strong>", 460);
-    tv_render(out, tv_attr(tv_lookup(scope, "playout_delay"), "default_milliseconds"));
-    omt_buf_append(out, " ms</strong>, the lowest\n       latency.</p>\n    ", 49);
-    if (tv_truthy(tv_attr(tv_lookup(scope, "playout_delay"), "error"))) {
-        omt_buf_append(out, "\n    <p class=\"notice notice-warning\" role=\"status\">Saved playout delay is invalid: ", 84);
-        tv_render(out, tv_attr(tv_lookup(scope, "playout_delay"), "error"));
-        omt_buf_append(out, "</p>\n    ", 9);
-    }
-    omt_buf_append(out, "\n    ", 5);
-    if (tv_truthy(tv_attr(tv_lookup(scope, "playout_delay"), "overridden"))) {
-        omt_buf_append(out, "\n    <p class=\"notice\" role=\"status\">\n        Overrides the default of ", 71);
-        tv_render(out, tv_attr(tv_lookup(scope, "playout_delay"), "default_milliseconds"));
-        omt_buf_append(out, " ms.\n        Current delay is ", 30);
-        tv_render(out, tv_attr(tv_lookup(scope, "playout_delay"), "milliseconds"));
-        omt_buf_append(out, " ms.\n    </p>\n    ", 18);
-    }
-    omt_buf_append(out, "\n    <form method=\"POST\" action=\"/system/playout-delay\">\n        <input type=\"hidden\" name=\"csrf_token\" value=\"", 111);
-    tv_render(out, tv_lookup(scope, "csrf_token"));
-    omt_buf_append(out, "\">\n        <div class=\"field\">\n            <label for=\"playout_delay\">Delay (milliseconds)</label>\n            <input id=\"playout_delay\" name=\"playout_delay\"\n                   type=\"number\" min=\"0\" max=\"8000\" step=\"1\"\n                   aria-describedby=\"playout_delay_help\"\n                   placeholder=\"", 308);
-    tv_render(out, tv_attr(tv_lookup(scope, "playout_delay"), "default_milliseconds"));
-    omt_buf_append(out, "\"\n                   value=\"", 28);
-    tv_render(out, (tv_truthy(tv_attr(tv_lookup(scope, "playout_delay"), "overridden")) ? tv_attr(tv_lookup(scope, "playout_delay"), "milliseconds") : &lit_10));
-    omt_buf_append(out, "\">\n            <p class=\"field-help\" id=\"playout_delay_help\">Whole milliseconds from\n               0 to 8000. Wired links can stay at 0. On Wi-Fi, a few hundred\n               milliseconds rides out short stalls; 4000 covers the 3.5 second\n               stalls seen against vMix. Leave empty to restore the default of\n               ", 335);
-    tv_render(out, tv_attr(tv_lookup(scope, "playout_delay"), "default_milliseconds"));
-    omt_buf_append(out, " ms.</p>\n        </div>\n        <button type=\"submit\" class=\"button\">Save playout delay</button>\n    </form>\n</section>\n<section class=\"card danger-zone\" aria-labelledby=\"reboot-heading\">\n    <p class=\"eyebrow\">Danger zone</p>\n    <h2 id=\"reboot-heading\">Reboot operating system</h2>\n    <p>Rebooting stops playback and disconnects this Web GUI until the Raspberry Pi starts again.</p>\n    <div class=\"button-row\">\n        <a class=\"button button-danger\" href=\"/system/reboot\">Reboot OS\342\200\246</a>\n    </div>\n</section>\n", 516);
+    omt_buf_append(out, ".</p>\n        </div>\n        <button type=\"submit\" class=\"button\">Save video limit</button>\n    </form>\n</section>\n<section class=\"card danger-zone\" aria-labelledby=\"reboot-heading\">\n    <p class=\"eyebrow\">Danger zone</p>\n    <h2 id=\"reboot-heading\">Reboot operating system</h2>\n    <p>Rebooting stops playback and disconnects this Web GUI until the Raspberry Pi starts again.</p>\n    <div class=\"button-row\">\n        <a class=\"button button-danger\" href=\"/system/reboot\">Reboot OS\342\200\246</a>\n    </div>\n</section>\n", 511);
 }
 
 static void system_title(omt_buf *out, const tv_scope *scope) {

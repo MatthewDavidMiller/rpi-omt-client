@@ -250,33 +250,23 @@ def test_body_budget_is_shorter_than_sigterm_grace():
     assert float(timeout.group(1)) > grace_seconds
 
 
-def test_playout_delay_default_and_ceiling_agree_across_every_layer():
-    """The Web state, the container launcher, and the receiver CLI each state
-    the playout delay's default and range. A launcher default the Web page does
-    not show, or a ceiling the receiver refuses, is a playback that silently
-    runs with a delay nobody chose -- or never starts."""
-    state = WEB_STATE_H.read_text(encoding="utf-8")
-    default = re.search(r"#define OMT_DEFAULT_PLAYOUT_DELAY_MS (\d+)u", state)
-    ceiling = re.search(r"#define OMT_MAX_PLAYOUT_DELAY_MS (\d+)u", state)
-    assert default is not None, "state.h no longer pins OMT_DEFAULT_PLAYOUT_DELAY_MS"
-    assert ceiling is not None, "state.h no longer pins OMT_MAX_PLAYOUT_DELAY_MS"
-    launcher = re.search(
-        r'omt-web playout-delay \\\n\s*"\$\{OMT_PLAYOUT_DELAY_FILE\}" (\d+)\)',
-        START_OMT.read_text(encoding="utf-8"),
-    )
-    receiver = re.search(
-        r'number\(o, "--playout-delay", (\d+), (\d+), (\d+), &delay, err\)',
-        RECEIVER_MAIN.read_text(encoding="utf-8"),
-    )
-    assert launcher is not None, "start-omt.sh no longer passes a playout delay default"
-    assert receiver is not None, "the receiver no longer parses --playout-delay"
-    assert launcher.group(1) == default.group(1)
-    assert receiver.group(1) == default.group(1)
-    assert receiver.group(2) == "0"
-    assert receiver.group(3) == ceiling.group(1)
-    assert "po.playout_delay_ms = delay;" in RECEIVER_MAIN.read_text(encoding="utf-8")
-    template = (REPO_ROOT / "src" / "web" / "templates" / "system.html").read_text(encoding="utf-8")
-    assert f'max="{ceiling.group(1)}"' in template
+def test_no_layer_configures_a_playout_delay():
+    """The receiver presents each frame as it arrives: an OMT sender keeps no
+    buffer, so a delay here only adds latency. A setting, route, launcher
+    argument, or receiver option that brought one back in a single layer would
+    be a delay the others neither show nor honour."""
+    layers = {
+        "src/receiver/main.c": RECEIVER_MAIN,
+        "deploy/container/start-omt.sh": START_OMT,
+        "src/web/state.h": WEB_STATE_H,
+        "src/web/app.c": REPO_ROOT / "src" / "web" / "app.c",
+        "src/web/templates/system.html": REPO_ROOT / "src" / "web" / "templates" / "system.html",
+    }
+    for name, path in layers.items():
+        text = path.read_text(encoding="utf-8").lower()
+        assert "playout-delay" not in text and "playout_delay" not in text, (
+            f"{name} configures a playout delay again"
+        )
 
 
 def test_deployer_reads_the_password_banner_on_the_installer_s_own_terms():

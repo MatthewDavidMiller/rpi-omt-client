@@ -210,8 +210,6 @@ bool omt_web_settings_load(omt_web_settings *s, omt_err *err) {
         path(s->source_target_file, "OMT_SOURCE_TARGET_FILE", def) &&
         join(def, s->config_dir, "video_ceiling.json") &&
         path(s->video_ceiling_file, "OMT_VIDEO_CEILING_FILE", def) &&
-        join(def, s->config_dir, "playout_delay.json") &&
-        path(s->playout_delay_file, "OMT_PLAYOUT_DELAY_FILE", def) &&
         omt_strlcpy(s->board_label, value("OMT_BOARD_LABEL", "Raspberry Pi"),
                     sizeof(s->board_label)) &&
         omt_strlcpy(s->board_video_ceiling, value("OMT_VIDEO_CEILING", "1920x1080@60"),

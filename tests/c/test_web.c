@@ -99,21 +99,6 @@ static void ceilings_and_delays(void) {
     CHECK_STR(omt_buf_cstr(&d), "1920x1080 at 30 fps, or 1280x720 at 60 fps");
     omt_buf_free(&d);
     CHECK(omt_pixel_rate("1920x1080@30,1280x720@60") == 1920ull * 1080 * 30);
-    uint64_t v;
-    struct {
-        const char *in;
-        bool ok;
-        uint64_t want;
-    } cases[] = {{"", true, 0},        {"auto", true, 0},
-                 {"0", true, 0},       {" 250 ", true, 250},
-                 {"8000", true, 8000}, {"8001", false, 0},
-                 {"-1", false, 0},     {"+5", false, 0},
-                 {"1.5", false, 0},    {"99999999999999999999999", false, 0}};
-    for (size_t i = 0; i < OMT_ARRAY_LEN(cases); i++) {
-        bool ok = omt_parse_playout_delay(cases[i].in, &v, &err);
-        CHECK_MSG(ok == cases[i].ok, "%s", cases[i].in);
-        if (ok) CHECK_INT(v, cases[i].want);
-    }
 }
 
 static void discovery_servers_normalize(void) {
@@ -341,11 +326,6 @@ static void templates_render_every_page(void) {
     tv_set_bool(&a, limit, "overridden", true);
     tv_set_str(&a, limit, "effective", "1280x720@60");
     tv_set(&a, ctx, "video_limit", limit);
-    tv *delay = tv_map(&a);
-    tv_set_int(&a, delay, "milliseconds", 250);
-    tv_set_bool(&a, delay, "overridden", true);
-    tv_set_int(&a, delay, "default_milliseconds", 0);
-    tv_set(&a, ctx, "playout_delay", delay);
     tv *result = tv_map(&a);
     tv *command = tv_map(&a);
     tv_set(&a, command, "returncode", tv_none(&a));
@@ -359,8 +339,7 @@ static void templates_render_every_page(void) {
         CHECK_MSG(omt_template_render(pages[i], ctx, &out), "%s", pages[i]);
         CHECK(strstr(omt_buf_cstr(&out), "</html>") != NULL);
         if (!strcmp(pages[i], "system.html")) {
-            CHECK(strstr(omt_buf_cstr(&out), "max=\"8000\"") != NULL);
-            CHECK(strstr(omt_buf_cstr(&out), "Current delay is 250 ms.") != NULL);
+            CHECK(!strstr(omt_buf_cstr(&out), "playout") && !strstr(omt_buf_cstr(&out), "Playout"));
             CHECK(strstr(omt_buf_cstr(&out), "href=\"/system\" aria-current=\"page\"") != NULL);
             CHECK(strstr(omt_buf_cstr(&out), "<li class=\"flash flash-success\">Saved.</li>") !=
                   NULL);

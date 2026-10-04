@@ -11,9 +11,9 @@
 | Bounded XML reads for settings and announcements | `src/common/xml.c` |
 | HDMI connector selection and hotplug checks | `src/receiver/connector.c` |
 | Direct KMS scanout and mode selection, raw ioctls against an in-tree uapi | `src/receiver/video_drm.c`, `src/receiver/drm_uapi.h` |
-| Aspect-preserving resample into a mode that is not the video's size | `src/receiver/scale.c` |
+| Placement and sampling tables for a mode that is not the video's size (the resample runs in `vmx_decode_bgrx_placed`) | `src/receiver/scale.c` |
 | HDMI audio through ALSA | `src/receiver/audio_alsa.c`, `src/receiver/audio_interleave.c` |
-| Compressed A/V playout queue | `src/receiver/jitter.c` |
+| Frame handoff: newest video frame, audio in arrival order | `src/receiver/handoff.c` |
 | Playback supervisor, retry, and audio worker | `src/receiver/play.c` |
 | OMT wire transport and validation | `src/protocol/omt.c` |
 | Video ceilings, status projection, and atomic publication | `src/receiver_core/ceiling.c`, `src/receiver_core/status.c` |
@@ -39,7 +39,7 @@
 | Source discovery, playback, and status projection | `src/web/playback.c` |
 | Diagnostics, support archives, PCAP validation, and host actions | `src/web/diagnostics.c`, `src/web/zip.c` |
 | Safe bounded/atomic I/O | `src/common/fsio_posix.c` |
-| Persistent source, video-limit, and playout-delay state | `src/web/state.c` |
+| Persistent source and video-limit state | `src/web/state.c` |
 | OMT discovery-server XML | `src/web/network.c` |
 | Validated runtime configuration | `src/web/settings.c` |
 | Bounded subprocess execution | `src/common/proc_posix.c` |
@@ -94,7 +94,7 @@ Public routes are `/login`, `/logout`, `/`, `/sources/select`,
 `/sources/refresh`, `/playback/restart`, `/playback/clear`,
 `/settings/network`, `/settings/direct-source`, `/diagnostics`,
 `/diagnostics/discovery`, `/diagnostics/runtime`, `/diagnostics/direct`,
-`/diagnostics/download`, `/system`, `/system/video-limit`, `/system/playout-delay`, `/system/reboot`, and `/about`.
+`/diagnostics/download`, `/system`, `/system/video-limit`, `/system/reboot`, and `/about`.
 All routes other than login require a current persistent session. Mutations
 are POST and CSRF protected.
 
