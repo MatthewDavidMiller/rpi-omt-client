@@ -140,7 +140,12 @@ knows the last zig-zag position it wrote, which bounds the rows that can hold a
 coefficient, and a zero row's pass is exactly zero, so blocks whose
 coefficients end in the first four rows -- most blocks of most pictures -- run
 only those rows' passes. That is worth about a fifth of a 1080p gradient
-decode on a Pi 4 and costs a dense block one compare.
+decode on a Pi 4 and costs a dense block one compare. When only the first two rows hold
+coefficients -- by far the commonest case -- the column pass shrinks as well:
+a saturating add or subtract of zero is the identity, so substituting the six
+zero rows through it leaves eight outputs of two inputs, about half the
+instructions, and only those two rows are loaded. That took another eighth off
+a 1080p gradient decode on the shipping YCbCr path.
 
 What the assembly gives up is the sanitizers and the fuzzer, which see only C.
 That is acceptable for these two kernels and no others: each reads one fixed

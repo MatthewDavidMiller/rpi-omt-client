@@ -29,6 +29,12 @@
  * are. Most blocks of most pictures end their coefficients in the first few
  * rows.
  *
+ * When rows <= 2 the column pass shrinks too. Rows 2-7 are zero, and a
+ * saturating add or subtract of zero is the identity, so substituting zero
+ * through the column pass leaves eight outputs of two inputs, worked out at
+ * label 4 below with the general pass's register names. Only rows 0 and 1 are
+ * loaded and dequantised.
+ *
  * Column pass. A line-for-line transcription of idct_scalar.c's column_pass,
  * with its register names in the comments. mulhi by an even constant c is
  * sqdmulh by c/2: the doubling restores the product exactly, and it cannot
@@ -99,6 +105,8 @@
 VMX_FUNCTION(vmx_idct_neon)
         adrp    x9, .Lidct_data
         add     x9, x9, :lo12:.Lidct_data
+        cmp     w5, #2
+        b.ls    4f
 
         /* Dequantise: a wrapping 16-bit multiply, then >> 4. */
         ld1     {v0.8h, v1.8h, v2.8h, v3.8h}, [x0], #64
@@ -255,6 +263,87 @@ VMX_FUNCTION(vmx_idct_neon)
         st1     {v20.d}[1], [x2], x3
         st1     {v21.d}[0], [x2], x3
         st1     {v21.d}[1], [x2]
+        ret
+
+4:      /* rows <= 2: row0 and row1 through the row pass, the rest zero. */
+        ld1     {v0.8h, v1.8h}, [x0]
+        ld1     {v16.8h, v17.8h}, [x1]
+        mul     v0.8h, v0.8h, v16.8h
+        mul     v1.8h, v1.8h, v17.8h
+        sshr    v0.8h, v0.8h, #4
+        sshr    v1.8h, v1.8h, #4
+        movi    v28.4s, #4, lsl #8              // IRND_INV_ROW
+        mov     x10, x9
+        ld2     {v16.8h, v17.8h}, [x10], #32    // vmx_tab_i_04
+        ld2     {v18.8h, v19.8h}, [x10], #32
+        row     0
+        ld2     {v16.8h, v17.8h}, [x10], #32    // vmx_tab_i_17
+        ld2     {v18.8h, v19.8h}, [x10], #32
+        row     1
+        add     x9, x9, #256
+        ld1     {v24.8h, v25.8h, v26.8h, v27.8h}, [x9], #64
+        movi    v28.8h, #1
+        movi    v29.8h, #32                     // IRND_INV_COL
+        movi    v30.8h, #31                     // IRND_INV_CORR
+        dup     v31.8h, w4                      // add_value
+        sqadd   v4.8h, v0.8h, v29.8h            // A = row0 + IRND_INV_COL (r5, r6, r3)
+        sqadd   v5.8h, v0.8h, v30.8h            // B = row0 + IRND_INV_CORR (r1, r2)
+        sqdmulh v6.8h, v1.8h, v24.8h            // temp3 = mulhi(row1, TG_1)
+        sqadd   v7.8h, v1.8h, v28.8h            // temp7 = row1 + 1
+        sqadd   v16.8h, v6.8h, v28.8h           // r5 = temp3 + 1
+        sqadd   v17.8h, v1.8h, v16.8h           // r4 = row1 + r5
+        sqsub   v19.8h, v1.8h, v16.8h           // r1 = row1 - r5
+        mulhi_cos4 18, 17                       // r2 = mulhi(r4, COS_4)
+        mulhi_cos4 20, 19                       // r0 = mulhi(r1, COS_4)
+        sqadd   v21.8h, v17.8h, v18.8h          // r4 += r2
+        orr     v21.16b, v21.16b, v28.16b       // r4 |= 1
+        sqadd   v22.8h, v20.8h, v19.8h          // r0 += r1
+        orr     v22.16b, v22.16b, v28.16b       // r0 |= 1
+        ld1     {v24.16b}, [x9]                 // the output lane order
+        sqadd   v0.8h, v7.8h, v4.8h             // output row 0: temp7 + A
+        sqadd   v1.8h, v4.8h, v21.8h            // output row 1: A + r4
+        sqadd   v2.8h, v5.8h, v22.8h            // output row 2: B + r0
+        sqadd   v3.8h, v6.8h, v5.8h             // output row 3: temp3 + B
+        sqsub   v23.8h, v5.8h, v6.8h            // output row 4: B - temp3
+        sqsub   v16.8h, v5.8h, v22.8h           // output row 5: B - r0
+        sqsub   v17.8h, v4.8h, v21.8h           // output row 6: A - r4
+        sqsub   v18.8h, v4.8h, v7.8h            // output row 7: A - temp7
+        sshr    v0.8h, v0.8h, #6
+        sshr    v1.8h, v1.8h, #6
+        sshr    v2.8h, v2.8h, #6
+        sshr    v3.8h, v3.8h, #6
+        sshr    v23.8h, v23.8h, #6
+        sshr    v16.8h, v16.8h, #6
+        sshr    v17.8h, v17.8h, #6
+        sshr    v18.8h, v18.8h, #6
+        sqadd   v0.8h, v0.8h, v31.8h
+        sqadd   v1.8h, v1.8h, v31.8h
+        sqadd   v2.8h, v2.8h, v31.8h
+        sqadd   v3.8h, v3.8h, v31.8h
+        sqadd   v23.8h, v23.8h, v31.8h
+        sqadd   v16.8h, v16.8h, v31.8h
+        sqadd   v17.8h, v17.8h, v31.8h
+        sqadd   v18.8h, v18.8h, v31.8h
+        sqxtun  v19.8b, v0.8h
+        sqxtun2 v19.16b, v1.8h
+        sqxtun  v20.8b, v2.8h
+        sqxtun2 v20.16b, v3.8h
+        sqxtun  v21.8b, v23.8h
+        sqxtun2 v21.16b, v16.8h
+        sqxtun  v22.8b, v17.8h
+        sqxtun2 v22.16b, v18.8h
+        tbl     v19.16b, {v19.16b}, v24.16b
+        tbl     v20.16b, {v20.16b}, v24.16b
+        tbl     v21.16b, {v21.16b}, v24.16b
+        tbl     v22.16b, {v22.16b}, v24.16b
+        st1     {v19.d}[0], [x2], x3
+        st1     {v19.d}[1], [x2], x3
+        st1     {v20.d}[0], [x2], x3
+        st1     {v20.d}[1], [x2], x3
+        st1     {v21.d}[0], [x2], x3
+        st1     {v21.d}[1], [x2], x3
+        st1     {v22.d}[0], [x2], x3
+        st1     {v22.d}[1], [x2]
         ret
 VMX_END(vmx_idct_neon)
 
