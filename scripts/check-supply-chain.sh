@@ -1,12 +1,14 @@
 #!/bin/bash
-# Enforce the supply-chain policy of the C tree.
+# Enforce the supply-chain policy of the Rust tree.
 #
-# The project is first-party C. The only third-party library is OpenSSL; ALSA
-# (on the appliance), the C library, the Linux uapi, and Win32 are the
-# platform. This gate holds the tree to that:
+# The project is first-party Rust with no third-party crates (scripts/
+# check-rust.sh holds Cargo.lock to the workspace). The only third-party
+# library is OpenSSL; ALSA (on the appliance), the C library, the Linux uapi,
+# and Win32 are the platform. This gate holds the tree to that:
 #
-#   * every <system> header a source includes is on the allowlist below, so a
-#     new dependency cannot arrive as a stray #include;
+#   * every native library a crate links -- a #[link(name = ...)] attribute
+#     or a build script's cargo:rustc-link-lib -- is on the allowlist below,
+#     so a new dependency cannot arrive as a stray link line;
 #   * the OpenSSL the Windows deployer builds is pinned by version and SHA-256
 #     to the 3.5 LTS series, and the toolbox's own OpenSSL is on that series;
 #   * every base image is pinned by digest;
@@ -17,13 +19,28 @@ cd "${PROJECT_ROOT}"
 failures=0
 fail() { echo "FAIL: $1" >&2; failures=$((failures + 1)); }
 
-# The C standard library, POSIX, Linux, Win32, OpenSSL, and ALSA headers.
-ALLOWED_HEADER='^(alloca|errno|fcntl|inttypes|limits|math|netdb|poll|process|pthread|signal|spawn|stdarg|stdatomic|stdbool|stddef|stdint|stdio|stdlib|string|termios|time|unistd|wchar|dirent|arm_neon)\.h$|^(sys|arpa|netinet)/[a-z_]+\.h$|^drm/drm(_mode|_fourcc)?\.h$|^(windows|winsock2|ws2tcpip|wincrypt|bcrypt)\.h$|^openssl/[a-z0-9_]+\.h$|^alsa/asoundlib\.h$'
+# OpenSSL, ALSA, the C library's threads, and the Win32 system libraries.
+ALLOWED_LIBRARY='^(ssl|crypto|asound|pthread|kernel32|ws2_32|bcrypt|crypt32|gdi32|user32|advapi32)$'
 
-echo "Checking that sources include only platform and OpenSSL headers..."
-while IFS= read -r header; do
-    [[ "${header}" =~ ${ALLOWED_HEADER} ]] || fail "unexpected system header <${header}>"
-done < <(grep -rhoE '^#include <[^>]+>' src tests/c tests/fuzz | sed 's/^#include <\(.*\)>$/\1/' | sort -u)
+echo "Checking that crates link only platform and OpenSSL libraries..."
+libraries="$(
+    {
+        grep -rhoE '#\[link\(name = "[^"]+"' crates --include='*.rs' | sed 's/.*"\(.*\)"/\1/'
+        grep -rhoE 'rustc-link-lib=([a-z-]+=|\{kind\}=)?[A-Za-z0-9_]+"' crates --include='*.rs' |
+            sed 's/.*=//; s/"$//'
+        # A build script that links a list names it in a `for lib in [...]` loop.
+        grep -rhoE 'for lib in \[[^]]*\]' crates --include='build.rs' | grep -oE '"[^"]+"' | tr -d '"'
+    } | sort -u
+)"
+[[ -n "${libraries}" ]] || fail "no linked library was found; the patterns no longer match the crates"
+while IFS= read -r library; do
+    [[ "${library}" =~ ${ALLOWED_LIBRARY} ]] || fail "unexpected native library ${library}"
+done <<<"${libraries}"
+# A templated name the patterns above cannot read would slip through them.
+if grep -rnE 'rustc-link-lib=([a-z-]+=)?\{' crates --include='*.rs' | grep -v 'for lib in' |
+    grep -vE 'rustc-link-lib=dylib=\{lib\}|rustc-link-lib=\{kind\}=(ssl|crypto)' >/dev/null; then
+    fail "a build script links a library through a template this gate cannot read"
+fi
 
 echo "Checking the OpenSSL pin..."
 version="$(sed -n 's/^OPENSSL_VERSION="\(.*\)"$/\1/p' scripts/build-openssl.sh)"

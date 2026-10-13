@@ -11,9 +11,9 @@ OPEN MEDIA TRANSPORT COMPONENTS
 --------------------------------
 
 Components:
-  C playback implementation derived from omtplayer
-  C OMT transport implementation derived from libomtnet 1.0.0.17
-  decode-only C VMX1 implementation derived from libvmx
+  Rust playback implementation derived from omtplayer
+  Rust OMT transport implementation derived from libomtnet 1.0.0.17
+  decode-only Rust VMX1 implementation derived from libvmx
 Copyright:
   Copyright (c) 2025 Open Media Transport Contributors
 License: MIT
@@ -281,10 +281,32 @@ Apache License
 
    END OF TERMS AND CONDITIONS
 
+RUST STANDARD LIBRARY
+---------------------
+
+Every shipped program -- omt-receiver and omt-web in the runtime image, and
+both deployers -- statically includes the Rust standard library (std, core,
+and alloc) of the release pinned in rust-toolchain.toml, together with the
+crates the standard library is itself built from (among them
+compiler_builtins, hashbrown, std_detect, backtrace, gimli, addr2line,
+object, miniz_oxide, memchr, and rustc-demangle). The project depends on no
+other crate.
+
+Rust standard library
+  Copyright (c) The Rust Project Contributors
+  License: MIT OR Apache-2.0 (both texts above). Portions of
+    compiler_builtins derived from LLVM's compiler-rt are under
+    Apache-2.0 WITH LLVM-exception; miniz_oxide and adler2 are also offered
+    under the Zlib and 0BSD licenses.
+  Source: https://github.com/rust-lang/rust (the rust-src component of the
+    pinned release)
+
 LINUX DEPLOYER RUNTIME
 ----------------------
 
-The static Linux deployers include the musl C library.
+The static Linux deployers include the musl C library and the GCC runtime
+library's static unwinder (libgcc_eh; terms below, under the Windows
+deployer runtime).
 
 musl libc
   Copyright (c) 2005-2020 Rich Felker, et al.

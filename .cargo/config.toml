@@ -1,0 +1,29 @@
+# Workspace-wide cargo configuration. Target linkers that depend on a sysroot
+# path are passed by the build scripts instead (scripts/cargo-target.sh).
+
+[net]
+# Nothing is ever fetched: the workspace has no third-party crates.
+offline = true
+
+[target.x86_64-pc-windows-gnu]
+linker = "x86_64-w64-mingw32-gcc"
+rustflags = [
+    "-C", "control-flow-guard",
+    "-C", "link-arg=-Wl,--dynamicbase",
+    "-C", "link-arg=-Wl,--nxcompat",
+    "-C", "link-arg=-Wl,--high-entropy-va",
+]
+
+# The appliance links musl, OpenSSL, and ALSA dynamically, and the test
+# suites run the same way. Rust's musl targets default to a
+# static C runtime, which cannot load a shared libcrypto, so it is turned off
+# here; the static deployer build (scripts/check-deployer.sh) turns it back on
+# through RUSTFLAGS, which replaces these.
+[target.x86_64-unknown-linux-musl]
+rustflags = ["-C", "target-feature=-crt-static"]
+
+[target.aarch64-unknown-linux-musl]
+linker = "scripts/cargo-linker-aarch64.sh"
+# The sysroot carries Alpine's musl start files, so rustc's bundled copies
+# stay out of the link.
+rustflags = ["-C", "target-feature=-crt-static", "-C", "link-self-contained=no"]

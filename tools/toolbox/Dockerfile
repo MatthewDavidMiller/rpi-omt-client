@@ -24,7 +24,7 @@ FROM alpine:3.23.5@${ALPINE_DIGEST}
 
 SHELL ["/bin/ash", "-eo", "pipefail", "-c"]
 
-# alsa-lib-dev is a build dependency, not a runtime one: the C gates compile
+# alsa-lib-dev is a build dependency, not a runtime one: the gates link
 # omt-receiver, which binds ALSA. mingw-w64-gcc carries both the Windows
 # cross-compiler and the objdump that scripts/verify-windows-deployer.sh reads
 # PE headers with. openssl-dev and openssl-libs-static are the OpenSSL the
@@ -75,11 +75,11 @@ SHELL ["/bin/ash", "-eo", "pipefail", "-c"]
 # scripts/make-sysroot.sh) and linked by lld: Alpine's aarch64 binutils is
 # built without the plugin the release build's LTO needs.
 #
-# The C tree's gates: clang (with compiler-rt and llvm-ar) builds the
-# sanitizer and libFuzzer configurations -- Alpine's GCC ships no libasan for
-# musl -- while GCC provides -fanalyzer; clang-extra-tools carries the
-# clang-format the formatting gate pins, and cppcheck is the third static
-# check. linux-headers supplies the DRM uapi the receiver includes. dbus,
+# compiler-rt is the AddressSanitizer and libFuzzer runtime the nightly
+# sanitizer and fuzz builds link (scripts/rust-sanitized.sh); GCC compiles
+# the ABI probe and links the static deployer. linux-headers supplies the kernel uapi the receiver includes; Alpine
+# ships the DRM part of it only in libdrm-dev, whose headers the ABI probe
+# (tests/abi/check_abi.py) holds the hand-written DRM declarations to. dbus,
 # py3-dbus, and py3-gobject3 run the receiver's D-Bus interop test, which needs
 # a real bus daemon and a scriptable fake Avahi on the system interpreter.
 #
@@ -98,10 +98,8 @@ RUN apk add --no-cache \
         binutils \
         build-base \
         clang \
-        clang-extra-tools \
         compiler-rt \
         coreutils \
-        cppcheck \
         curl \
         dash \
         dbus \
@@ -116,6 +114,7 @@ RUN apk add --no-cache \
         git \
         grep \
         iproute2 \
+        libdrm-dev \
         linux-headers \
         lld \
         llvm \
@@ -152,9 +151,19 @@ RUN apk add --no-cache \
 # Reuse the repository's own pinned installers rather than restating the
 # versions and checksums here, so the toolbox cannot drift from what a host
 # install of the same tool would produce.
-COPY scripts/install-hadolint.sh scripts/install-trivy.sh scripts/make-sysroot.sh /tmp/installers/
+#
+# Rust lives under /opt, read-only to the gate's uid: RUSTUP_HOME holds the
+# pinned stable and nightly toolchains, and /opt/cargo/bin only rustup's
+# proxies. CARGO_HOME is deliberately left unset at run time, so cargo keeps
+# its caches under $HOME on the toolbox-home volume. The workspace has no
+# third-party crates, so nothing there is ever fetched.
+ENV RUSTUP_HOME=/opt/rustup
+ENV PATH="/opt/cargo/bin:${PATH}"
+COPY scripts/install-hadolint.sh scripts/install-trivy.sh scripts/install-rust.sh scripts/make-sysroot.sh /tmp/installers/
 RUN /tmp/installers/install-hadolint.sh \
     && /tmp/installers/install-trivy.sh \
+    && CARGO_HOME=/opt/cargo /tmp/installers/install-rust.sh \
+    && chmod -R a+rX /opt/rustup /opt/cargo \
     && /tmp/installers/make-sysroot.sh aarch64 /opt/sysroot-aarch64 \
     && rm -rf /tmp/installers
 

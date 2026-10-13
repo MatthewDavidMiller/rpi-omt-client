@@ -39,8 +39,10 @@ grep -Eq 'tar -tzf' "${BUILD}" || \
     fail "the compressed archive must be verified as gzip before it is published"
 grep -Fq 'RECEIVER_SOURCE_FINGERPRINT=' "${BUILD}" || \
     fail "the ARM64 build must fingerprint the receiver source closure"
-grep -Fq 'find mk src scripts/make-sysroot.sh -path src/deploy -prune -o -type f -print0' "${BUILD}" || \
-    fail "the receiver fingerprint must cover the C sources, build rules, and sysroot recipe"
+grep -Fq 'find crates .cargo Cargo.toml Cargo.lock rust-toolchain.toml' "${BUILD}" || \
+    fail "the receiver fingerprint must cover the Rust sources, build rules, and sysroot recipe"
+grep -Fq 'scripts/install-rust.sh scripts/cargo-linker*.sh' "${BUILD}" || \
+    fail "the receiver fingerprint must cover the Rust toolchain pin and linker"
 grep -Fq '"${RPI_OMT_CLIENT_VERSION}" "${receiver_files_fingerprint}"' "${BUILD}" || \
     fail "the receiver fingerprint must include embedded version metadata"
 grep -Fq -- '--build-arg "RECEIVER_SOURCE_FINGERPRINT=${RECEIVER_SOURCE_FINGERPRINT}"' "${BUILD}" || \
@@ -51,14 +53,12 @@ grep -Fq 'LABEL org.rpi-omt-client.receiver-source=${RECEIVER_SOURCE_FINGERPRINT
 fingerprint_labels="$(grep -Fc 'LABEL org.rpi-omt-client.receiver-source=${RECEIVER_SOURCE_FINGERPRINT}' "${DOCKERFILE}")"
 [[ "${fingerprint_labels}" == 2 ]] || \
     fail "both receiver COPY boundaries must be tied to the source fingerprint"
-grep -Fxq 'src/deploy/' "${ROOT}/.dockerignore" || \
-    fail "deployer-only edits must not invalidate the ARM64 receiver builder"
-for tree in mk src; do
+for tree in crates .cargo; do
     grep -Fxq "COPY ${tree}/ ${tree}/" "${DOCKERFILE}" || \
-        fail "the C builder must copy ${tree}/"
+        fail "the builder must copy ${tree}/"
 done
-grep -Fq 'receiver web' "${DOCKERFILE}" || \
-    fail "the C builder must build both appliance binaries"
+grep -Fq -- '--target "${triple}" -p omt-receiver -p omt-web' "${DOCKERFILE}" || \
+    fail "the builder must build the Rust receiver and Web frontend"
 
 # The appliance side must not have grown a decompression step of its own:
 # `docker load` detects gzip, and a pipeline through gunzip would break the

@@ -12,9 +12,9 @@ ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 SET_HOSTNAME="${ROOT}/deploy/host/set-hostname.sh"
 SETUP_SYS="${ROOT}/deploy/host/setup-sys.sh"
 MANIFEST="${ROOT}/deploy/manifest-v3.txt"
-OPS_H="${ROOT}/src/deploy/core/ops_internal.h"
-TUI_C="${ROOT}/src/deploy/tui/app.c"
-CLI_C="${ROOT}/src/deploy/cli/main.c"
+OPS_H="${ROOT}/crates/omt-deploy/src/ops.rs"
+TUI_C="${ROOT}/crates/rpi-omt-deploy-tui/src/app.rs"
+CLI_C="${ROOT}/crates/rpi-omt-deploy/src/main.rs"
 
 failures=0
 fail() {
@@ -103,9 +103,9 @@ grep -Fxq 'deploy/host/set-hostname.sh' "${MANIFEST}" || \
 
 # Both front ends have to offer the action, or an operator's only route to it
 # is a hand-run script on the Pi -- which is the gap this was added to close.
-grep -Fq '{"hostname", CMD_HOSTNAME,' "${CLI_C}" || \
+grep -Fq '("hostname", Cmd::Hostname,' "${CLI_C}" || \
     fail "the CLI has no hostname command"
-grep -Fq 'DP_JOB_HOSTNAME' "${TUI_C}" || \
+grep -Fq 'JobKind::Hostname' "${TUI_C}" || \
     fail "the terminal deployer does not run a rename"
 grep -Fq '"Apply hostname"' "${TUI_C}" || \
     fail "the terminal deployer's Manage view has no rename control"

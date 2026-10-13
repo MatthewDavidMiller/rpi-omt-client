@@ -8,12 +8,13 @@ trap 'rm -rf "${CASE_DIR}"' EXIT
 mkdir -p "${CASE_DIR}/config/run" "${CASE_DIR}/bin"
 
 # start-omt.sh resolves the target, ceiling, and delay through omt-web, so the
-# launcher is tested against the C binary this tree builds. tools/test-web.sh
-# exports REAL_OMT_WEB; run on its own, the suite builds the same one.
+# launcher is tested against the binary this tree builds. tools/test-web.sh
+# exports REAL_OMT_WEB (its sanitized build); run on its own, the suite builds
+# one.
 OMT_WEB="${REAL_OMT_WEB:-}"
 if [[ -z "${OMT_WEB}" ]]; then
-    make -s -C "${ROOT}" -f mk/c.mk BUILD=asan -j"$(nproc)" web
-    OMT_WEB="${ROOT}/$(make -s -C "${ROOT}" -f mk/c.mk BUILD=asan print-out)/bin/omt-web"
+    cargo build -q --offline --locked --manifest-path "${ROOT}/Cargo.toml" -p omt-web --bin omt-web
+    OMT_WEB="${ROOT}/target/debug/omt-web"
 fi
 ln -s "${OMT_WEB}" "${CASE_DIR}/bin/omt-web"
 

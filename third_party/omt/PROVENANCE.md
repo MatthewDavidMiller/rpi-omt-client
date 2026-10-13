@@ -1,10 +1,10 @@
 # Open Media Transport provenance
 
-The Raspberry Pi OMT Client carries a clean, decode-only C port of the
+The Raspberry Pi OMT Client carries a clean, decode-only Rust port of the
 MIT-licensed `libvmx` decoder. Its wire transport and playback code were
 independently ported from the listed MIT-licensed revisions -- first to Rust,
-and from that translation to the C17 in `src/`; upstream source snapshots are
-deliberately not vendored or built.
+then to C17, and in 3.0.0 from that C back to the Rust in `crates/`; upstream
+source snapshots are deliberately not vendored or built.
 
 | Component | Upstream | Commit |
 |---|---|---|

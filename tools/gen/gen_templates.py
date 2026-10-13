@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Copyright (c) 2026 Matthew David Miller
 # SPDX-License-Identifier: MIT
-"""Compile src/web/templates/*.html into C rendering functions.
+"""Compile crates/omt-web/templates/*.html into Rust rendering functions.
 
 The Web frontend renders a fixed set of pages, so their templates are compiled
 ahead of time rather than interpreted: the appliance carries no template
@@ -22,10 +22,10 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-TEMPLATES = ROOT / "src/web/templates"
-STATIC = ROOT / "src/web/static"
+TEMPLATES = ROOT / "crates/omt-web/templates"
+STATIC = ROOT / "crates/omt-web/static"
 STATIC_TYPES = {".css": "text/css; charset=utf-8", ".svg": "image/svg+xml"}
-OUTPUT = ROOT / "src/web/templates_gen.c"
+RUST_OUTPUT = ROOT / "crates/omt-web/src/templates_gen.rs"
 TOKEN = re.compile(r"({{.*?}}|{%.*?%}|{#.*?#})", re.DOTALL)
 
 
@@ -164,7 +164,7 @@ class Expr:
             condition = self.or_(scope)
             self.take("else")
             otherwise = self.ternary(scope)
-            return f"(tv_truthy({condition}) ? {value} : {otherwise})"
+            return self.out_ternary(condition, value, otherwise)
         return value
 
     def or_(self, scope):
@@ -172,7 +172,7 @@ class Expr:
         while self.peek() == "or":
             self.take()
             right = self.and_(scope)
-            value = f"tv_from_bool(tv_truthy({value}) || tv_truthy({right}))"
+            value = self.out_or(value, right)
         return value
 
     def and_(self, scope):
@@ -180,13 +180,13 @@ class Expr:
         while self.peek() == "and":
             self.take()
             right = self.not_(scope)
-            value = f"tv_from_bool(tv_truthy({value}) && tv_truthy({right}))"
+            value = self.out_and(value, right)
         return value
 
     def not_(self, scope):
         if self.peek() == "not":
             self.take()
-            return f"tv_from_bool(!tv_truthy({self.not_(scope)}))"
+            return self.out_not(self.not_(scope))
         return self.compare(scope)
 
     def compare(self, scope):
@@ -195,16 +195,14 @@ class Expr:
         if token in ("==", "!="):
             self.take()
             right = self.primary(scope)
-            negate = "!" if token == "!=" else ""
-            return f"tv_from_bool({negate}tv_equal({value}, {right}))"
+            return self.out_equal(value, right, token == "!=")
         if token == "is":
             self.take()
             negate = self.peek() == "not"
             if negate:
                 self.take()
             self.take("none")
-            operator = "!=" if negate else "=="
-            return f"tv_from_bool(({value})->kind {operator} TV_NONE)"
+            return self.out_is_none(value, negate)
         return value
 
     def primary(self, scope):
@@ -218,46 +216,130 @@ class Expr:
         if token in ("if", "else", "and", "or", "not", "is", "none"):
             raise TemplateError(f"unexpected {token!r}")
         parts = token.split(".")
-        value = f'tv_lookup({scope}, "{parts[0]}")'
+        value = self.out_lookup(scope, parts[0])
         for attribute in parts[1:]:
-            value = f'tv_attr({value}, "{attribute}")'
+            value = self.out_attr(value, attribute)
         return value
+
+    # The C spelling of each operation; RustExpr overrides them.
+
+    def out_ternary(self, condition, value, otherwise):
+        return f"(tv_truthy({condition}) ? {value} : {otherwise})"
+
+    def out_or(self, left, right):
+        return f"tv_from_bool(tv_truthy({left}) || tv_truthy({right}))"
+
+    def out_and(self, left, right):
+        return f"tv_from_bool(tv_truthy({left}) && tv_truthy({right}))"
+
+    def out_not(self, value):
+        return f"tv_from_bool(!tv_truthy({value}))"
+
+    def out_equal(self, left, right, negate):
+        bang = "!" if negate else ""
+        return f"tv_from_bool({bang}tv_equal({left}, {right}))"
+
+    def out_is_none(self, value, negate):
+        operator = "!=" if negate else "=="
+        return f"tv_from_bool(({value})->kind {operator} TV_NONE)"
+
+    def out_lookup(self, scope, name):
+        return f'tv_lookup({scope}, "{name}")'
+
+    def out_attr(self, value, name):
+        return f'tv_attr({value}, "{name}")'
+
+
+class RustExpr(Expr):
+    """The same grammar, compiled to calls on crate::tv."""
+
+    def out_ternary(self, condition, value, otherwise):
+        return f"if tv::truthy({condition}) {{ {value} }} else {{ {otherwise} }}"
+
+    def out_or(self, left, right):
+        return f"tv::from_bool(tv::truthy({left}) || tv::truthy({right}))"
+
+    def out_and(self, left, right):
+        return f"tv::from_bool(tv::truthy({left}) && tv::truthy({right}))"
+
+    def out_not(self, value):
+        return f"tv::from_bool(!tv::truthy({value}))"
+
+    def out_equal(self, left, right, negate):
+        bang = "!" if negate else ""
+        return f"tv::from_bool({bang}tv::equal({left}, {right}))"
+
+    def out_is_none(self, value, negate):
+        bang = "!" if negate else ""
+        return f"tv::from_bool({bang}tv::is_none({value}))"
+
+    def out_lookup(self, scope, name):
+        return f'tv::lookup({scope}, "{name}")'
+
+    def out_attr(self, value, name):
+        return f'tv::attr({value}, "{name}")'
 
 
 # --------------------------------------------------------------- codegen
 
 
-def c_string(text):
+def rust_string(text):
     out = []
-    for byte in text.encode("utf-8"):
-        char = chr(byte)
+    for char in text:
         if char == "\\":
             out.append("\\\\")
         elif char == '"':
             out.append('\\"')
         elif char == "\n":
             out.append("\\n")
-        elif 32 <= byte < 127:
-            out.append(char)
+        elif char == "\t":
+            out.append("\\t")
+        elif ord(char) < 32 or ord(char) == 127:
+            out.append(f"\\u{{{ord(char):x}}}")
         else:
-            out.append(f"\\{byte:03o}")
+            out.append(char)
     return '"' + "".join(out) + '"'
 
 
-class Generator:
+def split_pages(templates):
+    """The base template's nodes and each page's block overrides."""
+    base_nodes = parse(templates["base.html"], "base.html")
+    children = []
+    for name in sorted(templates):
+        if name == "base.html":
+            continue
+        nodes = [
+            n for n in parse(templates[name], name) if not (n[0] == "text" and not n[1].strip())
+        ]
+        if not nodes or nodes[0] != ("extends", "base.html"):
+            raise TemplateError(f"{name}: every page must extend base.html")
+        overrides = {}
+        for node in nodes[1:]:
+            if node[0] != "block":
+                raise TemplateError(f"{name}: content outside a block")
+            overrides[node[1]] = node[2]
+        children.append((name, overrides))
+    return base_nodes, children
+
+
+class RustGenerator:
+    """Compiles the same templates to crates/omt-web/src/templates_gen.rs."""
+
     def __init__(self):
         self.literals = {}
-        self.functions = []
         self.counter = 0
 
     def literal(self, text):
         if text not in self.literals:
-            self.literals[text] = f"lit_{len(self.literals)}"
+            self.literals[text] = f"LIT_{len(self.literals)}"
         return f"&{self.literals[text]}"
 
     def fresh(self, prefix):
         self.counter += 1
         return f"{prefix}_{self.counter}"
+
+    def expr(self, text, scope):
+        return RustExpr(text, self.literal).compile(scope)
 
     def emit(self, nodes, scope, indent, lines, blocks, template):
         pad = "    " * indent
@@ -265,18 +347,13 @@ class Generator:
             kind = node[0]
             if kind == "text":
                 if node[1]:
-                    lines.append(
-                        f"{pad}omt_buf_append(out, {c_string(node[1])}, {len(node[1].encode())});"
-                    )
+                    lines.append(f"{pad}out.push_str({rust_string(node[1])});")
             elif kind == "out":
-                lines.append(f"{pad}tv_render(out, {Expr(node[1], self.literal).compile(scope)});")
+                lines.append(f"{pad}tv::render(out, {self.expr(node[1], scope)});")
             elif kind == "if":
                 for index, (condition, inner) in enumerate(node[1]):
                     keyword = "if" if index == 0 else "} else if"
-                    lines.append(
-                        f"{pad}{keyword} "
-                        f"(tv_truthy({Expr(condition, self.literal).compile(scope)})) {{"
-                    )
+                    lines.append(f"{pad}{keyword} tv::truthy({self.expr(condition, scope)}) {{")
                     self.emit(inner, scope, indent + 1, lines, blocks, template)
                 if node[2] is not None:
                     lines.append(f"{pad}}} else {{")
@@ -287,22 +364,15 @@ class Generator:
                 index = self.fresh("i")
                 item = self.fresh("item")
                 lines.append(f"{pad}{{")
-                lines.append(
-                    f"{pad}    const tv *{iterable} = {Expr(node[2], self.literal).compile(scope)};"
-                )
-                lines.append(
-                    f"{pad}    for (size_t {index} = 0; "
-                    f"{index} < tv_length({iterable}); {index}++) {{"
-                )
-                lines.append(f"{pad}        const tv *{item} = tv_index({iterable}, {index});")
+                lines.append(f"{pad}    let {iterable} = {self.expr(node[2], scope)};")
+                lines.append(f"{pad}    for {index} in 0..tv::length({iterable}) {{")
+                lines.append(f"{pad}        let {item} = tv::index({iterable}, {index});")
                 inner_scope = scope
                 for position, target in enumerate(node[1]):
                     frame = self.fresh("sc")
-                    value = item if len(node[1]) == 1 else f"tv_index({item}, {position})"
-                    lines.append(
-                        f"{pad}        const tv_scope {frame} = "
-                        f'{{{inner_scope}, "{target}", {value}, NULL}};'
-                    )
+                    value = item if len(node[1]) == 1 else f"tv::index({item}, {position})"
+                    bind = f'Scope::bind({inner_scope}, "{target}", {value})'
+                    lines.append(f"{pad}        let {frame} = {bind};")
                     inner_scope = f"&{frame}"
                 self.emit(node[3], inner_scope, indent + 2, lines, blocks, template)
                 lines.append(f"{pad}    }}")
@@ -310,14 +380,14 @@ class Generator:
             elif kind == "set":
                 frame = self.fresh("sc")
                 lines.append(
-                    f'{pad}const tv_scope {frame} = {{{scope}, "{node[1]}", '
-                    f"{Expr(node[2], self.literal).compile(scope)}, NULL}};"
+                    f'{pad}let {frame} = Scope::bind({scope}, "{node[1]}", '
+                    f"{self.expr(node[2], scope)});"
                 )
                 scope = f"&{frame}"
             elif kind == "block":
-                lines.append(f"{pad}if (blocks && blocks->{node[1]})")
-                lines.append(f"{pad}    blocks->{node[1]}(out, {scope});")
-                lines.append(f"{pad}else {{")
+                lines.append(f"{pad}if let Some(block) = blocks.{node[1]} {{")
+                lines.append(f"{pad}    block(out, {scope});")
+                lines.append(f"{pad}}} else {{")
                 self.emit(node[2], scope, indent + 1, lines, blocks, template)
                 lines.append(f"{pad}}}")
                 blocks.add(node[1])
@@ -327,51 +397,38 @@ class Generator:
                 raise TemplateError(f"{template}: unknown node {kind}")
 
     def render(self, templates):
-        base_nodes = parse(templates["base.html"], "base.html")
+        base_nodes, children = split_pages(templates)
         block_names = set()
         base_lines = []
         self.emit(base_nodes, "scope", 1, base_lines, block_names, "base.html")
         block_names = sorted(block_names)
-        children = []
-        for name in sorted(templates):
-            if name == "base.html":
-                continue
-            nodes = [
-                n for n in parse(templates[name], name) if not (n[0] == "text" and not n[1].strip())
-            ]
-            if not nodes or nodes[0] != ("extends", "base.html"):
-                raise TemplateError(f"{name}: every page must extend base.html")
-            overrides = {}
-            for node in nodes[1:]:
-                if node[0] != "block":
-                    raise TemplateError(f"{name}: content outside a block")
-                if node[1] not in block_names:
-                    raise TemplateError(f"{name}: base.html has no block {node[1]}")
-                overrides[node[1]] = node[2]
-            children.append((name, overrides))
+        for name, overrides in children:
+            for block in overrides:
+                if block not in block_names:
+                    raise TemplateError(f"{name}: base.html has no block {block}")
 
         def identifier(name: str) -> str:
             return re.sub(r"\W", "_", name.removesuffix(".html"))
 
         lines = [
-            "/* Generated by tools/gen/gen_templates.py from src/web/templates. Do not edit. */",
-            '#include "web/templates.h"',
+            "// Generated by tools/gen/gen_templates.py from crates/omt-web/templates. "
+            "Do not edit.",
+            "#![allow(clippy::all, clippy::pedantic, unused_variables)]",
             "",
-            "#include <string.h>",
+            "use std::borrow::Cow;",
             "",
-            "typedef void (*block_fn)(omt_buf *out, const tv_scope *scope);",
-            "typedef struct {",
+            "use crate::tv::{self, Scope, Value};",
+            "",
+            "type BlockFn = for<'a> fn(&mut String, &Scope<'a>);",
+            "",
+            "struct Blocks {",
         ]
-        lines += [f"    block_fn {block};" for block in block_names]
-        lines += ["} blocks_t;", ""]
+        lines += [f"    {block}: Option<BlockFn>," for block in block_names]
+        lines += ["}", ""]
         literal_index = len(lines)
-        lines += [
-            "static void render_base(omt_buf *out, const tv_scope *scope, "
-            "const blocks_t *blocks) {",
-            *base_lines,
-            "}",
-            "",
-        ]
+        lines += ["fn render_base(out: &mut String, scope: &Scope<'_>, blocks: &Blocks) {"]
+        lines += base_lines
+        lines += ["}", ""]
         table = []
         for name, overrides in children:
             ident = identifier(name)
@@ -384,69 +441,71 @@ class Generator:
                     self.emit(overrides[block], "scope", 1, body, used, name)
                     if used:
                         raise TemplateError(f"{name}: nested blocks are not supported")
-                    lines.append(f"static void {function}(omt_buf *out, const tv_scope *scope) {{")
-                    lines += ["    (void)out;", "    (void)scope;"] + body
+                    lines.append(f"fn {function}(out: &mut String, scope: &Scope<'_>) {{")
+                    lines += body
                     lines += ["}", ""]
-                    initializers.append(f".{block} = {function}")
-            lines.append(f"static const blocks_t {ident}_blocks = {{{', '.join(initializers)}}};")
-            lines.append("")
+                    initializers.append(f"{block}: Some({function})")
+                else:
+                    initializers.append(f"{block}: None")
+            lines.append(f"static {ident.upper()}_BLOCKS: Blocks = Blocks {{")
+            lines += [f"    {item}," for item in initializers]
+            lines += ["};", ""]
             table.append((name, ident))
-        lines.append(
-            "bool omt_template_render(const char *name, const tv *context, omt_buf *out) {"
-        )
-        lines.append("    const tv_scope root = {NULL, NULL, NULL, context};")
+        lines.append("/// Renders the named page into `out`; false for an unknown page.")
+        lines.append("pub fn render(name: &str, context: &Value, out: &mut String) -> bool {")
+        lines.append("    let blocks = match name {")
         for name, ident in table:
-            lines.append(f'    if (strcmp(name, "{name}") == 0) {{')
-            lines.append(f"        render_base(out, &root, &{ident}_blocks);")
-            lines.append("        return !out->failed;")
-            lines.append("    }")
-        lines.append("    return false;")
+            lines.append(f'        "{name}" => &{ident.upper()}_BLOCKS,')
+        lines.append("        _ => return false,")
+        lines.append("    };")
+        lines.append("    render_base(out, &Scope::root(context), blocks);")
+        lines.append("    true")
         lines.append("}")
         lines.append("")
-        lines.append(
-            "bool omt_static_asset(const char *name, const char **data, size_t *len, "
-            "const char **type) {"
-        )
+        lines.append("/// The embedded static files and their media types.")
+        lines.append("pub fn static_asset(name: &str) -> Option<(&'static str, &'static str)> {")
+        lines.append("    match name {")
         for path in sorted(STATIC.iterdir()):
             content = path.read_text(encoding="utf-8")
-            lines.append(f'    if (strcmp(name, "{path.name}") == 0) {{')
-            lines.append(f"        static const char body[] = {c_string(content)};")
-            lines.append("        *data = body;")
-            lines.append("        *len = sizeof(body) - 1;")
-            lines.append(f'        *type = "{STATIC_TYPES[path.suffix]}";')
-            lines.append("        return true;")
-            lines.append("    }")
-        lines.append("    return false;")
+            lines.append(
+                f'        "{path.name}" => Some(({rust_string(content)}, '
+                f'"{STATIC_TYPES[path.suffix]}")),'
+            )
+        lines.append("        _ => None,")
+        lines.append("    }")
         lines.append("}")
         lines.append("")
         literal_lines = [
-            f"static const tv {ident} = {{.kind = TV_STR, .s = {c_string(text)}, "
-            f".len = {len(text.encode())}}};"
+            f"static {ident}: Value = Value::Str(Cow::Borrowed({rust_string(text)}));"
             for text, ident in self.literals.items()
         ]
         lines[literal_index:literal_index] = literal_lines + [""]
         return "\n".join(lines)
 
 
-def render():
-    templates = {
+def load_templates():
+    return {
         path.name: path.read_text(encoding="utf-8") for path in sorted(TEMPLATES.glob("*.html"))
     }
-    return Generator().render(templates)
+
+
+def render_rust():
+    return RustGenerator().render(load_templates())
 
 
 def main():
     try:
-        text = render()
+        outputs = {RUST_OUTPUT: render_rust()}
     except TemplateError as error:
         print(f"template error: {error}", file=sys.stderr)
         return 1
     if sys.argv[1:] == ["--check"]:
-        if OUTPUT.read_text(encoding="utf-8") != text:
-            print(f"{OUTPUT} is stale; run {sys.argv[0]}", file=sys.stderr)
-            return 1
-        return 0
-    OUTPUT.write_text(text, encoding="utf-8")
+        stale = [path for path, text in outputs.items() if path.read_text(encoding="utf-8") != text]
+        for path in stale:
+            print(f"{path} is stale; run {sys.argv[0]}", file=sys.stderr)
+        return 1 if stale else 0
+    for path, text in outputs.items():
+        path.write_text(text, encoding="utf-8")
     return 0
 
 

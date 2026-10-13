@@ -1,5 +1,5 @@
 #!/bin/bash
-# Contract and lifecycle tests for the first-party C OMT A/V sender.
+# Contract and lifecycle tests for the first-party OMT A/V sender.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -7,7 +7,8 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 BUILD_SCRIPT="${PROJECT_ROOT}/scripts/build-omt-test-sender.sh"
 RUN_SCRIPT="${PROJECT_ROOT}/scripts/omt-test-sender.sh"
 FIREWALL_SCRIPT="${PROJECT_ROOT}/scripts/configure-omt-test-sender-firewall.sh"
-SENDER_SOURCE="${PROJECT_ROOT}/src/sender/main.c"
+SENDER_SOURCE="${PROJECT_ROOT}/crates/omt-test-sender/src/main.rs"
+SENDER_MANIFEST="${PROJECT_ROOT}/crates/omt-test-sender/Cargo.toml"
 MAKEFILE="${PROJECT_ROOT}/Makefile"
 failures=0
 
@@ -23,21 +24,22 @@ for script in "${BUILD_SCRIPT}" "${RUN_SCRIPT}" "${FIREWALL_SCRIPT}"; do
     [[ -x "${script}" ]] && pass "$(basename "${script}") is executable" ||
         fail "$(basename "${script}") is executable"
 done
-# The sender is first-party C over the repository's own protocol module.
-sender_includes="$(grep -hoE '^#include [<"][^>"]+[>"]' "${SENDER_SOURCE}" | sort -u)"
-if grep -qvE '^#include (<[a-z/_]+\.h>|"(common|protocol)/[a-z_]+\.h")$' <<<"${sender_includes}"; then
-    fail "sender includes only the platform and the repository's own modules"
+# The sender is first-party Rust over the repository's own protocol crate.
+sender_dependencies="$(awk '/^\[dependencies\]/ { on = 1; next } /^\[/ { on = 0 } on && NF { print $1 }' \
+    "${SENDER_MANIFEST}" | sort | tr '\n' ' ')"
+if [[ "${sender_dependencies}" == "omt-common omt-protocol " ]]; then
+    pass "sender depends only on the repository's own crates"
 else
-    pass "sender includes only the platform and the repository's own modules"
+    fail "sender depends only on the repository's own crates (${sender_dependencies})"
 fi
-require_literal "${SENDER_SOURCE}" '#include "protocol/omt.h"' \
+require_literal "${SENDER_SOURCE}" 'use omt_protocol::' \
     "sender uses the repository protocol module"
-require_literal "${BUILD_SCRIPT}" 'make -s -f mk/c.mk BUILD=release' \
-    "sender build uses the C release build"
-require_literal "${BUILD_SCRIPT}" '--platform linux/arm64' \
+require_literal "${BUILD_SCRIPT}" 'cargo build --release --offline --locked' \
+    "sender build uses the locked release build"
+require_literal "${BUILD_SCRIPT}" 'rust_target=aarch64-unknown-linux-musl' \
     "Pi 4 and Pi 5 share an explicit ARM64 build"
-require_literal "${BUILD_SCRIPT}" 'LDFLAGS=-static-pie' \
-    "the ARM64 sender is self-contained"
+require_literal "${BUILD_SCRIPT}" 'target-feature=+crt-static -C relocation-model=pie' \
+    "the workstation sender is self-contained"
 require_literal "${MAKEFILE}" '$(TOOLBOX) ./scripts/build-omt-test-sender.sh' \
     "the documented sender build needs only the toolbox"
 require_literal "${FIREWALL_SCRIPT}" 'port port=6400-6600 protocol=tcp' \

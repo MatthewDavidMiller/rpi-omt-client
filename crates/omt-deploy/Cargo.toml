@@ -1,0 +1,19 @@
+[package]
+name = "omt-deploy"
+description = "The deployer core: the SSH client, validation, the embedded capsule, and the operations"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+omt-common = { path = "../omt-common" }
+omt-crypto = { path = "../omt-crypto" }
+omt-sys = { path = "../omt-sys", features = ["ssl"] }
+
+[[bin]]
+name = "ssh_interop"
+path = "src/bin/ssh_interop.rs"
+
+[lints]
+workspace = true

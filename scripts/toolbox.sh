@@ -46,6 +46,7 @@ toolbox_tag() {
             "${PROJECT_ROOT}/tests/requirements-dev.txt" \
             "${PROJECT_ROOT}/scripts/install-hadolint.sh" \
             "${PROJECT_ROOT}/scripts/install-trivy.sh" \
+            "${PROJECT_ROOT}/scripts/install-rust.sh" \
             "${PROJECT_ROOT}/scripts/make-sysroot.sh" |
             sha256sum | cut -c1-16
     )"
@@ -105,7 +106,7 @@ build_toolbox() {
     #
     # The platform is explicit because the base images are pinned by manifest
     # digest, and Podman resolves a digest to whatever variant it already holds
-    # locally: after an ARM64 appliance build or the emulated C suites have
+    # locally: after an ARM64 appliance build or the emulated AArch64 suites have
     # pulled the arm64 variant, an unqualified build would quietly produce an
     # arm64 toolbox that cannot run the host's own gates.
     local platform

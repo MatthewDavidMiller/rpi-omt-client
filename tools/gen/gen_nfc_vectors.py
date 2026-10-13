@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Copyright (c) 2026 Matthew David Miller
 # SPDX-License-Identifier: MIT
-"""Generate tests/vectors/nfc/vectors.txt, the NFC oracle for tests/c/test_nfc.c.
+"""Generate tests/vectors/nfc/vectors.txt, the NFC oracle for omt-common's NFC tests.
 
 Each line is `<input utf-8 hex> <nfc utf-8 hex>`, with Python's unicodedata as
 the reference. The set covers every code point with a canonical mapping or a

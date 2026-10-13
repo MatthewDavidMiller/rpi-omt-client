@@ -147,8 +147,10 @@ System page. `auto` restores the board default. No ceiling may exceed
 Raising a ceiling above the board default is permitted and is not validated:
 a board that cannot decode the format will drop frames rather than refuse them.
 
-Both ceilings are measured, not derived: the Pi 5 decoded the 1080p gradient
-vector in 6.5 ms against a 16.7 ms budget, and the Pi 4 in 26.4 ms against
-33.3 ms. Those figures come from the Rust decoder the C one replaced; re-confirm
-them for the C decoder on each board with `make -f mk/c.mk BUILD=release bench`
-and lower the profile if a board cannot hold its tier.
+Both ceilings are measured, not derived: the Pi 4 decodes the 1080p gradient
+vector to its YUV scanout format in 3.5 ms with the receiver's three decode
+workers, against a 33.3 ms budget. The Pi 5's figure, 6.5 ms against
+16.7 ms, comes from an earlier single-threaded decoder and has not been
+re-measured since. Re-confirm both on each board with
+`cargo run --release -p omt-vmx --bin bench_vmx` and lower the profile if a
+board cannot hold its tier.

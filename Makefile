@@ -1,7 +1,7 @@
 # Raspberry Pi OMT Client Build System
 # Usage: make [target]
 
-.PHONY: test-c fuzz-smoke help install setup-arm64-emulation build build-arm64 build-amd64 build-deployer build-windows-deployer release build-omt-sender omt-sender-start omt-sender-stop omt-sender-status omt-sender-firewall-allow omt-sender-firewall-remove deploy up down logs lint test test-quick test-web test-receiver test-deployer test-setup security-scan clean
+.PHONY: test-sanitized fuzz-smoke help install setup-arm64-emulation build build-arm64 build-amd64 build-deployer build-windows-deployer release build-omt-sender omt-sender-start omt-sender-stop omt-sender-status omt-sender-firewall-allow omt-sender-firewall-remove deploy up down logs lint test test-quick test-web test-receiver test-deployer test-setup security-scan clean
 
 IMAGE_NAME   := omt-client
 ARM64_TARBALL := omt-client-arm64.tar.gz
@@ -31,7 +31,7 @@ help:
 	@echo "                 artifact carries the version of its own commit"
 	@echo "  release       Build locally, tag and push HEAD, and create the"
 	@echo "                 GitHub Release (requires an authenticated gh CLI)"
-	@echo "  build-omt-sender  Build the first-party C OMT A/V sender"
+	@echo "  build-omt-sender  Build the first-party OMT A/V test sender"
 	@echo ""
 	@echo "Deploy targets:"
 	@echo "  deploy HOST=user@ip  Copy ARM64 image to Pi and start container"
@@ -51,10 +51,10 @@ help:
 	@echo "  test          Run all tests (unit + live container build)"
 	@echo "  test-quick    Run every unit suite, no container engine (~1m)"
 	@echo "  test-web      Build and test the Web frontend"
-	@echo "  test-receiver Build and test the C receiver and test sender"
-	@echo "  test-c        Run every C unit suite under ASan and UBSan"
+	@echo "  test-receiver Build and test the receiver and test sender"
+	@echo "  test-sanitized Run every Rust suite under AddressSanitizer"
 	@echo "  fuzz-smoke    Run each libFuzzer target briefly from its corpus"
-	@echo "  test-deployer Build and test the C deployer (sanitized, SSH interop, static)"
+	@echo "  test-deployer Build and test the deployer (sanitized, SSH interop, static)"
 	@echo "  test-setup    Bootstrap a host Python venv (not needed for the toolbox)"
 	@echo "  security-scan Run Trivy filesystem + image scans"
 	@echo "  clean         Remove build artifacts and stopped containers"
@@ -183,11 +183,11 @@ test-web:
 test-receiver:
 	$(TOOLBOX) ./tools/test-receiver.sh
 
-# Every C unit suite under AddressSanitizer and UndefinedBehaviorSanitizer.
-test-c:
-	$(TOOLBOX) make -f mk/c.mk BUILD=asan test
+# Every Rust suite under AddressSanitizer (pinned nightly).
+test-sanitized:
+	$(TOOLBOX) ./scripts/rust-sanitized.sh test
 
-# Each libFuzzer target for FUZZ_SECONDS (default 60) from its corpus.
+# Each libFuzzer target for FUZZ_SECONDS (default 30) from its corpus.
 fuzz-smoke:
 	$(TOOLBOX) ./tools/test-fuzz.sh
 
@@ -210,7 +210,7 @@ clean:
 	@echo "Cleaning build artifacts..."
 	rm -f $(ARM64_TARBALL)
 	rm -rf $(BUILD_METADATA_DIR)
-	rm -rf target build/c
+	rm -rf target
 	docker compose -f $(DEV_COMPOSE) down --remove-orphans 2>/dev/null || true
 	docker rmi $(IMAGE_NAME):dev 2>/dev/null || true
 	@echo "Clean complete"

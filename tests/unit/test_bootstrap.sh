@@ -87,7 +87,7 @@ fi
 # doas branch on exactly the stock hosts that cannot use it, and the deploy
 # died on "doas: Operation not permitted" rather than printing the bootstrap
 # instructions. The native deployer runs the same probe and must agree.
-OPS_C="${ROOT}/src/deploy/core/ops.c"
+OPS_C="${ROOT}/crates/omt-deploy/src/ops.rs"
 for probe_source in "${DEPLOY}" "${OPS_C}"; do
     [[ -f "${probe_source}" ]] || {
         fail "missing escalation probe source: ${probe_source}"

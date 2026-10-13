@@ -82,41 +82,41 @@ echo "Detected OS: ${OS}${OS_LIKE:+ (${OS_LIKE})}"
 
 case "${OS}" in
     ubuntu|debian)
-        install_apt_packages alsa-utils clang clang-format cppcheck curl dash \
+        install_apt_packages alsa-utils clang curl dash \
             gcc libasound2-dev libssl-dev llvm make openssh-client \
             openssh-server pkg-config podman python3-venv shellcheck tar xz-utils
         ;;
     fedora)
         sudo dnf install -y --setopt=install_weak_deps=False \
-            alsa-lib-devel clang clang-tools-extra cppcheck compiler-rt curl \
+            alsa-lib-devel clang compiler-rt curl \
             dash gcc llvm make openssl-devel openssh-clients openssh-server \
             pkgconf-pkg-config podman python3 ShellCheck tar xz
         ;;
     rocky|almalinux|rhel|centos)
-        install_dnf_packages alsa-lib-devel clang clang-tools-extra compiler-rt \
+        install_dnf_packages alsa-lib-devel clang compiler-rt \
             curl dash gcc llvm make openssh-clients openssh-server openssl-devel \
             pkgconf-pkg-config podman python3 ShellCheck tar xz
         ;;
     arch)
-        install_pacman_packages alsa-lib clang compiler-rt cppcheck curl dash \
+        install_pacman_packages alsa-lib clang compiler-rt curl dash \
             gcc llvm make openssh openssl pkgconf podman python shellcheck tar
         ;;
     darwin)
-        install_brew_packages coreutils cppcheck curl dash llvm openssl pkg-config python shellcheck
+        install_brew_packages coreutils curl dash llvm openssl pkg-config python shellcheck
         ;;
     *)
         if [[ " ${OS_LIKE} " == *" debian "* ]]; then
-            install_apt_packages alsa-utils clang clang-format cppcheck curl dash \
+            install_apt_packages alsa-utils clang curl dash \
                 gcc libasound2-dev libssl-dev llvm make openssh-client \
                 openssh-server pkg-config podman python3-venv shellcheck tar xz-utils
         elif [[ " ${OS_LIKE} " == *" fedora "* ]] || \
              [[ " ${OS_LIKE} " == *" rhel "* ]] || \
              [[ " ${OS_LIKE} " == *" centos "* ]]; then
-            install_dnf_packages alsa-lib-devel clang clang-tools-extra compiler-rt \
+            install_dnf_packages alsa-lib-devel clang compiler-rt \
                 curl gcc llvm make openssh-clients openssh-server openssl-devel \
                 pkgconf-pkg-config podman python3 ShellCheck tar xz
         else
-            echo -e "${YELLOW}WARN${NC}: Unknown OS. Install GCC, Clang, cppcheck, OpenSSL and ALSA headers, Python venv, and ShellCheck manually."
+            echo -e "${YELLOW}WARN${NC}: Unknown OS. Install GCC, Clang, OpenSSL and ALSA headers, Python venv, and ShellCheck manually."
         fi
         ;;
 esac
@@ -161,9 +161,15 @@ if [[ "$(uname -s)" == "Linux" ]]; then
     "${SCRIPT_DIR}/install-arm64-emulation.sh"
 fi
 
+# The pinned Rust releases the gates use, user-local unless CARGO_HOME and
+# RUSTUP_HOME say otherwise.
+if ! command -v cargo >/dev/null 2>&1; then
+    "${SCRIPT_DIR}/install-rust.sh"
+fi
+
 echo ""
 echo "=== Development Dependency Summary ==="
-summary_tools=(gcc clang clang-format cppcheck make curl dash pkg-config python3 sha512sum shellcheck tar hadolint trivy sshd)
+summary_tools=(cargo gcc clang make curl dash pkg-config python3 sha512sum shellcheck tar hadolint trivy sshd)
 if [[ "$(uname -s)" == "Linux" ]]; then
     # Podman or Docker runs the image gates; the mingw toolchain cross-builds
     # the Windows deployer that ships alongside the Linux one.

@@ -6,37 +6,42 @@ and [CODEBASE_REFERENCE.md](CODEBASE_REFERENCE.md) for which file owns what.
 
 ## Workspace at a glance
 
-A C17 tree, a shell deployment capsule, and a container image. OpenSSL is the
-only third-party library; ALSA (on the appliance), the C library, the Linux
-uapi, and Win32 are the platform.
+A Rust workspace, a shell deployment capsule, and a container image. The
+workspace depends on no crate outside `crates/`; OpenSSL is the only
+third-party library, and ALSA (on the appliance), the C library, the Linux
+uapi, and Win32 are the platform, all reached through hand-written
+declarations in `crates/omt-sys`.
 
-| Directory | Owns |
+| Crate | Owns |
 |---|---|
-| `src/common` | Bounded buffers, strict JSON and XML, NFC, file and process I/O, randomness |
-| `src/protocol` | OMT wire transport and shared target validation |
-| `src/vmx` | Decode-only VMX1, worker pool, AArch64 assembly kernels |
-| `src/receiver_core` | Format policy, video ceilings, status projection |
-| `src/receiver` | Linux adapters: DRM/KMS, ALSA, discovery, D-Bus, the `omt-receiver` binary |
-| `src/sender` | First-party OMT A/V test sender |
-| `src/crypto` | The OpenSSL EVP adapters the Web frontend and deployer share |
-| `src/web` | HTTPS operator GUI (poll loop, OpenSSL TLS), templates, diagnostics |
-| `src/deploy/core` | Deployment jobs, the platform layer, SD-card prep, workstation probes |
-| `src/deploy/ssh` | First-party SSH and SFTP client on OpenSSL primitives |
-| `src/deploy/capsule` | The embedded manifest-v3 capsule |
-| `src/deploy/cli` | `rpi-omt-deploy`, human and JSON-lines surfaces |
-| `src/deploy/tui` | `rpi-omt-deploy-tui`, the terminal deployer for Linux and Windows |
-| `mk/` | The makefiles: flags, libraries, products |
+| `crates/omt-sys` | Every foreign declaration: libc/POSIX, OpenSSL, ALSA, the DRM uapi, Win32, with thin safe wrappers |
+| `crates/omt-common` | Bounded buffers, strict JSON and XML, NFC, file and process I/O, randomness, time |
+| `crates/omt-crypto` | The OpenSSL EVP adapters the Web frontend and deployer share |
+| `crates/omt-protocol` | OMT wire transport and shared target validation |
+| `crates/omt-vmx` | Decode-only VMX1, worker pool, AArch64 assembly kernels (`crates/omt-vmx/asm`) |
+| `crates/omt-receiver-core` | Format policy, video ceilings, status projection |
+| `crates/omt-receiver` | Linux adapters: DRM/KMS, ALSA, discovery, D-Bus, the `omt-receiver` binary |
+| `crates/omt-test-sender` | First-party OMT A/V test sender |
+| `crates/omt-web` | HTTPS operator GUI (poll loop, OpenSSL TLS), templates, diagnostics |
+| `crates/omt-deploy` | Deployment jobs, the first-party SSH and SFTP client, SD-card prep, workstation probes |
+| `crates/omt-capsule` | The manifest-v3 capsule, compiled into the deployer by its build script |
+| `crates/rpi-omt-deploy` | `rpi-omt-deploy`, human and JSON-lines surfaces |
+| `crates/rpi-omt-deploy-tui` | `rpi-omt-deploy-tui`, the terminal deployer for Linux and Windows |
+| `crates/omt-fuzz` | libFuzzer targets and their corpora (nightly only) |
 
 | Directory | Owns |
 |---|---|
 | `deploy/` | Dockerfile, container scripts, host installer, OpenRC services, manifest-v3 capsule |
 | `scripts/` | Build, gate, deploy, and release entry points |
-| `tests/` | C suites (`tests/c`), fuzz targets (`tests/fuzz`), shell, Python, and native suites, schema vectors |
-| `tools/gen/` | Build-time generators: NFC tables, templates, Blowfish tables, the VMX entropy lookahead, the capsule |
+| `tests/` | The ABI probe (`tests/abi`), shell, Python, native, and integration suites, schema vectors, test vectors |
+| `tools/gen/` | Generators for committed sources: NFC tables, templates, Blowfish tables, the VMX entropy lookahead |
 | `tools/toolbox/` | The image every gate runs inside |
 
-Both deployer frontends run the same jobs from `src/deploy/core/jobs.c`, so a
-deployment means one thing regardless of which one the operator ran. The
+Unsafe code is confined to `omt-sys`, `omt-vmx`, and `omt-fuzz`; every other
+crate forbids it at its root.
+
+Both deployer frontends run the same jobs from `crates/omt-deploy/src/jobs.rs`,
+so a deployment means one thing regardless of which one the operator ran. The
 deployer ships as a CLI and a terminal application on both Linux and Windows:
 a terminal frontend opens no graphics stack, so each is one self-contained
 file, and it works over SSH.
@@ -69,10 +74,10 @@ make build-omt-sender         # OMT A/V test sender
 
 # Verify
 make test-web | test-receiver | test-deployer    # narrow suites (sanitized)
-make test-c | fuzz-smoke      # every C suite under ASan+UBSan; every fuzz target
+make test-sanitized | fuzz-smoke   # every Rust suite under ASan; every fuzz target
 make test-quick               # every unit suite, no container engine (~1m)
 make test                     # + Windows cross build, amd64 image, ARM64 builder stage
-make lint                     # C static gates, supply chain, shell, docker, yaml, python, legal
+make lint                     # Rust static gates, ABI probe, supply chain, shell, docker, yaml, python, legal
 make security-scan            # Trivy filesystem + image
 
 # Run and ship
@@ -85,42 +90,44 @@ Both deployer builds embed the appliance image, so `make build-arm64` comes
 first; they stop and say so when `omt-client-arm64.tar.gz` is absent. It is
 deliberately not a Make prerequisite, because an ARM64 image build runs the
 appliance's runtime stage under emulation and should never start as a side
-effect. Its C is cross-compiled on the workstation, so the build itself takes
-about a minute; the full pre-commit gate takes about five.
+effect. Its Rust is cross-compiled on the workstation, so the build itself
+takes a few minutes; the full pre-commit gate takes longer than that.
 
 ## Invariants
 
 These are enforced by gates, not by convention — a change that breaks one fails
-a commit rather than shipping. C has no borrow checker, so the gates carry the
-weight the compiler used to.
+a commit rather than shipping.
 
 - **Bounded by default.** Every read, subprocess, allocation, retry, and rate
-  limit carries an explicit ceiling. Buffers are `omt_buf`s created with the
-  most they may ever hold; parsing goes through `omt_span` cursors whose every
-  read is length-checked. Unbounded input handling is a defect here even where
-  growth looks impossible.
-- **The unsafe libc calls do not compile.** `src/common/banned.h` is
-  force-included into every file and poisons `strcpy`, `sprintf`, `strtok`,
-  `atoi`, `gets`, `alloca`, and the rest; `scripts/check-c.sh` refuses
-  `rand`. Length arithmetic uses the checked `omt_add`/`omt_mul` helpers.
-- **Warnings are errors, under both compilers.** `mk/flags.mk` builds with
-  `-Werror -Wconversion -Wsign-conversion` and the rest, hardened
-  (`-ftrivial-auto-var-init=zero`, stack protector and clash protection,
-  `_FORTIFY_SOURCE=3`, full RELRO, PIE). `scripts/check-c.sh` builds with GCC
-  and Clang at debug and release, runs the GCC static analyzer and cppcheck,
-  and checks formatting and every generated source.
-- **Every suite runs sanitized.** The C suites run under AddressSanitizer and
-  UndefinedBehaviorSanitizer with leak detection; every parser that reads
-  untrusted input has a libFuzzer target in `tests/fuzz`, and `make
-  fuzz-smoke` runs them all, side by side. Hand-written assembly is the one
-  exception to the sanitizers, and it is confined to `src/` by
-  `scripts/check-no-c-sources.sh` and held bit-exact to portable C by the
-  AArch64 suites.
-- **No third-party code but OpenSSL.** `scripts/check-supply-chain.sh`
-  allowlists every system header a source may include, pins the Windows
-  OpenSSL by version and SHA-256 to the 3.5 LTS series, and requires every
-  base image to be pinned by digest. `scripts/check-no-c-sources.sh` keeps C
-  in `src/`, `tests/c`, and `tests/fuzz`.
+  limit carries an explicit ceiling. `clippy.toml` refuses the unbounded std
+  calls (`fs::read_to_string`, `Read::read_to_end`, unbounded line reads,
+  `thread::spawn` without a stack size); `omt-common`'s bounded readers and
+  checked cursors replace them. Unbounded input handling is a defect here even
+  where growth looks impossible.
+- **Lints are errors.** Clippy's `all` and `pedantic` groups are denied
+  workspace-wide, with `unwrap`, `expect`, and `panic` refused outside tests,
+  and every `unsafe` block carries a `SAFETY` comment and one unsafe operation.
+  Release builds keep overflow checks on (except the decoder's kernels).
+  `scripts/check-rust.sh` runs rustfmt and clippy for the host, the aarch64
+  appliance, and the Windows deployer, and checks every generated source.
+- **Unsafe is confined, and the foreign declarations are checked.** Only
+  `omt-sys`, `omt-vmx`, and `omt-fuzz` may contain `unsafe`.
+  `tests/abi/check_abi.py` compiles a probe of every hand-written struct
+  layout and constant against the real C headers for each shipped target and
+  fails on any difference.
+- **Every suite runs sanitized.** `scripts/rust-sanitized.sh` runs the suites
+  under AddressSanitizer with leak detection on a pinned nightly; every parser
+  that reads untrusted input has a libFuzzer target in `crates/omt-fuzz`, and
+  `make fuzz-smoke` runs them all. The AArch64 assembly kernels in
+  `crates/omt-vmx/asm` are the one exception to the sanitizers; they are the
+  only non-Rust source `scripts/check-no-c-sources.sh` allows, and the
+  AArch64 suites (`scripts/test-arm64.sh`) hold them bit-exact to the
+  portable Rust.
+- **No third-party code but OpenSSL.** `scripts/check-rust.sh` fails if
+  `Cargo.lock` names any package outside the workspace.
+  `scripts/check-supply-chain.sh` allowlists every native library a crate may
+  link, pins the Windows OpenSSL by version and SHA-256 to the 3.5 LTS series,
+  and requires every base image to be pinned by digest.
 - **The security posture is load-bearing.** HTTPS, authentication, CSRF, rate
   limiting, source-name validation, and the deployer's strict host-key and
   strict-key-exchange SSH are asserted by tests. Relaxing one is a deliberate

@@ -1,12 +1,13 @@
 # Architecture
 
-The appliance is a clean, bounded OMT implementation in C17, with a decode-only
-VMX1 port and OpenSSL as its only third-party library.
+The appliance is a clean, bounded OMT implementation in Rust, with a
+decode-only VMX1 port and OpenSSL as its only third-party library; the
+workspace depends on no crate outside `crates/`.
 
 ```text
 OMT network
   └─ discovery/receive transport
-       └─ omt-receiver (C)
+       └─ omt-receiver
             ├─ dependency-free parsing/status core
             ├─ VMX decoder (libvmx)
             ├─ DRM/KMS HDMI presenter
@@ -14,7 +15,7 @@ OMT network
             └─ atomic playback status
 
 HTTPS operator
-  └─ omt-web (C, poll loop + OpenSSL TLS)
+  └─ omt-web (poll loop + OpenSSL TLS)
        ├─ persistent authenticated sessions
        ├─ source/network/diagnostic services
        ├─ About
@@ -28,10 +29,11 @@ unprivileged container
 
 ## Receiver
 
-`src/receiver` composes Linux adapters around the audited, decode-only
-decoder in `src/vmx`. `src/protocol` owns wire transport and shared target
-validation; `src/receiver_core` owns format policy, ceilings, and synchronized
-status projection; `src/receiver` owns CLI parsing and HDMI connector
+`crates/omt-receiver` composes Linux adapters around the audited, decode-only
+decoder in `crates/omt-vmx`. `crates/omt-protocol` owns wire transport and
+shared target validation; `crates/omt-receiver-core` owns format policy,
+ceilings, and synchronized status projection; `crates/omt-receiver` owns CLI
+parsing and HDMI connector
 selection over the DRM sysfs tree.
 `discover` emits bounded JSON, `probe` checks a direct OMT target, and `play`
 owns receive, DRM, ALSA, hotplug, retry, and status publication. Discovered
@@ -44,10 +46,10 @@ field, and every rejection -- a duplicate of any requested tag, a document type
 declaration, an unknown entity -- still refuses the whole document, so no field
 can be read out of one another field's reader would have discarded.
 
-The mDNS path speaks D-Bus itself: `src/receiver/dbus.c` is a first-party wire
+The mDNS path speaks D-Bus itself: `crates/omt-receiver/src/dbus.rs` is a first-party wire
 client -- SASL EXTERNAL over the system bus socket, little-endian marshalling
 of only the signatures Avahi's interfaces use, and a 64 KiB message cap -- and
-`src/receiver/mdns_dbus.c` drives Avahi's browser and resolver over it. Each
+`crates/omt-receiver/src/mdns.rs` drives Avahi's browser and resolver over it. Each
 signal body is read against its full signature: `ItemNew` and `ItemRemove`
 carry six fields and `ServiceResolver.Found` carries eleven, and a body that
 does not match is refused whole rather than read partway. Resolvers are freed
@@ -82,10 +84,11 @@ uses three DRM scanout buffers, one compressed video frame and at most
 VMX workers with 128 KiB stacks (created once per decoder, not per frame).
 Each worker owns one slice of YUV scratch rather than every slice of the frame,
 and bitstream readers grow to the loaded payload instead of memset-ing the
-uncompressed worst case on every frame. Worker jobs travel inline through bounded channels, and the receiver reserves
+uncompressed worst case on every frame. Workers claim slices from a shared
+counter rather than queued jobs, and the receiver reserves
 only the additional bytes needed when a network payload grows, so neither jobs
 nor a second full-size payload buffer are allocated in the steady-state frame
-path. The HTTPS operator uses a current-thread Tokio runtime. The 1 GiB Pi 4
+path. The HTTPS operator is a single-threaded poll loop. The 1 GiB Pi 4
 Model B is the memory-design floor and is inside the supported matrix at that
 cap.
 
@@ -103,13 +106,13 @@ operator override can change what the decoder is sized for.
 Both ceilings are measured rather than reasoned. The decode benchmark run on
 the hardware put the three-worker pool -- the row that decides a tier -- at
 6.5 ms per 1080p gradient frame on the Pi 5 against a 16.7 ms budget, and
-26.4 ms on the Pi 4 against a 33.3 ms one. Those figures were taken with the
-Rust decoder this C port replaced; `tests/c/bench_vmx.c` is its C counterpart
-(`make -f mk/c.mk BUILD=release bench`). On a Pi 4 Model B at 1.5 GHz it puts
-the same row at 6.9 ms with the assembly kernels, against 10.9 ms for the
-intrinsics they replaced (median of five interleaved rounds, no throttling).
-The Pi 5 has not been remeasured with the C decoder, so its margin is still the
-Rust figure. Bit-exactness is proven under emulation on every gate run and was
+26.4 ms on the Pi 4 against a 33.3 ms one, with the pre-2.0 decoder. The
+current decoder is measured by `crates/omt-vmx/src/bin/bench_vmx.rs`
+(`cargo run --release -p omt-vmx --bin bench_vmx`). On a Pi 4 Model B at
+1.8 GHz it puts the same row at 3.5 ms per frame on the shipping YCbCr path
+(4.8 ms to BGRX), median of five interleaved rounds with no throttling. The
+Pi 5 has not been remeasured since, so its margin is still the earlier
+figure. Bit-exactness is proven under emulation on every gate run and was
 confirmed on the Pi 4 itself; emulation says nothing about speed.
 
 The colour conversion has an AArch64 kernel for the same reason the inverse DCT
@@ -124,8 +127,9 @@ Both kernels are checked against each other lane for lane, and the committed
 conformance vectors still decode bit-exactly against the reference decoder on
 both boards.
 
-The two AArch64 kernels are hand-written assembly (`idct_aarch64.S`,
-`convert_aarch64.S`) rather than intrinsics, because the instruction choices
+The two AArch64 kernels are hand-written assembly
+(`crates/omt-vmx/asm/idct_aarch64.s`, `convert_aarch64.s`, assembled by
+`global_asm!`) rather than intrinsics, because the instruction choices
 that matter are ones the compiler will not make from the portable arithmetic.
 The row pass is eight multiply-by-element accumulations per row against
 de-interleaved tables rather than a shuffle-heavy pairwise dot product; a
@@ -147,12 +151,13 @@ zero rows through it leaves eight outputs of two inputs, about half the
 instructions, and only those two rows are loaded. That took another eighth off
 a 1080p gradient decode on the shipping YCbCr path.
 
-What the assembly gives up is the sanitizers and the fuzzer, which see only C.
+What the assembly gives up is the sanitizers, Miri, and the fuzzer's
+instrumentation, which see only Rust.
 That is acceptable for these two kernels and no others: each reads one fixed
 64-coefficient block or one row whose bounds `decode_slice` checks before the
 call, and neither ever sees a byte of the stream. The entropy decoder, which
-does, stays in C under ASan, UBSan, and `fuzz_vmx`. Its speed comes from a
-twelve-bit lookahead table (`ac_lookahead.c`, generated) that resolves every
+does, stays in Rust under ASan, Miri, and `fuzz_vmx`. Its speed comes from a
+twelve-bit lookahead table (`ac_lookahead.rs`, generated) that resolves every
 short code in one step. It is consulted only when the whole code is already in
 the bit window, so the reader ends exactly where the bit-by-bit path would,
 and a differential test holds the two paths to the same pixels, reader
@@ -219,7 +224,7 @@ and the receiver log names which path each configuration took and why.
 
 The BGRX fallback's resample is nearest-neighbour with pixel-centre sampling,
 the filter a decode-bound board has room for. It runs inside the decode
-(`vmx_decode_bgrx_placed`) rather than after it: `scale.c` builds one table of
+(the decoder's placed BGRX output) rather than after it: `scale.rs` builds one table of
 source columns and one of source rows, and each worker converts only the source
 rows its slices contribute, gathers each into a destination row, and stores it
 into the scanout buffer once. The resample therefore runs on the whole worker
@@ -286,7 +291,7 @@ eight seconds after SIGTERM so that budget cannot outlive a shutdown.
 TCP reads stay greedy: OMT requires the receiver never block when accepting
 data. There is no playout buffer. An OMT sender keeps none, so frames held on
 the Pi would only put the picture further behind it; decode speed, not a
-cushion, is what keeps playback live. `src/receiver/handoff.c` hands each
+cushion, is what keeps playback live. `crates/omt-receiver/src/handoff.rs` hands each
 frame on as soon as its consumer can take it. Video is a single slot: a frame
 is decoded and flipped as soon as it arrives, the display's refresh is the only
 pacing, and a frame a newer one replaces before the display took it is dropped
@@ -450,9 +455,9 @@ report carrying that nonce. Raw capture is never started unless selected for
 that download. Avahi proxy state, diagnostics, and host actions use separate
 least-privilege bind mounts.
 
-The shipped image contains no Python runtime, C/C++ toolchain, or C++ standard
-library. The receiver and Web service are stripped release binaries of a few
-hundred kilobytes each.
+The shipped image contains no Python runtime, Rust or C/C++ toolchain, or C++
+standard library. The receiver and Web service are stripped release binaries
+of 600-750 KB each.
 
 `host-reboot.sh` is installed root-owned. It accepts only a four-line
 versioned reboot record from the pre-created mode-0600 request file. It checks
@@ -507,7 +512,7 @@ journals with their installed helpers, promote the v3 set, and only then invoke
 
 ## Operator deployment applications
 
-The same C deployer builds for the operator's own machine and for Windows
+The same Rust deployer builds for the operator's own machine and for Windows
 x86-64. A Linux workstation publishes both: `scripts/check-deployer.sh
 --publish` stages the static-PIE musl package, and
 `scripts/build-windows-deployer.sh` cross-compiles the Windows one against the
@@ -515,14 +520,14 @@ pinned OpenSSL. `rpi-omt-deploy` provides human and JSON-lines CLI surfaces,
 while `rpi-omt-deploy-tui` presents Connection, SD card, Alpine, Deploy,
 Manage, Wi-Fi, Activity, and About views in a terminal -- on Linux and, through
 the console's virtual-terminal mode, on Windows. Both run the jobs in
-`src/deploy/core/jobs.c`; secrets are wiped when freed and never accepted
+`crates/omt-deploy/src/jobs.rs`; secrets are wiped when dropped and never accepted
 through arguments or environment variables. That covers every buffer a secret
 passes through, not only the ones it is stored in: the sudo stdin a deployment
 holds for its whole run, the Wi-Fi passphrase handed to the worker thread, the
-raw `--secrets-stdin` document, and the JSON parser's arena are all wiped
-rather than freed intact.
+raw `--secrets-stdin` document, and the parsed JSON values are all wiped
+rather than dropped intact.
 
-SSH is first-party too (`src/deploy/ssh`), written on OpenSSL's primitives.
+SSH is first-party too (`crates/omt-deploy/src/ssh`), written on OpenSSL's primitives.
 It offers the ML-KEM-768 + X25519 hybrid key exchange first, then Curve25519,
 group exchange, and the RFC 8268 MODP groups; Ed25519, ECDSA, and RSA host
 keys with SHA-2 signatures only; ChaCha20-Poly1305, AES-GCM, and AES-CTR with
@@ -607,8 +612,8 @@ stock Alpine can describe its inert rule set as authorization-capable and then
 refuse the actual non-PTY command.
 
 The deployer carries the appliance instead of pointing at it.
-`tools/gen/gen_capsule.py` reads `deploy/manifest-v3.txt` and emits one
-assembler `.incbin` per member, the ARM64 image archive included, so the operator's
+`crates/omt-capsule/build.rs` reads `deploy/manifest-v3.txt` and emits one
+`include_bytes!` per member, the ARM64 image archive included, so the operator's
 executable holds every byte the Raspberry Pi receives. That makes the image a
 build input of the deployer -- `make build-arm64` before `make build-deployer`,
 which both build scripts stop and say -- and it makes a deployer of one release
@@ -622,7 +627,7 @@ A deployment therefore asks nothing of the machine it runs on, and the terminal
 application has no workstation setup at all. The exception is the `--project` developer
 override, which sources the whole capsule from a checkout and, with
 `--rebuild-image`, builds that tree's archive first. Only then does what the
-machine provides become part of the contract, and `src/deploy/core/tools.c`
+machine provides become part of the contract, and `crates/omt-deploy/src/tools.rs`
 owns it: executable discovery that follows `PATHEXT`, the Windows shell
 locations Git for Windows installs into, the winget packages that supply a
 missing prerequisite, and the plan for invoking the image build. The CLI's
@@ -659,7 +664,8 @@ their build version; the deployer compiles them into its executable with the
 capsule rather than reading files beside it, so a relocated binary still states
 its terms. The container publisher generates a CycloneDX inventory of both
 first-party binaries and the appliance's installed Alpine package database; the
-deployer publisher inventories OpenSSL and the static C runtime it carries.
+deployer publisher inventories OpenSSL, the Rust standard library, and the
+static C runtime it carries.
 
 The host is Alpine Linux 3.24 aarch64 in persistent sys mode on a Raspberry Pi
 5 or Pi 4 Model B. One `linux-rpi` kernel covers both. A dual-band radio is a
@@ -667,7 +673,7 @@ support criterion: the appliance is 5 GHz only, because real-world testing
 showed 2.4 GHz packet loss makes OMT playback unusable, so a board that cannot
 leave 2.4 GHz cannot be a host. The installer rejects unsupported distributions
 and board models, and RAM-backed diskless roots; `deploy/lib/board-profile.sh`
-and `src/deploy/core/ops.c` hold the same table for the host-side
+and `crates/omt-deploy/src/ops.rs` hold the same table for the host-side
 and workstation-side gates. OpenRC supervises the filtered Avahi proxy and two
 inotify watchers; the Docker workload remains detached with its own restart
 policy.
@@ -699,3 +705,33 @@ stops holding its tier is caught only by rerunning the decode bench there.
 QEMU models none of these SoCs, so there is no full-system VM tier: a guest
 cannot validate RP1, either board's device tree, vc4 KMS/HDMI audio, device
 groups, or the supported-board preflight.
+
+## The 3.0.0 port
+
+3.0.0 replaced the C17 tree with this Rust workspace, component by component,
+with the C build as the behavioural and performance reference until it was
+deleted. Every byte contract was kept: routes, headers, cookies, CSRF, the
+state files, the support-bundle layout, the CLI's usage text and JSON lines,
+and the receiver's CLI and status JSON. The acceptance rule was that the Rust
+build be no worse than C, within a 2% noise band, on the measurements below;
+where it is not, that is recorded here rather than hidden.
+
+| Measurement | C | Rust |
+|---|---|---|
+| VMX decode, Pi 4 at 1.8 GHz, 1 and 3 workers | baseline | 0.70-1.06x of C per vector and output |
+| VMX decode, Pi 4, 4 workers | baseline | up to 1.11x on dense 1080p and 480p (open) |
+| Web, Pi 4: login POST / `GET /` | 839-863 / 23.8-26.2 ms | 839-845 / 24.7-25.3 ms |
+| Web resident set after load, Pi 4 | 6.05 MB | 6.33 MB (+4.5%) |
+| Deployer SFTP, loopback, chacha20 / aes128-gcm / aes256-ctr+hmac | 490 / 694 / 395 MB/s | 518 / 881 / 554 MB/s |
+| Static Linux deployer, same embedded image | 18.46 MB | 19.00 MB (+3%) |
+
+The resident-set and size increases (about 270 KB resident for `omt-web` and
+460 KB for `omt-receiver`) are the Rust standard library's text --
+about 179 KB of it is the backtrace symbolizer, which stable Rust cannot leave
+out -- not heap, which is smaller than C's. `opt-level` `s` and `z` made the
+binaries larger rather than smaller and were not adopted. The four-worker
+decode row, which no shipped tier uses, remains up to 11% slower on dense
+content. The Rust code also carries no AArch64 BTI/PAC branch protection:
+stable Rust cannot enable it, so the assembly kernels deliberately carry no
+property note either (see `crates/omt-vmx/asm/prelude.s`).
+

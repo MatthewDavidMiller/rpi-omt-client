@@ -1,8 +1,9 @@
 # OMT Test Sender
 
-The repository includes a first-party C OMT source for repeatable receiver
-testing. It links the same protocol module as the receiver and includes
-nothing but the platform and the repository's own code. It streams:
+The repository includes a first-party OMT source for repeatable receiver
+testing (`crates/omt-test-sender`). It uses the same protocol crate as the
+receiver and depends on nothing but the standard library and the
+repository's own crates. It streams:
 
 - reference-encoded VMX1 1920x1080 progressive video at 60 fps, alternating
   the committed gradient and flat conformance frames;
@@ -24,16 +25,18 @@ make build-omt-sender
 
 The build stages the executable under `.build/omt-test-sender`. It fetches no
 OMT source tree, SDK image, codec, or sample media: both VMX frames are embedded
-from `tests/vectors/vmx/` with `.incbin`, and FPA1 audio is generated in C.
+from `tests/vectors/vmx/` with `include_bytes!`, and FPA1 audio is generated
+at run time.
 
-For Alpine aarch64 on either a Pi 4 or Pi 5, build the static-PIE musl
-artifact:
+For Alpine aarch64 on either a Pi 4 or Pi 5, build the musl artifact:
 
 ```bash
 make build-omt-sender OMT_SENDER_TARGET=aarch64
 ```
 
-It is built in the same emulated Alpine release the receiver is built on. The
+It is cross-compiled against the same Alpine sysroot the receiver links, and
+like the receiver it links Alpine's musl dynamically (Rust has no static PIE
+for aarch64 musl, and a fixed-address static binary would give up ASLR). The
 result is:
 
 ```text
@@ -42,8 +45,9 @@ result is:
 
 A cross-built executable is deliberately not selected by the workstation's
 `current` symlink. Copy the single executable to the Pi and run it directly;
-it requires no shared C/C++, .NET, codec, or media-file runtime dependency.
-The supported Pi userspace is the project's 64-bit Alpine environment.
+it needs only the musl C library every Alpine install carries, and no .NET,
+codec, or media-file runtime dependency. The supported Pi userspace is the
+project's 64-bit Alpine environment.
 
 ## Firewall
 

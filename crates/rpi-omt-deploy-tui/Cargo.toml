@@ -1,0 +1,24 @@
+[package]
+name = "rpi-omt-deploy-tui"
+description = "The deployment, driven from a terminal"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+omt-capsule = { path = "../omt-capsule" }
+omt-common = { path = "../omt-common" }
+omt-deploy = { path = "../omt-deploy" }
+omt-sys = { path = "../omt-sys" }
+
+[lib]
+name = "omt_tui"
+path = "src/lib.rs"
+
+[[bin]]
+name = "rpi-omt-deploy-tui"
+path = "src/main.rs"
+
+[lints]
+workspace = true

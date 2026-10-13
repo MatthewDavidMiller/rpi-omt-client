@@ -4,7 +4,7 @@
 that canonical normalization needs: each code point's canonical combining
 class, its canonical decomposition, and whether that decomposition is a
 primary composite. It was extracted by `tools/gen/extract_ucd.py` and is the
-input `tools/gen/gen_nfc_tables.py` builds `src/common/nfc_tables.c` from.
+input `tools/gen/gen_nfc_tables.py` builds `crates/omt-common/src/nfc_tables.rs` from.
 
 The data is Copyright © 1991-2024 Unicode, Inc., distributed under the Unicode
 License v3; see THIRD_PARTY_NOTICES.txt.

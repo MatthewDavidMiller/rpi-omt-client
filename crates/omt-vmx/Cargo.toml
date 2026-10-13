@@ -1,0 +1,18 @@
+[package]
+name = "omt-vmx"
+description = "Decode-only VMX1 with a worker pool and AArch64 assembly kernels"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+omt-sys = { path = "../omt-sys" }
+# For the benchmark binary's bounded vector read; the library does not use it.
+omt-common = { path = "../omt-common" }
+
+[dev-dependencies]
+omt-crypto = { path = "../omt-crypto" }
+
+[lints]
+workspace = true

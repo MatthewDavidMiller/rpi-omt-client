@@ -8,9 +8,9 @@ Build the gate toolbox once:
 make install
 ```
 
-Docker or Podman is the only thing the gates need from a workstation. GCC and
-Clang with the sanitizer and libFuzzer runtimes, clang-format, cppcheck,
-OpenSSL, OpenSSH's server (the reference the SSH client is held to), mingw-w64,
+Docker or Podman is the only thing the gates need from a workstation. The
+pinned stable and nightly Rust toolchains, GCC and Clang with the sanitizer and
+libFuzzer runtimes, OpenSSL, OpenSSH's server (the reference the SSH client is held to), mingw-w64,
 an AArch64 sysroot with lld and qemu-aarch64 for the cross-compiled ARM64
 suites, Hadolint, ShellCheck, Trivy, and the Python tooling all live inside
 `tools/toolbox/Dockerfile`; nothing is installed onto the host.
@@ -88,10 +88,10 @@ change crosses a boundary.
 
 | Changed | Run |
 |---|---|
-| `src/web/`, `src/crypto/`, its templates or static assets | `make test-web`; `make test` when behavior changes materially |
-| `src/receiver*`, `src/protocol`, `src/vmx`, or the status contract | `make test-receiver` **and** `make test-web` — both assert `tests/schema/playback-status-vectors.json` |
-| `src/common` | `make test-c`, `make lint`, and the narrow gates of whatever links it |
-| `src/deploy/` (core, SSH, CLI, TUI) | `make test-deployer` **and** `make build-windows-deployer` — one source set ships as two packages |
+| `crates/omt-web`, `crates/omt-crypto`, its templates or static assets | `make test-web`; `make test` when behavior changes materially |
+| `crates/omt-receiver*`, `crates/omt-protocol`, `crates/omt-vmx`, or the status contract | `make test-receiver` **and** `make test-web` — both assert `tests/schema/playback-status-vectors.json` |
+| `crates/omt-common` or `crates/omt-sys` | `make test-sanitized`, `make lint` (its ABI probe for `omt-sys`), and the narrow gates of whatever links it |
+| `crates/omt-deploy`, `crates/omt-capsule`, `crates/rpi-omt-deploy*` (core, SSH, CLI, TUI) | `make test-deployer` **and** `make build-windows-deployer` — one source set ships as two packages |
 | A parser of untrusted input | its suite **and** `make fuzz-smoke` |
 | Shell scripts, installer, OpenRC, or HDMI configuration | `make test-quick` |
 | `deploy/Dockerfile`, entrypoint, or image contents | `make test`, or `./scripts/toolbox.sh ./scripts/test-local.sh --full` |
@@ -101,21 +101,21 @@ change crosses a boundary.
 ## What each gate covers
 
 For full network, codec, audio, and real-Pi playback validation, build the
-first-party C sender with `make build-omt-sender`. Its source-scoped firewall
+first-party sender with `make build-omt-sender`. Its source-scoped firewall
 setup, lifecycle commands, ARM64 build, and end-to-end checklist are documented
 in [OMT_TEST_SENDER.md](OMT_TEST_SENDER.md). The receiver gate compiles it and
-runs it against the receiver; the shell gate also asserts that it includes
-nothing but the platform and the repository's own modules. Before calling a
+runs it against the receiver; the shell gate also asserts that it depends on
+nothing but the repository's own crates. Before calling a
 sender build Pi-compatible, build it with `--target aarch64` and run it on a
 real Alpine aarch64 Pi. Pi 4 and Pi
 5 share that userspace ABI, while receiver throughput and HDMI behavior still
 require a display-path check on the board being qualified.
 
-`make test-web` builds the C HTTPS service under AddressSanitizer and
-UndefinedBehaviorSanitizer, runs its unit suite, drives the built binary
-through the full HTTPS contract in `tests/native/test_web.sh`, and runs the
-container entrypoint suite against it. The server has limits the Rust one
-lacked: header and body timeouts, a connection cap, and a header-size cap. It covers target and
+`make test-web` runs the Web crate's suites under AddressSanitizer, drives a
+sanitized build of the binary through the full HTTPS contract in
+`tests/native/test_web.sh`, and runs the container entrypoint suite against
+it. The server's limits -- header and body timeouts, a connection cap, and a
+header-size cap -- are part of that contract. It covers target and
 network validation, state, legacy and current password hashes, persistent
 authentication, secure cookies, CSRF/rate limits, security headers, every
 authenticated page, diagnostics, and runtime adapters.
@@ -136,12 +136,13 @@ untouched; it rejects out-of-range columns and rows, decreasing rows, and an
 undersized or overflowing destination. `fuzz_vmx` decodes every input through a
 placement as well.
 
-`make test-receiver` builds and tests the C receiver, every suite sanitized,
-and then repeats the C suites on AArch64 so the assembly kernels are checked
-bit for bit against the portable ones. `scripts/test-c-arm64.sh` cross-compiles
-those suites with the appliance's own compiler and flags against the toolbox's
-AArch64 sysroot and runs only the test binaries under qemu-user, which takes
-seconds rather than the minutes compiling under emulation did. It exercises
+`make test-receiver` tests the receiver, every suite sanitized, and then
+repeats the appliance crates' suites on AArch64 so the assembly kernels are
+checked bit for bit against the portable ones. `scripts/test-arm64.sh`
+cross-compiles those suites with the appliance's own linker and flags against
+the toolbox's AArch64 sysroot and runs only the test binaries under qemu-user,
+which takes seconds rather than the minutes compiling under emulation would.
+It exercises
 shared target vectors, bounded wire parsing, CLI exit-status contracts, detail
 sanitization and JSON escaping, playback state/order, heartbeat publication,
 and atomic status replacement. HDMI connector selection is driven against a
@@ -159,11 +160,11 @@ UYVY and BGRX, at one, two, three, and eight workers, so a worker count can
 never change an output byte. The same suite covers repeated decode lifecycles,
 every truncation of a valid stream, and periodic bit flips through the payload,
 none of which may crash, read out of bounds, or allocate past the documented
-caps -- AddressSanitizer would report each. `tests/fuzz/fuzz_vmx.c` feeds the
-decoder arbitrary streams beyond that.
+caps -- AddressSanitizer would report each. `fuzz_vmx` in `crates/omt-fuzz` feeds
+the decoder arbitrary streams beyond that.
 
 `make test-deployer` runs `scripts/check-deployer.sh`. Its suites run under
-ASan and UBSan: the core (validation, quoting, SHA-256, secure tokens, Wi-Fi
+AddressSanitizer: the core (validation, quoting, SHA-256, secure tokens, Wi-Fi
 PSK vectors, bounded processes, manifest-v3 path safety, the operations' fixed
 scripts and parsers), the SSH client's parts (wire encoding, every cipher and
 MAC round trip, `known_hosts` matching including hashed and revoked entries,
@@ -172,7 +173,7 @@ terminal application (input decoding, editing, confirmations, scrolling, and
 rendering checked as text). A separate suite holds the real embedded capsule to
 the manifest it ships: that the compiled-in member list is exactly
 `deploy/manifest-v3.txt`, that every embedded name passes the real
-`dp_valid_manifest_name` rule rather than the generator's copy of it, and that
+`core::valid_manifest_name` rule rather than the build script's copy of it, and that
 the appliance archive is present, over a mebibyte, and gzip. Because the
 capsule is a build input, that suite needs `omt-client-arm64.tar.gz` in the
 project root; `make build-arm64` produces it and both deployer build scripts
@@ -221,17 +222,18 @@ publication boundary without depending on the human-readable file description
 returned by a particular `stat` implementation.
 
 The supply-chain gate, `scripts/check-supply-chain.sh`, allowlists every
-system header a source may include -- so a third-party library cannot arrive as
-a stray `#include` -- pins the Windows OpenSSL by version and SHA-256 to the 3.5
-LTS series, and requires every base image to be pinned by digest. Container
-integration checks that neither Python nor a C++ standard-library payload ships.
+native library a crate may link -- so a third-party library cannot arrive as a
+stray link line -- pins the Windows OpenSSL by version and SHA-256 to the 3.5
+LTS series, and requires every base image to be pinned by digest;
+`scripts/check-rust.sh` fails if `Cargo.lock` names any package from outside
+the workspace. Container integration checks that neither Python nor a C++
+standard-library payload ships.
 
 The ARM64 artifact contract also pins the receiver-source fingerprint at both
 of Podman's cross-stage COPY boundaries. A receiver change must alter the
 published runtime image instead of merely recompiling an unused builder layer.
-The same contract requires `src/deploy/` to stay out of the build context,
-which would otherwise make unrelated deployer edits invalidate the slow ARM64
-receiver build.
+The builder copies the whole workspace, since `cargo --locked` needs every
+member's manifest, so a deployer-only edit also rebuilds that stage.
 
 `make build-windows-deployer` cross-compiles the deployment CLI and terminal
 application for `x86_64-w64-mingw32` against the pinned OpenSSL, which
@@ -357,7 +359,7 @@ decode throughput, so a pass on one is not evidence for another:
 6. confirm the board's decode ceiling with
 
    ```bash
-   make -f mk/c.mk BUILD=release bench
+   cargo run --release -p omt-vmx --bin bench_vmx
    ```
 
    A cross-built standalone benchmark can read staged vectors from an explicit
@@ -449,7 +451,7 @@ names the container launcher, the receiver CLI, and the status contract must
 all accept.
 
 `tests/schema/omt-target-vectors.json` and
-`tests/schema/playback-status-vectors.json` are consumed by the C suites.
+`tests/schema/playback-status-vectors.json` are consumed by the Rust suites.
 Both binaries share `omt-protocol` target validation, while the receiver and
 Web suites assert the status projection. The target vectors publish forbidden
 source-name code points as ranges and the compiled table is asserted against
@@ -462,7 +464,9 @@ staleness threshold.
 
 ## Lint and legal gates
 
-`./scripts/lint.sh` runs the C static gates (`scripts/check-c.sh`), the supply-chain gate, Bash syntax,
+`./scripts/lint.sh` runs the Rust static gates (`scripts/check-rust.sh`: rustfmt, clippy for every
+shipped target, the workspace-only lockfile, the unsafe allowlist, the ABI probe, and the generated
+sources), the supply-chain gate, Bash syntax,
 ShellCheck, Hadolint, yamllint, Ruff, and mypy. The legal gate is:
 
 ```bash

@@ -1,0 +1,73 @@
+# The Rust workspace. Every crate is first-party: the workspace depends on
+# nothing outside crates/, so Cargo.lock lists workspace members only and no
+# build ever touches a registry. OpenSSL, ALSA, the C library, the Linux uapi,
+# and Win32 are reached through hand-written declarations in crates/omt-sys,
+# which tests/abi holds to the real headers.
+#
+# VERSION is the one version: the crates carry none, and omt-common's build
+# script stamps the value scripts/detect-version.sh resolves.
+
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+edition = "2024"
+license = "MIT"
+publish = false
+rust-version = "1.98.1"
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+unused_must_use = "deny"
+unreachable_pub = "deny"
+missing_debug_implementations = "deny"
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+undocumented_unsafe_blocks = "deny"
+multiple_unsafe_ops_per_block = "deny"
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+dbg_macro = "deny"
+print_stderr = "allow"
+# Pedantic lints that fight the codebase's conventions rather than catch bugs.
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+must_use_candidate = "allow"
+similar_names = "allow"
+too_many_lines = "allow"
+# Prose names programs and C identifiers (getrandom(2), serde_json) freely.
+doc_markdown = "allow"
+
+# Shipped binaries: link-time optimisation across the whole program, one
+# codegen unit, stripped output, and an abort rather than unwinding on a
+# panic. Overflow checks stay on in release, so size arithmetic on untrusted
+# input fails loudly instead of wrapping -- except in the decoder's hot
+# kernels, which carry their own bounds.
+[profile.release]
+opt-level = 2
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
+debug = false
+overflow-checks = true
+
+# The decoder's lane loops vectorise at -O3, about twice the speed of -O2.
+[profile.release.package.omt-vmx]
+opt-level = 3
+overflow-checks = false
+
+# The sanitizer and fuzz builds (scripts/rust-sanitized.sh) keep debug
+# assertions and overflow checks, and enough optimisation to run the suites
+# in reasonable time.
+[profile.sanitize]
+inherits = "dev"
+opt-level = 1
+debug = true

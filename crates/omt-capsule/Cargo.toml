@@ -1,0 +1,13 @@
+[package]
+name = "omt-capsule"
+description = "The manifest-v3 capsule, the ARM64 image included, compiled into the deployer"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+omt-deploy = { path = "../omt-deploy" }
+
+[lints]
+workspace = true

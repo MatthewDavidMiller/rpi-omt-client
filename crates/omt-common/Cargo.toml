@@ -1,0 +1,13 @@
+[package]
+name = "omt-common"
+description = "Bounded buffers, strict JSON and XML, NFC, file and process I/O, randomness"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+omt-sys = { path = "../omt-sys" }
+
+[lints]
+workspace = true

@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Generate the CycloneDX inventory for the native deployment application.
 
-The deployer is first-party C. Everything else it contains is listed here:
-OpenSSL, linked statically on both platforms, and the C runtime the static
-build carries -- musl on Linux, the mingw-w64 runtime and libgcc on Windows.
+The deployer is first-party Rust. Everything else it contains is listed here:
+the Rust standard library, OpenSSL (linked statically on both platforms), the
+GCC runtime library (the static unwinder on Linux, libgcc on Windows), and
+the C runtime the static build carries -- musl on Linux, the mingw-w64
+runtime on Windows.
 Windows' own DLLs and the Universal CRT ship with the operating system and
 are not part of the package.
 """
@@ -23,10 +25,12 @@ def main() -> int:
     parser.add_argument("--output", required=True)
     parser.add_argument("--version", required=True)
     parser.add_argument("--openssl-version", required=True)
+    parser.add_argument("--rust-version", required=True)
+    # The GCC runtime library both static links carry.
+    parser.add_argument("--gcc-version", required=True)
     # Linux: the musl the static binaries embed.
     parser.add_argument("--musl-version")
-    # Windows: the compiler runtime a static mingw link carries.
-    parser.add_argument("--mingw-gcc-version")
+    # Windows: the mingw-w64 runtime a static mingw link carries.
     parser.add_argument("--mingw-runtime-version")
     arguments = parser.parse_args()
 
@@ -36,10 +40,28 @@ def main() -> int:
             "name": name,
             "version": arguments.version,
             "licenses": [{"license": {"id": "MIT"}}],
-            "properties": [{"name": "language", "value": "C"}],
+            "properties": [{"name": "language", "value": "Rust"}],
         }
         for name in DEPLOYER_ROOTS
     ]
+    components.append(
+        {
+            "type": "library",
+            "name": "rust-std",
+            "version": arguments.rust_version,
+            "purl": f"pkg:generic/rust-std@{arguments.rust_version}",
+            "licenses": [{"expression": "MIT OR Apache-2.0"}],
+        }
+    )
+    components.append(
+        {
+            "type": "library",
+            "name": "GCC runtime library (libgcc)",
+            "version": arguments.gcc_version,
+            "purl": f"pkg:generic/gcc@{arguments.gcc_version}",
+            "licenses": [{"expression": "GPL-3.0-or-later WITH GCC-exception-3.1"}],
+        }
+    )
     components.append(
         {
             "type": "library",
@@ -57,16 +79,6 @@ def main() -> int:
                 "version": arguments.musl_version,
                 "purl": f"pkg:generic/musl@{arguments.musl_version}",
                 "licenses": [{"license": {"id": "MIT"}}],
-            }
-        )
-    if arguments.mingw_gcc_version:
-        components.append(
-            {
-                "type": "library",
-                "name": "GCC runtime library (libgcc)",
-                "version": arguments.mingw_gcc_version,
-                "purl": f"pkg:generic/gcc@{arguments.mingw_gcc_version}",
-                "licenses": [{"expression": "GPL-3.0-or-later WITH GCC-exception-3.1"}],
             }
         )
     if arguments.mingw_runtime_version:

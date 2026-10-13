@@ -6,7 +6,9 @@ release bundle must include the exact Alpine source package, its `APKBUILD`,
 patches, and build metadata under `third-party-source/alpine/`.
 
 The complete project-owned transport, playback, decoder, Web, and deployer
-source is the C tree under `src/`. Exact upstream and historical derivation
+source is the Rust workspace under `crates/`. The only Rust code it links
+beyond that is the standard library of the release pinned in
+`rust-toolchain.toml`, whose source is that release's `rust-src` component. Exact upstream and historical derivation
 revisions are recorded in `third_party/omt/PROVENANCE.md`; only upstream legal
 and provenance records are retained under `third_party/omt/`.
 

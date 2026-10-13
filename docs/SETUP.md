@@ -145,7 +145,7 @@ publishes nothing itself; it runs the published executables.
 ### What the deployer carries
 
 The deployer *is* the appliance. The build compiles every member of
-`deploy/manifest-v3.txt` into the executable with `tools/gen/gen_capsule.py`, the ARM64 image
+`deploy/manifest-v3.txt` into the executable (`crates/omt-capsule/build.rs`), the ARM64 image
 archive included, so an operator receives one file and needs no checkout, no
 archive copied in beside it, and no build tooling of any kind. The deployer
 version and the capsule version cannot disagree, because they are the same

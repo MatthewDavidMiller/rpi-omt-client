@@ -1,6 +1,7 @@
 #!/bin/bash
 # Cross-compile the Windows x86-64 deployer -- the CLI and the terminal
-# application -- with mingw-w64 against the pinned OpenSSL.
+# application -- with cargo and the mingw-w64 linker against the pinned
+# OpenSSL.
 #
 # --no-publish compiles and header-verifies the cross build without staging a
 # package. The pre-commit gate uses it: a package is stamped with the version
@@ -23,12 +24,13 @@ command -v "${TARGET}-gcc" >/dev/null 2>&1 || { echo "ERROR: ${TARGET}-gcc is re
 }
 VERSION="${RPI_OMT_CLIENT_VERSION:-$("${PROJECT_ROOT}/scripts/detect-version.sh" "${PROJECT_ROOT}")}"
 OPENSSL_PREFIX="$("${PROJECT_ROOT}/scripts/build-openssl.sh" "${TARGET}")"
-mk() {
-    make -s -f mk/c.mk CC="${TARGET}-gcc" BUILD=release OMT_VERSION="${VERSION}" \
-        OPENSSL_PREFIX="${OPENSSL_PREFIX}" -j"$(nproc)" "$@"
-}
-mk deployer
-RELEASE_DIR="$(mk print-out)/bin"
+# OpenSSL links statically from the pinned build, so the .exe needs no DLL
+# beside it; the capsule must be complete.
+OMT_VERSION="${VERSION}" OMT_CAPSULE_REQUIRED=1 \
+    OMT_OPENSSL_STATIC=1 OMT_OPENSSL_DIR="${OPENSSL_PREFIX}" \
+    cargo build --release --offline --locked --target x86_64-pc-windows-gnu \
+    --target-dir "${PROJECT_ROOT}/target/deployer" -p rpi-omt-deploy -p rpi-omt-deploy-tui
+RELEASE_DIR="${PROJECT_ROOT}/target/deployer/x86_64-pc-windows-gnu/release"
 if [[ "${MODE}" == "--no-publish" ]]; then
     "${PROJECT_ROOT}/scripts/verify-windows-deployer.sh" --console "${RELEASE_DIR}/rpi-omt-deploy.exe"
     "${PROJECT_ROOT}/scripts/verify-windows-deployer.sh" --console "${RELEASE_DIR}/rpi-omt-deploy-tui.exe"
@@ -48,7 +50,8 @@ MINGW_VERSION="$(sed -n 's/^#define __MINGW64_VERSION_STR *"\(.*\)"$/\1/p' \
     "/usr/${TARGET}/include/_mingw_mac.h" 2>/dev/null | head -1)"
 python3 scripts/generate-deployer-sbom.py --output "${STAGE}/deployer-sbom.cdx.json" \
     --version "${VERSION}" --openssl-version "${OPENSSL_VERSION}" \
-    --mingw-gcc-version "${GCC_VERSION}" --mingw-runtime-version "${MINGW_VERSION:-unknown}"
+    --rust-version "$(rustc --version | awk '{print $2}')" \
+    --gcc-version "${GCC_VERSION}" --mingw-runtime-version "${MINGW_VERSION:-unknown}"
 "${PROJECT_ROOT}/scripts/verify-windows-deployer.sh" --console "${STAGE}/bin/rpi-omt-deploy.exe"
 "${PROJECT_ROOT}/scripts/verify-windows-deployer.sh" --console "${STAGE}/bin/rpi-omt-deploy-tui.exe"
 rm -rf "${PUBLISH}"

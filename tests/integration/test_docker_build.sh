@@ -141,7 +141,7 @@ labels=(
     "version file matches the build"
     "project license and third-party notices are packaged"
     "project copyright is exact"
-    "C receiver reports the build version"
+    "receiver reports the build version"
     "C Web frontend reports the build version"
     "zero-source discovery returns JSON"
     "runtime image contains no C++ standard library"
@@ -214,7 +214,7 @@ if "${CONTAINER_ENGINE}" cp \
    "${CONTAINER_ENGINE}" cp \
        "${ARM64_ARTIFACT_CONTAINER}:/omt-web" "${web_artifact}" &&
    [[ -s "${receiver_artifact}" ]] && [[ -s "${web_artifact}" ]]; then
-    pass "ARM64 builder produced the C receiver and web artifacts"
+    pass "ARM64 builder produced the receiver and web artifacts"
 else
     fail "ARM64 builder artifacts are missing"
 fi

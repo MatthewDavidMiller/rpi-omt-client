@@ -1,10 +1,14 @@
 #!/bin/bash
-# Build and stage the first-party C OMT test sender.
+# Build and stage the first-party OMT test sender (crates/omt-test-sender).
 #
 #   --target auto     this workstation (the default)
-#   --target aarch64  a Raspberry Pi 4 or 5, built in the same emulated Alpine
-#                     the appliance image is built on, so the binary links the
-#                     same musl the Pi runs
+#   --target aarch64  a Raspberry Pi 4 or 5, cross-compiled against the
+#                     Alpine sysroot the appliance links
+#
+# The workstation build is a static PIE, so it runs on whatever distribution
+# the workstation has. Rust has no static PIE for aarch64 musl, and a
+# fixed-address static binary would give up ASLR; the Pi always runs Alpine,
+# so its sender links Alpine's musl dynamically, as the appliance does.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -27,31 +31,25 @@ case "${requested_target}" in
     *) usage; exit 2 ;;
 esac
 
-command -v make >/dev/null 2>&1 || { echo "ERROR: make is required. Run: make install" >&2; exit 1; }
+command -v cargo >/dev/null 2>&1 || { echo "ERROR: cargo is required. Run: make install" >&2; exit 1; }
 host_target="$(cc -dumpmachine)"
 cd "${PROJECT_ROOT}"
 
 if [[ "${requested_target}" == "auto" ]]; then
-    echo "Building the C OMT test sender for ${host_target}..."
-    make -s -f mk/c.mk BUILD=release OMT_VERSION=sender -j"$(nproc)" sender
-    out="$(make -s -f mk/c.mk BUILD=release OMT_VERSION=sender print-out)"
+    rust_target=x86_64-unknown-linux-musl
     target="${host_target}"
+    export RUSTFLAGS="-C target-feature=+crt-static -C relocation-model=pie"
 else
-    # shellcheck source=scripts/docker-test-env.sh
-    source "${SCRIPT_DIR}/docker-test-env.sh"
-    ensure_test_container_engine || { echo "ERROR: Docker or Podman is required for the ARM64 sender" >&2; exit 1; }
-    image="docker.io/library/alpine:3.23.5@$(sed -n 's/^ARG ALPINE_DIGEST=//p' deploy/Dockerfile)"
-    echo "Building the C OMT test sender for aarch64 under emulation..."
-    "${CONTAINER_ENGINE}" run --rm --platform linux/arm64 \
-        -v "${PROJECT_ROOT}:/work:Z" -w /work "${image}" sh -euc '
-            apk add --no-cache build-base linux-headers >/dev/null
-            make -s -f mk/c.mk BUILD=release OMT_VERSION=sender LDFLAGS=-static-pie -j$(nproc) sender
-        '
-    out="build/c/aarch64-alpine-linux-musl/release-cc"
+    rust_target=aarch64-unknown-linux-musl
     target="aarch64-alpine-linux-musl"
+    # .cargo/config.toml's flags for this target: dynamic musl from the
+    # sysroot, linked by the appliance's clang/lld wrapper.
+    export OMT_SYSROOT="${OMT_SYSROOT:-/opt/sysroot-aarch64}"
 fi
-
-source_binary="${PROJECT_ROOT}/${out#"${PROJECT_ROOT}/"}/bin/omt-test-sender"
+echo "Building the OMT test sender for ${target}..."
+cargo build --release --offline --locked --target "${rust_target}" \
+    --target-dir "${PROJECT_ROOT}/target/sender" -p omt-test-sender
+source_binary="${PROJECT_ROOT}/target/sender/${rust_target}/release/omt-test-sender"
 [[ -x "${source_binary}" ]] || {
     echo "ERROR: sender build did not produce ${source_binary}" >&2
     exit 1
@@ -60,7 +58,7 @@ source_binary="${PROJECT_ROOT}/${out#"${PROJECT_ROOT}/"}/bin/omt-test-sender"
 artifact_dir="${BUILD_HOME}/artifacts/${target}"
 mkdir -p "${artifact_dir}/bin"
 install -m 0755 "${source_binary}" "${artifact_dir}/bin/omt-test-sender"
-printf '%s\n' "target=${target}" "source=src/sender" > "${artifact_dir}/BUILD-INFO"
+printf '%s\n' "target=${target}" "source=crates/omt-test-sender" > "${artifact_dir}/BUILD-INFO"
 
 if [[ "${target}" == "${host_target}" ]]; then
     current_tmp="${BUILD_HOME}/.current.$$"

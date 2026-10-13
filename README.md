@@ -1,10 +1,10 @@
 # Raspberry Pi OMT Client
 
 Raspberry Pi OMT Client receives Open Media Transport (OMT) video and audio on
-a Raspberry Pi and presents it directly on HDMI. It combines a bounded C OMT
+a Raspberry Pi and presents it directly on HDMI. It combines a bounded OMT
 receiver, direct DRM/KMS video output, ALSA audio, a hardened HTTPS Web GUI,
 and a self-contained deployer for Linux and Windows. Everything is first-party
-C; OpenSSL is the only third-party library.
+Rust with no third-party crates; OpenSSL is the only third-party library.
 
 The supported appliance hosts are the Raspberry Pi 5 and Raspberry Pi 4
 Model B, each running Alpine Linux 3.24 aarch64 in persistent `sys` mode. The
@@ -47,7 +47,7 @@ ELF headers rather than trusting the build flags.
 `make build-windows-deployer` cross-compiles the same CLI and terminal
 application for Windows x86-64 with mingw-w64 against a checksum-pinned OpenSSL
 3.5 LTS, into `.build/deployer-publish-windows/`; they import only Windows'
-own DLLs. Both frontends run the same jobs from `src/deploy/core/jobs.c`, and
+own DLLs. Both frontends run the same jobs from `crates/omt-deploy/src/jobs.rs`, and
 their SSH client is first-party, built on OpenSSL's primitives and held to a
 real OpenSSH server by the gates.
 
@@ -122,7 +122,7 @@ Changing it:
 - [Architecture](docs/ARCHITECTURE.md) — runtime design and the reasoning behind each bound
 - [Codebase reference](docs/CODEBASE_REFERENCE.md) — file-to-responsibility map
 - [Testing](docs/TESTING.md) — gates, hooks, release pipeline, hardware tier
-- [OMT test sender](docs/OMT_TEST_SENDER.md) — first-party C test sender
+- [OMT test sender](docs/OMT_TEST_SENDER.md) — first-party test sender
 
 ## License
 

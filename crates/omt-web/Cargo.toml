@@ -1,0 +1,20 @@
+[package]
+name = "omt-web"
+description = "The appliance's HTTPS operator interface and the omt-web binary"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+omt-common = { path = "../omt-common" }
+omt-crypto = { path = "../omt-crypto" }
+omt-protocol = { path = "../omt-protocol" }
+omt-sys = { path = "../omt-sys", features = ["ssl"] }
+
+[[bin]]
+name = "omt-web"
+path = "src/bin/omt-web.rs"
+
+[lints]
+workspace = true

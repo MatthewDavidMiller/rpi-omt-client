@@ -1,0 +1,13 @@
+[package]
+name = "omt-protocol"
+description = "OMT wire transport and the target grammar shared by every component"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+omt-common = { path = "../omt-common" }
+
+[lints]
+workspace = true

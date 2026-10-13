@@ -1,0 +1,48 @@
+[package]
+name = "omt-fuzz"
+description = "libFuzzer targets for every parser of untrusted input"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[features]
+# The targets define LLVMFuzzerTestOneInput and no main, so they link only
+# against libFuzzer; scripts/rust-sanitized.sh builds them with this feature
+# and the nightly instrumentation flags. A plain workspace build skips them.
+fuzz = []
+
+[dependencies]
+omt-common = { path = "../omt-common" }
+omt-deploy = { path = "../omt-deploy" }
+omt-protocol = { path = "../omt-protocol" }
+omt-receiver = { path = "../omt-receiver" }
+omt-vmx = { path = "../omt-vmx" }
+omt-web = { path = "../omt-web" }
+
+[[bin]]
+name = "fuzz_dbus"
+required-features = ["fuzz"]
+
+[[bin]]
+name = "fuzz_text"
+required-features = ["fuzz"]
+
+[[bin]]
+name = "fuzz_omt"
+required-features = ["fuzz"]
+
+[[bin]]
+name = "fuzz_vmx"
+required-features = ["fuzz"]
+
+[[bin]]
+name = "fuzz_ssh"
+required-features = ["fuzz"]
+
+[[bin]]
+name = "fuzz_web"
+required-features = ["fuzz"]
+
+[lints]
+workspace = true

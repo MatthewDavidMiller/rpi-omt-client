@@ -26,9 +26,9 @@ mkdir -p \
     "${FIXTURE}/fake-bin" \
     "${OUTSIDE}"
 cp "${ROOT}/scripts/lint.sh" "${FIXTURE}/scripts/lint.sh"
-# The C and supply-chain gates read the real tree; this test is about the
+# The Rust and supply-chain gates read the real tree; this test is about the
 # Python tooling, so they are stand-ins here.
-for gate in check-supply-chain.sh check-c.sh; do
+for gate in check-supply-chain.sh check-rust.sh; do
     printf '#!/bin/bash\nexit 0\n' >"${FIXTURE}/scripts/${gate}"
     chmod +x "${FIXTURE}/scripts/${gate}"
 done

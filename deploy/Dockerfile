@@ -1,31 +1,38 @@
 ARG ALPINE_DIGEST=sha256:fd791d74b68913cbb027c6546007b3f0d3bc45125f797758156952bc2d6daf40
 ARG RECEIVER_SOURCE_FINGERPRINT=unknown
 
-# Both appliance binaries are C, cross-compiled on the build machine for the
+# The appliance binaries are cross-compiled on the build machine for the
 # target platform against a sysroot of the same Alpine release the runtime
 # image uses, so they link the musl, alsa-lib, and OpenSSL the image ships.
-# Compiling them under QEMU instead took tens of minutes per ARM64 build; only
-# the runtime stages below still run target binaries, and those only install
-# packages. Only the C tree enters this stage, so a deployer or script edit
-# cannot force another build.
+# omt-receiver and omt-web are Rust, built by the pinned stable toolchain (only
+# that and the one target, never the gate tooling) and linked by clang and lld
+# through scripts/cargo-linker.sh. Compiling them under QEMU instead took tens
+# of minutes per ARM64 build; only the runtime stages below still run target
+# binaries, and those only install packages. Only the Rust workspace enters
+# this stage, so a script or documentation edit cannot force another build.
 #
-# Clang rather than GCC: the decoder's lane loops are written to be
-# vectorized, which LLVM does and GCC does not, and on AArch64 that is the
-# difference between matching the Rust decoder this replaced and trailing it
-# by about 15%. llvm supplies the archiver its LTO objects need, and lld links
-# them: Alpine's cross binutils is built without the LTO plugin. LTO emits
-# compiler-runtime calls only after lld has resolved symbols, so lld would bind
-# them to libgcc_s.so, which the runtime image does not ship; -static-libgcc
-# takes them from libgcc.a, as GNU ld's plugin does for the native build.
+# lld links: Alpine's cross binutils is built without the LTO plugin. Rust's
+# standard library asks for libgcc_s for unwinding, which the runtime image
+# does not ship; the linker wrapper substitutes the static libgcc_eh, and the
+# check below keeps it that way.
 # hadolint ignore=DL3029
-FROM --platform=$BUILDPLATFORM alpine:3.23.5@${ALPINE_DIGEST} AS c-builder
+FROM --platform=$BUILDPLATFORM alpine:3.23.5@${ALPINE_DIGEST} AS builder
 
 SHELL ["/bin/ash", "-eo", "pipefail", "-c"]
 
 ARG RPI_OMT_CLIENT_VERSION=unknown
 ARG TARGETARCH
 
-RUN apk add --no-cache clang lld llvm make
+RUN apk add --no-cache bash clang curl lld llvm
+
+ENV RUSTUP_HOME=/opt/rustup CARGO_HOME=/opt/cargo PATH="/opt/cargo/bin:${PATH}"
+COPY scripts/install-rust.sh /usr/local/bin/install-rust.sh
+RUN case "${TARGETARCH}" in \
+        arm64) triple=aarch64-unknown-linux-musl ;; \
+        amd64) triple=x86_64-unknown-linux-musl ;; \
+        *) echo "unsupported TARGETARCH ${TARGETARCH}" >&2; exit 1 ;; \
+    esac \
+    && install-rust.sh --build-only "${triple}"
 
 COPY scripts/make-sysroot.sh /usr/local/bin/make-sysroot.sh
 RUN case "${TARGETARCH}" in \
@@ -37,20 +44,27 @@ RUN case "${TARGETARCH}" in \
     && printf '%s\n' "${arch}" > /sysroot/.omt-arch
 
 WORKDIR /src
-COPY mk/ mk/
-COPY src/ src/
-RUN cc="clang --target=$(cat /sysroot/.omt-arch)-alpine-linux-musl --sysroot=/sysroot" \
-    && make -f mk/c.mk CC="${cc}" LDFLAGS="-fuse-ld=lld -static-libgcc" BUILD=release \
-        OMT_VERSION="${RPI_OMT_CLIENT_VERSION}" -j"$(nproc)" receiver web \
-    && out="$(make -s -f mk/c.mk CC="${cc}" LDFLAGS="-fuse-ld=lld -static-libgcc" BUILD=release \
-        OMT_VERSION="${RPI_OMT_CLIENT_VERSION}" print-out)" \
+COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
+COPY .cargo/ .cargo/
+COPY crates/ crates/
+COPY scripts/cargo-linker.sh scripts/cargo-linker-aarch64.sh scripts/cargo-linker-x86_64.sh scripts/
+# RUSTUP_TOOLCHAIN overrides rust-toolchain.toml, whose lint components this
+# stage does not install.
+RUN arch="$(cat /sysroot/.omt-arch)" \
+    && triple="${arch}-unknown-linux-musl" \
+    && env_triple="$(printf '%s' "${triple}" | tr 'a-z-' 'A-Z_')" \
+    && toolchain="$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)" \
+    && export "CARGO_TARGET_${env_triple}_LINKER=/src/scripts/cargo-linker-${arch}.sh" \
+        RUSTUP_TOOLCHAIN="${toolchain}" \
+        OMT_SYSROOT=/sysroot OMT_VERSION="${RPI_OMT_CLIENT_VERSION}" \
+        RUSTFLAGS="-C target-feature=-crt-static -C link-self-contained=no" \
+    && cargo build --release --locked --offline --target "${triple}" -p omt-receiver -p omt-web \
     && for bin in omt-receiver omt-web; do \
-        if llvm-readelf -d "${out}/bin/${bin}" | grep -q libgcc_s; then \
+        if llvm-readelf -d "target/${triple}/release/${bin}" | grep -q libgcc_s; then \
             echo "${bin} depends on libgcc_s, which the runtime image lacks" >&2; exit 1; \
         fi; \
-    done \
-    && install -Dm755 "${out}/bin/omt-receiver" /out/runtime/omt-receiver \
-    && install -Dm755 "${out}/bin/omt-web" /out/runtime/omt-web
+        install -Dm755 "target/${triple}/release/${bin}" "/out/runtime/${bin}"; \
+    done
 
 # Keep the testable/exportable ARM64 target limited to shipped artifacts. The
 # compiler, sources, and object files never enter this image.
@@ -60,7 +74,7 @@ ARG RECEIVER_SOURCE_FINGERPRINT
 # produced a different binary. Put the source fingerprint into the parent
 # image configuration so a receiver change invalidates the COPY itself.
 LABEL org.rpi-omt-client.receiver-source=${RECEIVER_SOURCE_FINGERPRINT}
-COPY --from=c-builder /out/runtime/ /
+COPY --from=builder /out/runtime/ /
 
 FROM alpine:3.23.5@${ALPINE_DIGEST} AS runtime-base
 
@@ -97,10 +111,11 @@ FROM runtime-base AS sbom-builder
 ARG RPI_OMT_CLIENT_VERSION=unknown
 RUN cp /lib/apk/db/installed /tmp/runtime-installed \
     && apk add --no-cache python3
-COPY scripts/generate-runtime-sbom.py /tmp/
+COPY scripts/generate-runtime-sbom.py rust-toolchain.toml /tmp/
 RUN python3 /tmp/generate-runtime-sbom.py \
         --output /runtime-sbom.cdx.json \
         --apk-installed /tmp/runtime-installed \
+        --rust-toolchain /tmp/rust-toolchain.toml \
         --version "${RPI_OMT_CLIENT_VERSION}"
 
 FROM runtime-base AS runtime

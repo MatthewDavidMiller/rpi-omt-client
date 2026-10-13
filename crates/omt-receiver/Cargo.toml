@@ -1,0 +1,21 @@
+[package]
+name = "omt-receiver"
+description = "The receiver: DRM/KMS scanout, ALSA audio, discovery, and the omt-receiver binary"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+omt-common = { path = "../omt-common" }
+omt-protocol = { path = "../omt-protocol" }
+omt-receiver-core = { path = "../omt-receiver-core" }
+omt-sys = { path = "../omt-sys", features = ["alsa"] }
+omt-vmx = { path = "../omt-vmx" }
+
+[[bin]]
+name = "omt-receiver"
+path = "src/bin/omt-receiver.rs"
+
+[lints]
+workspace = true

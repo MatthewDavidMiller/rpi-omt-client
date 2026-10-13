@@ -11,7 +11,7 @@ SETUP_SYS="${ROOT}/deploy/host/setup-sys.sh"
 BOOTSTRAP="${ROOT}/deploy/host/bootstrap.sh"
 INSTALL="${ROOT}/deploy/host/install.sh"
 MANIFEST="${ROOT}/deploy/manifest-v3.txt"
-OPS_C="${ROOT}/src/deploy/core/ops.c"
+OPS_C="${ROOT}/crates/omt-deploy/src/ops.rs"
 
 failures=0
 fail() {
@@ -357,11 +357,10 @@ service_freqs="$(
 [[ "${service_freqs}" == "${setup_freqs}" ]] || \
     fail "service-install.sh frequency list does not match setup-sys.sh"
 ops_freqs="$(
-    sed -n '/^#define WIFI_FREQ_LIST/,/[^\\]$/p' "${OPS_C}" |
-        sed -n 's/^ *"\(.*\)" *\\\{0,1\}$/\1/p' | tr -d '\n' | sed 's/ *$//'
+    sed -n '/^macro_rules! wifi_freq_list/,/^}/p' "${OPS_C}" | grep -oE '[0-9]{4}' | paste -sd ' '
 )"
 [[ "${ops_freqs}" == "${setup_freqs}" ]] || \
-    fail "ops.c frequency list does not match setup-sys.sh"
+    fail "ops.rs frequency list does not match setup-sys.sh"
 
 # Both writers in this script apply it, not just the one that creates a profile
 # from scratch.

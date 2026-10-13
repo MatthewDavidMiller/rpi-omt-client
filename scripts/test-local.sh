@@ -90,7 +90,7 @@ print_timings() {
 # ─── Unit Tests ───────────────────────────────────────────────
 # tools/test-web.sh also runs tests/unit/test_entrypoint_logic.sh, against the
 # omt-web binary it has just built, which is why that suite has no line here.
-run_test "Web frontend (C, sanitized)" "${PROJECT_ROOT}/tools/test-web.sh"
+run_test "Web frontend (sanitized)" "${PROJECT_ROOT}/tools/test-web.sh"
 run_test "OMT Controller" "${PROJECT_ROOT}/tests/unit/test_control_omt.sh"
 run_test "Start OMT Script" "${PROJECT_ROOT}/tests/unit/test_start_omt.sh"
 run_test "OMT Test Sender" "${PROJECT_ROOT}/tests/unit/test_omt_test_sender.sh"
@@ -119,9 +119,9 @@ run_test "Python Tooling" "${PROJECT_ROOT}/tests/unit/test_python_tooling.sh"
 run_test "Test Runner Arguments" "${PROJECT_ROOT}/tests/unit/test_test_runner_args.sh"
 run_test "Supply Chain Guardrails" "${PROJECT_ROOT}/tests/unit/test_supply_chain.sh"
 run_test "Lint and syntax" "${PROJECT_ROOT}/scripts/lint.sh"
-run_test "Receiver (C, sanitized)" "${PROJECT_ROOT}/tools/test-receiver.sh"
+run_test "Receiver (sanitized)" "${PROJECT_ROOT}/tools/test-receiver.sh"
 if [[ "${QUICK_MODE}" != "true" ]]; then
-    run_test "C Fuzz Smoke" "${PROJECT_ROOT}/tools/test-fuzz.sh"
+    run_test "Fuzz Smoke" "${PROJECT_ROOT}/tools/test-fuzz.sh"
 fi
 
 # ─── Deployer Tests ──────────────────────────────────────────

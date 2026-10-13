@@ -1,22 +1,23 @@
 #!/bin/bash
-# Keep C/C++ and assembly confined to the first-party C tree.
+# Keep the tree Rust: no C or C++ source anywhere, and assembly only where the
+# decoder's AArch64 kernels live.
 #
-# The project is C; what stays an exception is C anywhere else in the tree.
-# What is still refused is C/C++ outside the directories the C gates build,
-# lint, sanitize, and fuzz -- a vendored library or a stray helper there would
-# ship without any of those checks -- and C++ anywhere. Assembly is allowed
-# only under src/, where mk/c.mk builds it and the AArch64 suites check it
-# against the portable C it replaces.
+# Code in another language would ship without the gates the Rust tree has --
+# the lints, the unsafe allowlist, the sanitizer suites, and the fuzzers. The
+# two kernels under crates/omt-vmx/asm are the one exception: global_asm!
+# assembles them into omt-vmx, and the AArch64 suites (scripts/test-arm64.sh)
+# check them bit for bit against the portable Rust they replace. The ABI
+# probe's C (tests/abi) is generated at gate time and never committed.
 set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 mapfile -t stray < <(
-    git -C "${PROJECT_ROOT}" ls-files |
-        grep -E '\.(c|h|cc|cpp|cxx|hh|hpp|hxx|S|s|asm)$' |
-        grep -Ev '^(src|tests/c|tests/fuzz)/.*\.[ch]$|^src/.*\.S$' |
+    git -C "${PROJECT_ROOT}" ls-files --cached --others --exclude-standard |
+        grep -E '\.(c|h|cc|cpp|cxx|hh|hpp|hxx|S|s|asm|inc)$' |
+        grep -Ev '^crates/omt-vmx/asm/[a-z0-9_]+\.s$' |
         while IFS= read -r path; do [[ -f "${PROJECT_ROOT}/${path}" ]] && printf '%s\n' "${path}"; done || true
 )
 if ((${#stray[@]})); then
-    printf 'ERROR: C/C++ or assembly source outside the gated C tree: %s\n' "${stray[@]}" >&2
+    printf 'ERROR: C/C++ or assembly source outside crates/omt-vmx/asm: %s\n' "${stray[@]}" >&2
     exit 1
 fi
-echo "C sources are confined to src/, tests/c/, and tests/fuzz/; assembly to src/."
+echo "No C or C++ sources; assembly is confined to crates/omt-vmx/asm."

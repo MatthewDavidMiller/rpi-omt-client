@@ -41,8 +41,8 @@ cd "${PROJECT_ROOT}"
 echo "Running the supply-chain gate..."
 "${SCRIPT_DIR}/check-supply-chain.sh"
 
-echo "Running the C static gates..."
-"${SCRIPT_DIR}/check-c.sh"
+echo "Running the Rust static gates..."
+"${SCRIPT_DIR}/check-rust.sh"
 
 mapfile -d '' -t SHELL_SCRIPTS < <(
     find "${PROJECT_ROOT}" \

@@ -23,11 +23,13 @@ def require_text(path: Path, value: str) -> None:
 def main() -> int:
     notices_text = (ROOT / "THIRD_PARTY_NOTICES.txt").read_text(encoding="utf-8")
     notices = notices_text.lower()
-    # The third-party code the binaries contain: OpenSSL everywhere, the
-    # Unicode data in the appliance, musl and the mingw runtime in the static
-    # deployers. Each needs its licence text, not only its name.
+    # The third-party code the binaries contain: OpenSSL and the Rust standard
+    # library everywhere, the Unicode data in the appliance, musl, the mingw
+    # runtime, and the GCC runtime library in the static deployers. Each needs
+    # its licence text, not only its name.
     for required in (
         "openssl",
+        "rust standard library",
         "apache license",
         "unicode license v3",
         "musl libc",
@@ -45,13 +47,13 @@ def main() -> int:
     # embedded through the capsule.
     for path in (
         ROOT / "LICENSE",
-        ROOT / "src/web/templates/about.html",
+        ROOT / "crates/omt-web/templates/about.html",
     ):
         require_text(path, COPYRIGHT)
     require_text(ROOT / "LICENSE", "MIT License")
-    require_text(ROOT / "src/deploy/tui/ui.c", "dp_license_text(")
-    require_text(ROOT / "src/deploy/tui/ui.c", "dp_notices_text(")
-    require_text(ROOT / "tools/gen/gen_capsule.py", "THIRD_PARTY_NOTICES.txt")
+    require_text(ROOT / "crates/rpi-omt-deploy-tui/src/ui.rs", "capsule.license")
+    require_text(ROOT / "crates/rpi-omt-deploy-tui/src/ui.rs", "capsule.notices")
+    require_text(ROOT / "crates/omt-capsule/build.rs", "THIRD_PARTY_NOTICES.txt")
 
     require_text(ROOT / "third_party/omt/libvmx/LICENSE.txt", "MIT License")
     for component in ("libomtnet", "libvmx", "omtplayer"):

@@ -15,7 +15,9 @@ def test_local_markdown_links_resolve():
 
 def test_public_application_settings_are_documented():
     configuration = (REPO_ROOT / "docs" / "CONFIGURATION.md").read_text(encoding="utf-8")
-    settings_source = (REPO_ROOT / "src" / "web" / "settings.c").read_text(encoding="utf-8")
+    settings_source = (REPO_ROOT / "crates" / "omt-web" / "src" / "settings.rs").read_text(
+        encoding="utf-8"
+    )
     public_names = {
         name
         for name in re.findall(r'"(OMT_[A-Z0-9_]+)"', settings_source)
@@ -37,17 +39,17 @@ def test_high_value_paths_are_documented():
     pins that the file map still mentions the entry points worth documenting."""
     reference = (REPO_ROOT / "docs" / "CODEBASE_REFERENCE.md").read_text(encoding="utf-8")
     paths = (
-        "src/web/app.c",
-        "src/web/auth.c",
-        "src/web/state.c",
+        "crates/omt-web/src/app.rs",
+        "crates/omt-web/src/auth.rs",
+        "crates/omt-web/src/state.rs",
         "deploy/container/runtime-lib.sh",
         "deploy/container/entrypoint.sh",
-        "src/receiver/main.c",
-        "src/protocol/omt.c",
-        "src/deploy/core/ops.c",
-        "src/deploy/ssh/kex.c",
-        "src/deploy/cli/main.c",
-        "src/deploy/tui/app.c",
+        "crates/omt-receiver/src/bin/omt-receiver.rs",
+        "crates/omt-protocol/src/lib.rs",
+        "crates/omt-deploy/src/ops.rs",
+        "crates/omt-deploy/src/ssh/kex.rs",
+        "crates/rpi-omt-deploy/src/main.rs",
+        "crates/rpi-omt-deploy-tui/src/app.rs",
         "deploy/manifest-v3.txt",
         "deploy/transaction.sh",
     )
@@ -57,7 +59,8 @@ def test_high_value_paths_are_documented():
 def test_file_maps_reference_existing_paths():
     """The agent guides, the development entry point, and the two architecture
     documents are the map for humans and agents alike. Their file maps silently
-    rotted through the v0.9.27 src/ + deploy/ reorganisation; this keeps every
+    rotted through the v0.9.27 src/ + deploy/ reorganisation and could again
+    through the 3.0.0 move from src/ to crates/; this keeps every
     backticked repo path honest.
 
     CONFIGURATION.md and OPERATIONS.md are excluded: they name container runtime
@@ -81,14 +84,14 @@ def test_file_maps_reference_existing_paths():
 
 
 def test_public_factory_routes_are_documented():
-    app_source = (REPO_ROOT / "src" / "web" / "app.c").read_text(encoding="utf-8")
-    # The route table: one {"<path>", get_handler, post_handler} row per route.
+    app_source = (REPO_ROOT / "crates" / "omt-web" / "src" / "app.rs").read_text(encoding="utf-8")
+    # The route table: one Route { path, get, post } row per route.
     public_routes = {
         route
-        for route in re.findall(r'^\s*\{"(/[^"]*)",', app_source, re.MULTILINE)
+        for route in re.findall(r'^\s*Route \{ path: "(/[^"]*)",', app_source, re.MULTILINE)
         if not route.startswith("/static/")
     }
-    assert public_routes, "src/web/app.c no longer has a recognisable route table"
+    assert public_routes, "omt-web's app.rs no longer has a recognisable route table"
     route_docs = "\n".join(
         (REPO_ROOT / "docs" / name).read_text(encoding="utf-8")
         for name in ("CODEBASE_REFERENCE.md", "OPERATIONS.md")
@@ -134,7 +137,9 @@ def test_deployer_web_password_rotation_is_documented():
     setup = (REPO_ROOT / "docs" / "SETUP.md").read_text(encoding="utf-8")
     operations = (REPO_ROOT / "docs" / "OPERATIONS.md").read_text(encoding="utf-8")
     configuration = (REPO_ROOT / "docs" / "CONFIGURATION.md").read_text(encoding="utf-8")
-    tui = (REPO_ROOT / "src" / "deploy" / "tui" / "app.c").read_text(encoding="utf-8")
+    tui = (REPO_ROOT / "crates" / "rpi-omt-deploy-tui" / "src" / "app.rs").read_text(
+        encoding="utf-8"
+    )
     # The labels the operator is told to look for are the ones the view draws.
     for label in ("Also set the Web GUI password", "Change Web GUI password"):
         assert f'"{label}"' in tui
