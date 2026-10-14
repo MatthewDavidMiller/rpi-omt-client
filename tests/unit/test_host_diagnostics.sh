@@ -7,7 +7,7 @@ ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 HOST_DIAGNOSTICS="${ROOT}/deploy/host/host-diagnostics.sh"
 CASE_DIR="$(mktemp -d)"
 trap 'rm -rf "${CASE_DIR}"' EXIT
-mkdir -p "${CASE_DIR}/bin" "${CASE_DIR}/install" "${CASE_DIR}/diagnostics"
+mkdir -p "${CASE_DIR}/bin" "${CASE_DIR}/install" "${CASE_DIR}/diagnostics" "${CASE_DIR}/scratch"
 
 cat > "${CASE_DIR}/bin/ip" <<'EOF'
 #!/bin/bash
@@ -37,7 +37,7 @@ EOF
 chmod 0755 "${CASE_DIR}/bin/tcpdump"
 
 # Run one collection against per-label output paths. Every caller needs the same
-# eight environment overrides, so they live here rather than in each case. The
+# nine environment overrides, so they live here rather than in each case. The
 # budget stays at one second unless a case asks for more: the `ip` stub above
 # outlasts it, so these runs deliberately exercise a curtailed collection.
 run_diagnostics() {
@@ -48,8 +48,28 @@ run_diagnostics() {
     OMT_DIAGNOSTICS_HOST_BUDGET_SECONDS="${budget}" \
     OMT_DIAGNOSTICS_HOST_PCAP_FILE="${CASE_DIR}/diagnostics/capture-${label}.pcap" \
     OMT_DIAGNOSTICS_HOST_PCAP_METADATA_FILE="${CASE_DIR}/diagnostics/metadata-${label}.txt" \
+    OMT_DIAGNOSTICS_HOST_SCRATCH_DIR="${CASE_DIR}/scratch" \
     OMT_INSTALL_DIR="${CASE_DIR}/install" \
         "${HOST_DIAGNOSTICS}"
+    assert_only_published
+}
+
+# Working files belong in RAM (scratch stands in for /run) and are gone when the
+# run ends; the SD-card exchange directory holds only what was published.
+assert_only_published() {
+    local leftover
+    leftover="$(find "${CASE_DIR}/scratch" -mindepth 1 -print -quit)"
+    if [[ -n "${leftover}" ]]; then
+        echo "scratch not cleaned up: ${leftover}" >&2
+        exit 1
+    fi
+    leftover="$(find "${CASE_DIR}/diagnostics" -mindepth 1 \
+        ! -name request ! -name 'report-*.txt' ! -name 'metadata-*.txt' \
+        ! -name 'capture-*.pcap' -print -quit)"
+    if [[ -n "${leftover}" ]]; then
+        echo "working file left in the exchange directory: ${leftover}" >&2
+        exit 1
+    fi
 }
 
 write_request() {

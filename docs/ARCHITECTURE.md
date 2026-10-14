@@ -453,7 +453,10 @@ writes a versioned nonce and `capture_pcap=0|1`, collects container-side data
 while the root-owned oneshot runs, and accepts only a stable bounded host
 report carrying that nonce. Raw capture is never started unless selected for
 that download. Avahi proxy state, diagnostics, and host actions use separate
-least-privilege bind mounts.
+least-privilege bind mounts. A collection's working files -- each section, the
+text captures, and the raw capture -- live in a private directory on `/run`, and
+only the report, the capture metadata, and a publishable capture are written
+to the SD-card exchange directory (see "Spare RAM and SD-card writes").
 
 The shipped image contains no Python runtime, Rust or C/C++ toolchain, or C++
 standard library. The receiver and Web service are stripped release binaries
@@ -735,3 +738,54 @@ content. The Rust code also carries no AArch64 BTI/PAC branch protection:
 stable Rust cannot enable it, so the assembly kernels deliberately carry no
 property note either (see `crates/omt-vmx/asm/prelude.s`).
 
+## Spare RAM and SD-card writes
+
+After 3.0.0 the Pi 4 was booted with `mem=1024M` (915 MiB usable, as a 1 GB
+board) and measured for what spare RAM could save the SD card. Every soak
+wrote its samples to tmpfs and ran without SSH logins, which on their own
+added more syslog and journal writes than the appliance does.
+
+| Workload, 3.0.0 under `mem=1024M` | SD writes | Lowest `MemAvailable` |
+|---|---|---|
+| Idle, 30 min (waiting for HDMI, health check every 30 s) | 168 KiB in 24 operations, no reads | 770 MiB |
+| One Web session a minute (login, five pages, settings save, logout), 30 min | 6.2 MiB, about 217 KiB a session | 767 MiB |
+| Login, support bundle without packet capture, logout | 1.1 MiB in 130 operations | 726 MiB |
+| The same, with working files on `/run` | 0.5 MiB in 46 operations | 714 MiB |
+| Login, support bundle with packet capture on a busy network, logout | 64-84 MiB | 703 MiB |
+| The same, with working files on `/run` | 0.5-0.7 MiB | 659 MiB |
+
+The appliance was already keeping its steady writes in RAM: playback status,
+the control lock, and container scratch are on tmpfs, health checks write
+nothing, and the receiver logs only on events. One change shipped:
+
+- **Diagnostics working files on `/run`.** A collection used to create every
+  section, both text captures, and the raw capture beside the published report
+  on the SD card, then delete them. The raw capture is `tcpdump -C 64 -W 1`,
+  so on a busy network it rewrote a 64 MB file for the whole 20 s window --
+  and anything over 8 MiB is never published. Working files now go to a
+  private 0700 directory under `/run` that is removed when the run ends (and
+  at reboot, so an interrupted run no longer leaves files on the card); the
+  capture is copied beside its published name and renamed only when
+  publishable. Cost: up to 64 MB of RAM for the 20 s of a requested capture,
+  nothing otherwise.
+
+Measured and left alone:
+
+- **Session and settings writes.** Each login and logout replaces
+  `web_sessions.json` durably (about 100 KiB of SD writes each, mostly ext4
+  metadata), and an unchanged settings save writes nothing. Holding sessions in
+  RAM and flushing later would trade a re-login after power loss for a few
+  hundred KiB per operator visit.
+- **Syslog ring buffer, `noatime`, a longer ext4 `commit=`.** Idle writes are
+  about 8 MiB a day in total; the host syslog wrote nothing on its own in the
+  idle soak, `relatime` already limits atime updates, and the remaining writes
+  are `fsync`ed, which a longer commit interval does not defer.
+- **zram and the 512 MiB container cap.** No swap was used in any soak; the
+  container peaked at 24 MB, and the worst case left 659 MiB available, well
+  above a 256 MiB floor.
+- **Decode under 1 GiB.** `bench_vmx` on 1080p is unchanged (3.50 ms a frame
+  on three workers, 3.46 ms with 8 GB).
+
+Not measured: pre-faulting or locking the scanout and decode buffers, and
+larger receive or audio buffers, need live HDMI playback, which the lab Pi
+does not have.

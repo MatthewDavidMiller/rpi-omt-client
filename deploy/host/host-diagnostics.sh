@@ -25,6 +25,10 @@ DIAGNOSTICS_BUDGET_SECONDS="${OMT_DIAGNOSTICS_HOST_BUDGET_SECONDS:-25}"
 OUTPUT_DIR="$(dirname "${OUTPUT_FILE}")"
 PCAP_OUTPUT_FILE="${OMT_DIAGNOSTICS_HOST_PCAP_FILE:-${OUTPUT_DIR}/host-network.pcap}"
 PCAP_METADATA_FILE="${OMT_DIAGNOSTICS_HOST_PCAP_METADATA_FILE:-${OUTPUT_DIR}/host-network-pcap.txt}"
+# Working files live in RAM. The exchange directory is on the SD card, and a
+# collection otherwise wrote every section, both text captures, and up to 64 MB
+# of raw capture there just to delete them; only what is published goes there.
+SCRATCH_PARENT="${OMT_DIAGNOSTICS_HOST_SCRATCH_DIR:-/run}"
 PCAP_MAX_BYTES=8388608
 HOST_SECTION_MAX_BYTES=262144
 HOST_REQUEST_MAX_BYTES=512
@@ -98,14 +102,19 @@ fi
 
 mkdir -p "${OUTPUT_DIR}"
 chmod 2750 "${OUTPUT_DIR}"
+SCRATCH_DIR="$(mktemp -d "${SCRATCH_PARENT}/omt-client-diagnostics.XXXXXX")"
+chmod 700 "${SCRATCH_DIR}"
 TMP_FILE="$(mktemp "${OUTPUT_FILE}.tmp.XXXXXX")"
-BODY_FILE="$(mktemp "${OUTPUT_FILE}.body.XXXXXX")"
-MDNS_CAPTURE="$(mktemp "${OUTPUT_FILE}.mdns.XXXXXX")"
-OMT_CAPTURE="$(mktemp "${OUTPUT_FILE}.omt.XXXXXX")"
+BODY_FILE="${SCRATCH_DIR}/body"
+MDNS_CAPTURE="${SCRATCH_DIR}/mdns"
+OMT_CAPTURE="${SCRATCH_DIR}/omt"
 PCAP_METADATA_TMP="$(mktemp "${PCAP_METADATA_FILE}.tmp.XXXXXX")"
-PCAP_STAGE_DIR="$(mktemp -d "${OUTPUT_FILE}.pcap.XXXXXX")"
-PCAP_CAPTURE_BASE="${PCAP_STAGE_DIR}/capture.pcap"
-PCAP_STATS="${PCAP_STAGE_DIR}/tcpdump-stats.txt"
+PCAP_PUBLISH_TMP=""
+PCAP_CAPTURE_BASE="${SCRATCH_DIR}/capture.pcap"
+PCAP_STATS="${SCRATCH_DIR}/tcpdump-stats.txt"
+: > "${BODY_FILE}"
+: > "${MDNS_CAPTURE}"
+: > "${OMT_CAPTURE}"
 TEXT_CAPTURE_PIDS=()
 PCAP_PID=""
 PCAP_EXIT_STATUS="not_started"
@@ -125,10 +134,11 @@ cleanup() {
         kill "${PCAP_PID}" 2>/dev/null || true
         wait "${PCAP_PID}" 2>/dev/null || true
     fi
-    rm -f "${TMP_FILE}" "${BODY_FILE}" "${MDNS_CAPTURE}" "${OMT_CAPTURE}" \
-        "${PCAP_METADATA_TMP}" "${PCAP_CAPTURE_BASE}" \
-        "${PCAP_CAPTURE_BASE}0" "${PCAP_CAPTURE_BASE}1" "${PCAP_STATS}"
-    rmdir "${PCAP_STAGE_DIR}" 2>/dev/null || true
+    rm -f "${TMP_FILE}" "${PCAP_METADATA_TMP}" ${PCAP_PUBLISH_TMP:+"${PCAP_PUBLISH_TMP}"}
+    rm -f "${BODY_FILE}" "${MDNS_CAPTURE}" "${OMT_CAPTURE}" "${PCAP_CAPTURE_BASE}" \
+        "${PCAP_CAPTURE_BASE}0" "${PCAP_CAPTURE_BASE}1" "${PCAP_STATS}" \
+        "${SCRATCH_DIR}/section."*
+    rmdir "${SCRATCH_DIR}" 2>/dev/null || true
 }
 trap cleanup EXIT
 SECONDS=0
@@ -157,7 +167,7 @@ run() {
     fi
     command_timeout="${remaining}"
     (( command_timeout <= 8 )) || command_timeout=8
-    section_tmp="$(mktemp "${OUTPUT_FILE}.section.XXXXXX")"
+    section_tmp="$(mktemp "${SCRATCH_DIR}/section.XXXXXX")"
     set +e
     timeout "${command_timeout}" "$@" 2>&1 | \
         head -c "$((HOST_SECTION_MAX_BYTES + 1))" > "${section_tmp}"
@@ -288,8 +298,14 @@ publish_pcap() {
     fi
 
     if [[ "${capture_status}" =~ ^(complete|time_limit|size_limit)$ ]]; then
-        set_publication_permissions "${candidate}"
-        mv -fT "${candidate}" "${PCAP_OUTPUT_FILE}"
+        # The capture is in RAM: copy it beside its published name first so
+        # the rename that publishes it stays atomic.
+        PCAP_PUBLISH_TMP="$(mktemp "${PCAP_OUTPUT_FILE}.tmp.XXXXXX")"
+        cat -- "${candidate}" > "${PCAP_PUBLISH_TMP}"
+        rm -f -- "${candidate}"
+        set_publication_permissions "${PCAP_PUBLISH_TMP}"
+        mv -fT "${PCAP_PUBLISH_TMP}" "${PCAP_OUTPUT_FILE}"
+        PCAP_PUBLISH_TMP=""
         sync -f "${PCAP_OUTPUT_FILE}"
         sync -d "${OUTPUT_DIR}"
     else
