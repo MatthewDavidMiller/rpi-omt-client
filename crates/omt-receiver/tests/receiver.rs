@@ -137,6 +137,43 @@ fn a_body_that_never_finishes_is_truncated() {
     t.join().unwrap();
 }
 
+/// A ready-only read takes a frame already in the socket, leaves the next
+/// one -- whose header has landed but whose body has not -- partly read
+/// without waiting for it, and finishes it once the rest arrives.
+#[test]
+fn a_frame_still_arriving_does_not_hold_back_a_complete_one() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let (go, wait) = std::sync::mpsc::channel::<()>();
+    let t = thread::spawn(move || {
+        let (mut s, _) = listener.accept().unwrap();
+        let (mut first, mut second) = (Vec::new(), Vec::new());
+        build_metadata(b"<first/>", 1, &mut first).unwrap();
+        build_metadata(b"<second/>", 2, &mut second).unwrap();
+        s.write_all(&first).unwrap();
+        s.write_all(&second[..20]).unwrap();
+        wait.recv().unwrap();
+        s.write_all(&second[20..]).unwrap();
+        thread::sleep(Duration::from_millis(500));
+    });
+    let mut c = connect_to(port);
+    // Let both writes land before the ready-only reads.
+    thread::sleep(Duration::from_millis(100));
+    assert_eq!(c.receive_ready().0, Recv::Ok);
+    assert_eq!(c.frame.payload(), b"<first/>");
+    let started = now_ms();
+    assert_eq!(c.receive_ready().0, Recv::WouldBlock);
+    assert!(now_ms() - started < 50, "a ready-only read must not wait");
+    assert!(c.connected());
+    go.send(()).unwrap();
+    let (status, err) = c.receive(now_ms() + 2000);
+    assert_eq!(status, Recv::Ok, "{err:?}");
+    assert_eq!(c.frame.header.unwrap().timestamp, 2);
+    assert_eq!(c.frame.payload(), b"<second/>");
+    drop(c);
+    t.join().unwrap();
+}
+
 fn frame_with(len: usize, metadata_length: u16) -> Frame {
     Frame {
         header: Some(FrameHeader {
@@ -493,7 +530,7 @@ fn mode_selection() {
     assert_eq!(choose(&a, 1920, 1080, 60.0), Some((3, false)));
     assert_eq!(choose(&a, 1920, 1080, 50.0), Some((1, false)));
     assert_eq!(choose(&a, 1280, 720, 59.94), Some((4, false)));
-    assert_eq!(choose(&a, 1920, 1080, 29.97), Some((3, false)));
+    assert_eq!(choose(&a, 1920, 1080, 29.97), Some((2, false)));
     assert_eq!(choose(&a[..1], 1920, 1080, 59.94), None);
     assert_eq!(choose(&[], 1920, 1080, 60.0), None);
 
@@ -520,6 +557,25 @@ fn mode_selection() {
     assert_eq!(choose(&f, 1920, 1080, 59.94), Some((0, false)));
     assert_eq!(choose(&f, 1920, 1080, 59.9), Some((1, false)));
     assert_eq!(choose(&[shape(1920, 1080, 0.0)], 1920, 1080, 60.0), None);
+
+    // A low source rate goes out at twice its rate when the display has it.
+    let g = [
+        shape(1920, 1080, 30.0),
+        shape(1920, 1080, 60.0),
+        shape(1920, 1080, 25.0),
+        shape(1920, 1080, 50.0),
+        shape(1920, 1080, 29.97),
+        shape(1920, 1080, 59.94),
+    ];
+    assert_eq!(choose(&g, 1920, 1080, 30.0), Some((1, false)));
+    assert_eq!(choose(&g, 1920, 1080, 25.0), Some((3, false)));
+    assert_eq!(choose(&g, 1920, 1080, 29.97), Some((5, false)));
+    assert_eq!(choose(&g, 1920, 1080, 50.0), Some((3, false)));
+    assert_eq!(choose(&g[..1], 1920, 1080, 30.0), Some((0, false)));
+    assert_eq!(
+        choose(&[shape(1920, 1080, 30.0), shape(1920, 1080, 50.0)], 1920, 1080, 30.0),
+        Some((0, false))
+    );
 }
 
 #[test]

@@ -121,7 +121,10 @@ pub struct timespec {
     pub tv_nsec: c_long,
 }
 
+pub const CLOCK_MONOTONIC: c_int = 1;
+
 unsafe extern "C" {
+    pub fn clock_gettime(clock: c_int, ts: *mut timespec) -> c_int;
     pub fn getrandom(buf: *mut c_void, len: usize, flags: c_uint) -> ssize_t;
     pub fn kill(pid: pid_t, sig: c_int) -> c_int;
     pub fn poll(fds: *mut pollfd, nfds: nfds_t, timeout: c_int) -> c_int;
@@ -220,6 +223,17 @@ pub fn fill_random(buf: &mut [u8]) -> io::Result<()> {
 pub fn send_signal(pid: pid_t, sig: c_int) -> io::Result<()> {
     // SAFETY: kill takes plain integers and has no memory effects.
     if unsafe { kill(pid, sig) } == 0 { Ok(()) } else { Err(io::Error::last_os_error()) }
+}
+
+/// Nanoseconds on `CLOCK_MONOTONIC`, the clock DRM stamps vblank events
+/// with, so the two can be compared directly.
+pub fn monotonic_ns() -> u64 {
+    let mut ts = timespec::default();
+    // SAFETY: `ts` is a valid, writable timespec.
+    if unsafe { clock_gettime(CLOCK_MONOTONIC, &raw mut ts) } != 0 {
+        return 0;
+    }
+    u64::try_from(ts.tv_sec).unwrap_or(0) * 1_000_000_000 + u64::try_from(ts.tv_nsec).unwrap_or(0)
 }
 
 /// Waits for readiness on `fds` for at most `timeout_ms` (-1: forever).

@@ -15,4 +15,5 @@ pub mod handoff;
 mod mdns;
 pub mod play;
 pub mod scale;
+pub mod trace;
 pub mod video;

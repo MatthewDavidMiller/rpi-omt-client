@@ -40,6 +40,10 @@ pub struct Frame {
     pub audio: Option<AudioHeader>,
     pub buffer: Vec<u8>,
     pub len: usize,
+    /// `CLOCK_MONOTONIC` nanoseconds when the fixed header and the last
+    /// payload byte were read, for the opt-in latency trace.
+    pub header_ns: u64,
+    pub complete_ns: u64,
 }
 
 impl Frame {
@@ -94,6 +98,27 @@ pub fn resolve(ep: &Endpoint) -> Result<Vec<SocketAddr>, Error> {
 pub struct Channel {
     stream: Option<TcpStream>,
     pub frame: Frame,
+    partial: Partial,
+}
+
+/// A frame read so far. Reads resume from here, so a caller that only takes
+/// what has already arrived never has to wait out the rest of a frame that
+/// has merely started.
+#[derive(Debug, Default)]
+struct Partial {
+    fixed: [u8; HEADER_SIZE],
+    fixed_len: usize,
+    header: Option<FrameHeader>,
+    header_ns: u64,
+    body_len: usize,
+    /// When the frame must be complete: the body budget from its first byte.
+    budget_ms: u64,
+}
+
+impl Partial {
+    fn started(&self) -> bool {
+        self.fixed_len > 0
+    }
 }
 
 impl Channel {
@@ -106,6 +131,7 @@ impl Channel {
     }
 
     pub fn close(&mut self) {
+        self.partial = Partial::default();
         if let Some(s) = self.stream.take() {
             let _ = s.shutdown(std::net::Shutdown::Both);
         }
@@ -171,9 +197,23 @@ impl Channel {
 
     /// Reads the next frame into `self.frame`, closing the channel on
     /// anything but a would-block. The error explains every non-OK result.
+    /// A frame that has begun arriving is finished on the body budget even
+    /// past `deadline_ms`; one that has not begun is waited for until it.
     pub fn receive(&mut self, deadline_ms: u64) -> (Recv, Option<Error>) {
-        let (status, err) = self.receive_inner(deadline_ms);
-        // A deadline with nothing consumed leaves the channel usable;
+        self.finish(deadline_ms, true)
+    }
+
+    /// Completes a frame only from bytes the socket already holds, never
+    /// waiting. A frame still arriving stays partly read for the next call,
+    /// so a complete frame is never held back behind one that has merely
+    /// started; the body budget still bounds how long that frame may take.
+    pub fn receive_ready(&mut self) -> (Recv, Option<Error>) {
+        self.finish(0, false)
+    }
+
+    fn finish(&mut self, deadline_ms: u64, wait: bool) -> (Recv, Option<Error>) {
+        let (status, err) = self.receive_inner(deadline_ms, wait);
+        // A deadline leaves the channel usable, with any partial frame kept;
         // anything else means the stream is no longer trustworthy.
         if status != Recv::Ok && status != Recv::WouldBlock {
             self.close();
@@ -181,51 +221,91 @@ impl Channel {
         (status, err)
     }
 
-    fn receive_inner(&mut self, deadline_ms: u64) -> (Recv, Option<Error>) {
+    fn receive_inner(&mut self, deadline_ms: u64, wait: bool) -> (Recv, Option<Error>) {
         let Some(stream) = self.stream.as_mut() else {
             return (Recv::Error, Some(Error::new("OMT socket closed")));
         };
-        let mut fixed = [0_u8; HEADER_SIZE];
-        match read_exact(stream, &mut fixed, deadline_ms, true) {
-            (Recv::Ok, _) => {}
-            other => return other,
-        }
-        let header = match parse_frame_header(&fixed) {
-            Ok(h) => h,
-            Err(e) => return (Recv::Error, Some(Error::new(e.to_string()))),
-        };
-        let required = header.data_length as usize;
+        let p = &mut self.partial;
         let f = &mut self.frame;
-        // Grows the payload buffer in place. Only bytes it has never held
-        // are zeroed, and the read overwrites the rest.
-        if required > f.buffer.len() {
-            if f.buffer.try_reserve_exact(required - f.buffer.len()).is_err() {
-                return (Recv::Error, Some(Error::new("unable to allocate the bounded OMT frame")));
+        loop {
+            let target: &mut [u8] = match p.header {
+                None => &mut p.fixed[p.fixed_len..],
+                Some(h) => &mut f.buffer[p.body_len..h.data_length as usize],
+            };
+            // Never empty: a header-only frame completes as its header does.
+            match stream.read(target) {
+                Ok(0) => {
+                    return (Recv::Error, Some(Error::new("OMT source disconnected")));
+                }
+                Ok(n) => {
+                    if !p.started() {
+                        // This read is now committed to a frame, so the
+                        // polling slice stops bounding it.
+                        p.budget_ms = now_ms() + BODY_BUDGET_MS;
+                    }
+                    if p.header.is_none() {
+                        p.fixed_len += n;
+                        if p.fixed_len < HEADER_SIZE {
+                            continue;
+                        }
+                        p.header_ns = posix::monotonic_ns();
+                        let header = match parse_frame_header(&p.fixed) {
+                            Ok(h) => h,
+                            Err(e) => return (Recv::Error, Some(Error::new(e.to_string()))),
+                        };
+                        let required = header.data_length as usize;
+                        // Grows the payload buffer in place. Only bytes it
+                        // has never held are zeroed, and the read overwrites
+                        // the rest.
+                        if required > f.buffer.len() {
+                            if f.buffer.try_reserve_exact(required - f.buffer.len()).is_err() {
+                                return (
+                                    Recv::Error,
+                                    Some(Error::new("unable to allocate the bounded OMT frame")),
+                                );
+                            }
+                            f.buffer.resize(required, 0);
+                        }
+                        p.header = Some(header);
+                    } else {
+                        p.body_len += n;
+                    }
+                    if let Some(h) = p.header
+                        && p.body_len == h.data_length as usize
+                    {
+                        let header_ns = p.header_ns;
+                        *p = Partial::default();
+                        return complete(f, h, header_ns);
+                    }
+                }
+                Err(e) if e.kind() == ErrorKind::Interrupted => {}
+                Err(e) if e.kind() == ErrorKind::WouldBlock => {
+                    let started = p.started();
+                    if started && now_ms() >= p.budget_ms {
+                        return (
+                            Recv::TimedOut,
+                            Some(Error::new("OMT frame was truncated by a timeout")),
+                        );
+                    }
+                    let until =
+                        if started && wait { deadline_ms.max(p.budget_ms) } else { deadline_ms };
+                    let left = remaining_ms(until);
+                    if left == 0 {
+                        return (Recv::WouldBlock, Some(Error::new("OMT socket deadline expired")));
+                    }
+                    match poll_one(stream.as_raw_fd(), POLLIN, left) {
+                        // A signal: hand control back with the frame kept,
+                        // so a stop request is seen without waiting it out.
+                        Ok(0) if remaining_ms(until) > 0 => {
+                            return (Recv::WouldBlock, Some(Error::new("OMT read interrupted")));
+                        }
+                        Ok(_) => {}
+                        Err(e) => return (Recv::Error, Some(e.into())),
+                    }
+                }
+                Err(e) => return (Recv::Error, Some(e.into())),
             }
-            f.buffer.resize(required, 0);
         }
-        f.len = required;
-        // The fixed header committed this connection to a frame.
-        match read_exact(stream, &mut f.buffer[..required], deadline_ms, false) {
-            (Recv::Ok, _) => {}
-            (Recv::WouldBlock, e) => return (Recv::TimedOut, e),
-            other => return other,
-        }
-        f.video = None;
-        f.audio = None;
-        match header.frame_type {
-            FrameType::Video => match parse_video_header(&header, &f.buffer[..required]) {
-                Ok(v) => f.video = Some(v),
-                Err(e) => return (Recv::Error, Some(Error::new(e.to_string()))),
-            },
-            FrameType::Audio => match parse_audio_header(&header, &f.buffer[..required]) {
-                Ok(a) => f.audio = Some(a),
-                Err(e) => return (Recv::Error, Some(Error::new(e.to_string()))),
-            },
-            FrameType::Metadata => {}
-        }
-        f.header = Some(header);
-        (Recv::Ok, None)
     }
 
     /// Swaps the received frame out so a queue can own its payload, leaving
@@ -265,53 +345,28 @@ fn write_all_deadline(
     Ok(())
 }
 
-/// `resumable` marks a read that has consumed none of the frame, so the
-/// slice can expire without invalidating the connection. From the first
-/// byte on, the body budget applies instead.
-fn read_exact(
-    stream: &mut TcpStream,
-    target: &mut [u8],
-    slice_ms: u64,
-    resumable: bool,
-) -> (Recv, Option<Error>) {
-    let mut filled = 0;
-    let mut deadline = if resumable { slice_ms } else { body_deadline(slice_ms) };
-    while filled < target.len() {
-        let left = remaining_ms(deadline);
-        if left == 0 {
-            break;
-        }
-        match poll_one(stream.as_raw_fd(), POLLIN, left) {
-            Ok(0) => {
-                // Interrupted by a signal, or the wait elapsed. A signal
-                // mid-frame ends the read as a truncation.
-                if filled != 0 && remaining_ms(deadline) > 0 {
-                    break;
-                }
-                continue;
-            }
-            Ok(_) => {}
-            Err(e) => return (Recv::Error, Some(e.into())),
-        }
-        match stream.read(&mut target[filled..]) {
-            Ok(0) => return (Recv::Error, Some(Error::new("OMT source disconnected"))),
-            Ok(n) => {
-                // This read is now committed to a frame, so the polling
-                // slice stops bounding it.
-                if filled == 0 {
-                    deadline = body_deadline(slice_ms);
-                }
-                filled += n;
-            }
-            Err(e) if matches!(e.kind(), ErrorKind::Interrupted | ErrorKind::WouldBlock) => {}
-            Err(e) => return (Recv::Error, Some(e.into())),
-        }
+/// Validates a fully read frame's extended header and publishes it.
+fn complete(f: &mut Frame, header: FrameHeader, header_ns: u64) -> (Recv, Option<Error>) {
+    let required = header.data_length as usize;
+    f.len = required;
+    f.header_ns = header_ns;
+    f.complete_ns = posix::monotonic_ns();
+    f.video = None;
+    f.audio = None;
+    // The header is cleared until this frame validates, so a rejected frame
+    // can never be taken for the one before it.
+    f.header = None;
+    match header.frame_type {
+        FrameType::Video => match parse_video_header(&header, &f.buffer[..required]) {
+            Ok(v) => f.video = Some(v),
+            Err(e) => return (Recv::Error, Some(Error::new(e.to_string()))),
+        },
+        FrameType::Audio => match parse_audio_header(&header, &f.buffer[..required]) {
+            Ok(a) => f.audio = Some(a),
+            Err(e) => return (Recv::Error, Some(Error::new(e.to_string()))),
+        },
+        FrameType::Metadata => {}
     }
-    if filled == target.len() {
-        return (Recv::Ok, None);
-    }
-    if resumable && filled == 0 {
-        return (Recv::WouldBlock, Some(Error::new("OMT socket deadline expired")));
-    }
-    (Recv::TimedOut, Some(Error::new("OMT frame was truncated by a timeout")))
+    f.header = Some(header);
+    (Recv::Ok, None)
 }

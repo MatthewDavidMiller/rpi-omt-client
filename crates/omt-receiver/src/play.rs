@@ -20,6 +20,7 @@ use crate::channel::{Channel, Endpoint, Recv};
 use crate::connector::{self, Hdmi};
 use crate::discovery;
 use crate::handoff::{AUDIO_BYTE_CAP, Queue, QueueKind, VIDEO_BYTE_CAP};
+use crate::trace::{AudioTrace, LatencyTrace};
 use crate::video::{Present, VideoOutput};
 
 pub const AUDIO_STACK: usize = 128 * 1024;
@@ -40,8 +41,6 @@ pub const RECOVER_BACKOFF_MS: u64 = 250;
 pub const RECOVER_TIMEOUT_MS: u64 = 1000;
 /// The audio worker's wake interval while the ring is at its target.
 pub const AUDIO_FEED_MS: u64 = 20;
-/// Receive slice used to copy frames already in the kernel buffer.
-pub const DRAIN_SLICE_MS: u64 = 1;
 
 #[derive(Clone, Debug)]
 pub struct PlayOptions {
@@ -159,7 +158,8 @@ fn accept_frame(c: &mut Channel, q: &mut Queue, kind: FrameType, dropped: &mut u
     true
 }
 
-/// Reads frames already in the kernel buffer, each on the drain slice.
+/// Takes every frame the kernel buffer already holds in full, without
+/// waiting; a frame still arriving stays in the channel for the next call.
 fn drain_ready(
     c: &mut Channel,
     q: &mut Queue,
@@ -168,7 +168,7 @@ fn drain_ready(
     dropped: &mut u64,
 ) -> Result<(), Error> {
     loop {
-        match c.receive(now_ms() + DRAIN_SLICE_MS) {
+        match c.receive_ready() {
             (Recv::Ok, _) => *received |= accept_frame(c, q, kind, dropped),
             (Recv::WouldBlock, _) => return Ok(()),
             (_, e) => return Err(e.unwrap_or_else(|| Error::new("OMT receive failed"))),
@@ -177,18 +177,21 @@ fn drain_ready(
 }
 
 /// Copies every complete frame the socket will give without stalling the
-/// accept path, then waits until `wait_until` for the next one. Returns
-/// whether a frame of the wanted kind arrived.
+/// accept path, then waits until `wait_until` for the next one -- unless
+/// `take_ready` is set and a frame is already queued, which is then handed
+/// on at once rather than held while the next one arrives. Returns whether
+/// a frame of the wanted kind arrived.
 fn drain(
     c: &mut Channel,
     q: &mut Queue,
     kind: FrameType,
     wait_until: u64,
+    take_ready: bool,
     dropped: &mut u64,
 ) -> Result<bool, Error> {
     let mut received = false;
     drain_ready(c, q, kind, &mut received, dropped)?;
-    if remaining_ms(wait_until) == 0 {
+    if remaining_ms(wait_until) == 0 || (take_ready && !q.is_empty()) {
         return Ok(received);
     }
     match c.receive(wait_until) {
@@ -232,11 +235,13 @@ fn audio_session(ctx: &AudioContext, log: &mut StatusLog) -> Error {
     let mut stall_at = now_ms() + MEDIA_STALL_MS;
     let mut queue = Queue::new(QueueKind::Audio, AUDIO_BYTE_CAP);
     let mut trimmed = 0;
+    let mut trace = AudioTrace::from_env();
     while ctx.wanted() {
         // Paced by the device, not the wall clock: while audio is queued and
         // the ring is full, wake once a period.
         let wait_until = now_ms() + if queue.is_empty() { RECEIVE_SLICE_MS } else { AUDIO_FEED_MS };
-        match drain(&mut channel, &mut queue, FrameType::Audio, wait_until, &mut trimmed) {
+        // Audio is paced by the device, so it keeps waiting out its slice.
+        match drain(&mut channel, &mut queue, FrameType::Audio, wait_until, false, &mut trimmed) {
             Ok(true) => stall_at = now_ms() + MEDIA_STALL_MS,
             Err(e) if !channel.connected() => return e,
             Ok(false) | Err(_) => {}
@@ -247,6 +252,12 @@ fn audio_session(ctx: &AudioContext, log: &mut StatusLog) -> Error {
         while output.room() {
             let Some(frame) = queue.pop() else { break };
             let result = output.write(&frame, &ctx.device);
+            if result.is_ok()
+                && let Some(t) = trace.as_mut()
+            {
+                let queued = output.queued_frames().unwrap_or(0);
+                t.written(&frame, queued, output.sample_rate().unwrap_or(0), output.underruns());
+            }
             queue.recycle(frame.buffer);
             if let Err(e) = result {
                 return e;
@@ -369,11 +380,13 @@ fn session(
     let mut running = RunningDetail::default();
     let mut queue = Queue::new(QueueKind::Video, VIDEO_BYTE_CAP);
     let mut failure: Option<Error> = None;
+    let mut trace = LatencyTrace::from_env();
 
     // No playout clock: each frame is decoded and flipped as soon as it
     // arrives, and the display's own refresh is the only pacing. While a
     // frame is being decoded, whatever arrives behind it waits in the
-    // socket; the next drain keeps only the newest of those.
+    // socket; the next drain keeps only the newest of those that are
+    // complete, and leaves one still arriving to finish behind the display.
     while !stopped(stop) {
         if now_ms() >= next_connector_check {
             next_connector_check = now_ms() + CONNECTOR_POLL_MS;
@@ -387,6 +400,7 @@ fn session(
             &mut queue,
             FrameType::Video,
             now_ms() + RECEIVE_SLICE_MS,
+            true,
             &mut dropped,
         ) {
             Ok(received) => {
@@ -446,6 +460,11 @@ fn session(
         if let Some(frame) = queue.pop() {
             let interlaced = frame.video.is_some_and(|v| v.flags & 1 != 0);
             let outcome = output.present(&frame);
+            if outcome == Present::Presented
+                && let Some(t) = trace.as_mut()
+            {
+                t.presented(&frame, &output.stamps, dropped);
+            }
             queue.recycle(frame.buffer);
             match outcome {
                 Present::Presented | Present::Skipped => {

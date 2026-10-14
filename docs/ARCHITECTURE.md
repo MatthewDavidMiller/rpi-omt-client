@@ -196,6 +196,16 @@ modes outside the fixed 1920x1080 envelope are never selected. Only a display
 offering no usable mode at all is now reported as `unsupported-format`, and the
 running status names both sizes so a resample is visible rather than silent.
 
+Among modes of the chosen size, a source below 40 fps goes out at twice its
+rate when the display offers it: 30 fps at 60 Hz, 25 at 50, 29.97 at 59.94.
+Each frame is then shown for exactly two refreshes, so motion is as even as at
+the source rate, but a frame waits half as long for the vblank that puts it on
+screen and is scanned onto the panel in half the time. Measured on a Pi 4 with
+1080p30 over Wi-Fi, the flip wait fell from 18.1 ms to 9.0 ms and the mean
+time from send to vblank from 55.3 ms to 46.6 ms; the halved scanout takes
+about another 8 ms off the average pixel. Otherwise selection takes the rate
+asked for, its nearest whole rate, then 60 Hz, then the fastest on offer.
+
 On the Pi 4 and Pi 5 the colour conversion and that resample are not done on
 the CPU at all. Both boards scan out through the HVS, which converts YCbCr and
 scales planes in hardware, so the receiver hands it what the decoder already
@@ -260,6 +270,18 @@ Buffer and period sizes are read back from the device after `hw_params` rather
 than derived from the times requested, because the device refines both and the
 start threshold has to be expressed in the frames it actually chose.
 
+The threshold is where audio latency starts, not where it stays. Sender and
+sink run at the same rate, so audio banked by a burst after a Wi-Fi stall is
+never drained: the ring is topped up toward 160 ms and keeps whatever it got.
+Measured on a Pi 4 over 5 GHz Wi-Fi with HDMI audio playing, audio left the
+speaker 106 ms after its fastest delivery in calm periods and 143 ms after a
+run of bursts. Shedding that surplus was tried and rejected: capping the ring
+at the 100 ms threshold, with the queue in front of it shedding past 40 ms, cut
+the mean to 95 ms but turned 0 underruns in nine minutes into 4, and an 80 ms
+cap gave 84 ms with 22. On that link the delay audio blocks see is 30 ms at the
+99th percentile and 60 to 100 ms at the 99.9th, so the extra depth after a burst
+is what was absorbing the next one.
+
 Recovered underruns are counted for the life of the audio session and named in
 the running status. An underrun is a gap in the sound, so reporting the count
 is what separates a starved sink from a link dropping the audio stream
@@ -287,6 +309,25 @@ The first byte consumed now switches the read onto its own frame budget of six
 seconds, which still ends a sender that genuinely stops talking mid-frame and
 covers the 3.5 s Wi-Fi stalls measured against vMix. `control-omt.sh` waits
 eight seconds after SIGTERM so that budget cannot outlive a shutdown.
+
+A frame read is also resumable: what has arrived of a frame stays in the
+channel between calls, so the budget is the only thing that ends a slow frame.
+That is what lets the video loop take only frames that are already complete.
+After each frame it collects whatever else the socket holds in full, without
+waiting, and hands the newest straight to the display; a frame whose header
+has landed but whose body is still on the air is left to finish behind the
+decode. The loop used to wait a millisecond for the next frame's header and
+then commit to reading that frame to the end. On a link carrying frames back
+to back that wait always found one, so a complete frame was replaced by one
+still arriving, again and again. Measured on a Pi 4 over 5 GHz Wi-Fi, against
+a sender that keeps libomtnet's four sends in flight and drops past them, with
+both builds offered 1080p30 and 1080p60 modes: alternating 268 KB and 18 KB
+1080p30 frames (34 Mb/s), the old loop showed 49% of frames and the picture
+on screen averaged 68.3 ms old at its vblank, against 99.5% and 61.2 ms now,
+updated every 33 ms instead of every 68 ms. With every frame 268 KB (64 Mb/s,
+more than that link carries) the old loop showed 3% of frames, about one a
+second, and the picture averaged 850 ms old; it now shows 72%, the rest
+dropped by the sender, at 79 ms.
 
 TCP reads stay greedy: OMT requires the receiver never block when accepting
 data. There is no playout buffer. An OMT sender keeps none, so frames held on

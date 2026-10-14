@@ -239,6 +239,20 @@ pub struct VideoOutput {
     connector_id: u32,
     rejected: Option<(VideoFormat, String)>,
     ceiling: VideoCeiling,
+    /// `CLOCK_MONOTONIC` instants of the last presented frame, for the
+    /// opt-in latency trace.
+    pub stamps: Stamps,
+}
+
+/// When the last presented frame started decoding, finished decoding, and
+/// had its flip queued, and when the most recent flip reached the screen
+/// (the vblank DRM reports). Nanoseconds on `CLOCK_MONOTONIC`.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Stamps {
+    pub decode_start: u64,
+    pub decoded: u64,
+    pub queued: u64,
+    pub vblank: u64,
 }
 
 pub fn describe_presentation(
@@ -304,10 +318,19 @@ fn usable(s: &ModeShape) -> bool {
         && usize::from(s.height) <= MAX_HEIGHT
 }
 
-/// The best refresh among candidate modes: the rate asked for, its nearest
-/// whole rate, then 60 Hz, then the fastest on offer.
+/// Below this, a source rate is shown at twice its rate when the display
+/// offers that: 25 and 30 fps go out at 50 and 60 Hz.
+pub const DOUBLED_RATE_BELOW: f64 = 40.0;
+
+/// The best refresh among candidate modes: twice a low rate asked for, the
+/// rate asked for, its nearest whole rate, then 60 Hz, then the fastest on
+/// offer. Doubling repeats every frame exactly twice, so motion is as even
+/// as at the source rate, while a frame waits half as long for the next
+/// refresh and is scanned onto the screen in half the time.
 fn best_rate(shapes: &[ModeShape], candidates: &[usize], requested: f64) -> Option<usize> {
-    for expected in [requested, requested.round(), 60.0] {
+    let doubled =
+        if requested > 0.0 && requested < DOUBLED_RATE_BELOW { requested * 2.0 } else { f64::NAN };
+    for expected in [doubled, requested, requested.round(), 60.0] {
         if let Some(&i) =
             candidates.iter().find(|&&i| (shapes[i].refresh - expected).abs() < RATE_TOLERANCE)
         {
@@ -635,7 +658,14 @@ impl VideoOutput {
         {
             return Err(Error::new("DRM device does not support dumb buffers"));
         }
-        Ok(Self { cfg: None, file, connector_id, rejected: None, ceiling: ceiling.clone() })
+        Ok(Self {
+            cfg: None,
+            file,
+            connector_id,
+            rejected: None,
+            ceiling: ceiling.clone(),
+            stamps: Stamps::default(),
+        })
     }
 
     fn fd(&self) -> i32 {
@@ -674,6 +704,19 @@ impl VideoOutput {
                             break;
                         }
                         if kind == drm::DRM_EVENT_FLIP_COMPLETE {
+                            // drm_event_vblank: tv_sec and tv_usec follow the
+                            // 8-byte header and the 8-byte user data.
+                            if length >= 24 {
+                                let word = |o: usize| {
+                                    u64::from(u32::from_ne_bytes([
+                                        buffer[at + o],
+                                        buffer[at + o + 1],
+                                        buffer[at + o + 2],
+                                        buffer[at + o + 3],
+                                    ]))
+                                };
+                                self.stamps.vblank = word(16) * 1_000_000_000 + word(20) * 1000;
+                            }
                             return Ok(());
                         }
                         at += length;
@@ -910,6 +953,7 @@ impl VideoOutput {
             return Present::Failed("Video output is not configured".to_owned());
         };
         let next = (c.front + 1) % c.surfaces.len();
+        self.stamps.decode_start = posix::monotonic_ns();
         if let Err(e) = c.decoder.load(compressed) {
             return classify_decode(e, c.presented, &mut c.skips);
         }
@@ -947,6 +991,7 @@ impl VideoOutput {
             return classify_decode(e, c.presented, &mut c.skips);
         }
         let framebuffer = c.surfaces[next].framebuffer;
+        self.stamps.decoded = posix::monotonic_ns();
         if let Err(detail) = self.retire_flip() {
             return Present::Failed(detail);
         }
@@ -972,6 +1017,7 @@ impl VideoOutput {
         if let Err(e) = queued {
             return Present::Failed(os_detail("Unable to queue DRM page flip", &e));
         }
+        self.stamps.queued = posix::monotonic_ns();
         c.front = next;
         c.flip_pending = true;
         c.presented = true;

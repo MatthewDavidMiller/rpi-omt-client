@@ -111,6 +111,18 @@ impl AudioOutput {
         self.underruns
     }
 
+    /// Frames queued in the ring ahead of the speaker, if the device can say.
+    pub fn queued_frames(&mut self) -> Option<u64> {
+        let o = self.open.as_mut()?;
+        let avail = u64::try_from(o.pcm.avail_update()).ok()?;
+        Some(o.buffer_frames.saturating_sub(avail))
+    }
+
+    /// The open device's sample rate, if one is open.
+    pub fn sample_rate(&self) -> Option<i32> {
+        self.open.as_ref().map(|o| o.sample_rate)
+    }
+
     /// Whether the ring holds less than the fill target (or cannot say).
     pub fn room(&mut self) -> bool {
         let Some(o) = self.open.as_mut() else { return true };

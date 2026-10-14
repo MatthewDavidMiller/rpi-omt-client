@@ -437,7 +437,26 @@ decode throughput, so a pass on one is not evidence for another:
     freezes rather than tearing or going black, that audio continues, that the
     playing detail counts the skips, and that a sustained run ends the session
     with `VMX decoder rejected 21 consecutive frames` rather than freezing
-    indefinitely on `running`.
+    indefinitely on `running`;
+12. measure latency over the Wi-Fi link rather than inferring it. Setting
+    `OMT_LATENCY_TRACE=/tmp/latency.csv` in the container's environment (a
+    Compose override file is enough) makes the receiver append one CSV row per
+    presented video frame: the sender's timestamp in 100 ns ticks, then
+    `CLOCK_MONOTONIC` nanoseconds for the fixed header read, the last payload
+    byte, decode start and end, the flip queued, and the vblank that put the
+    frame on screen, then the running count of frames replaced before display.
+    Audio goes to the same path plus `.audio`: the sender timestamp, the last
+    byte, the ring write, the frames then queued ahead of the speaker, the sample
+    rate, and underruns so far. Rows are buffered and written 64 at a time, and
+    nothing runs while the variable is unset. Sender and Pi clocks differ by an
+    offset and a slow drift, so compare runs by delay above each run's fastest
+    delivery, with the drift fitted out, and interleave the runs being compared,
+    because Wi-Fi conditions move by more than most single changes do. With a
+    forced connector (step 7) a debugfs EDID override
+    (`/sys/kernel/debug/dri/0/HDMI-A-1/edid_override`, then toggling the
+    connector's sysfs `status` to `detect` and back to `on`) gives the headless
+    board a mode list and an audio-capable sink, so mode choice and HDMI audio
+    are measured on a Pi without a monitor.
 
 Useful commands are in `docs/OPERATIONS.md`. Any release not completing this
 physical tier must state the skipped Pi-specific checks.
