@@ -2,6 +2,24 @@
 //! active channels; inactive channels are silence and absent from the body,
 //! so the interleaver writes zeros for them without advancing the source
 //! cursor.
+//!
+//! Audio a sender dropped before sending is concealed with silence. The
+//! frames after a hole would otherwise be written straight behind the ones
+//! before it, the ring would hold that much less than the sender's timeline
+//! says it should, and nothing ever gives the depth back: sender and sink
+//! run at the same rate. vMix drops audio whenever its send pool fills, which
+//! over Wi-Fi is about a second a minute, so without this the cushion bled
+//! away until ordinary jitter ran the ring dry.
+//!
+//! The ring is never allowed to run dry either. Over HDMI an underrun is not
+//! a short gap: ALSA stops the stream, recovery re-prepares it, and the sink
+//! drops audio lock and has to find it again, which a television plays as a
+//! loud crack followed by a mute. Arriving late every second or two, which
+//! Wi-Fi alone produces, that left nothing audible but the cracks. So when
+//! the ring runs low with nothing to play, the worker keeps the stream going
+//! with silence. The audio that then arrives late plays behind it, which
+//! rebuilds the cushion the next late burst needs; the fill target and the
+//! backlog shed bound the latency that adds, as a restart's prefill did.
 
 use omt_common::Error;
 use omt_common::timefmt::now_ms;
@@ -21,6 +39,15 @@ pub const PREFILL_MS: i64 = 100;
 /// ring size.
 pub const RING_TARGET_MS: i64 = 160;
 pub const WRITE_TIMEOUT_MS: u64 = 1000;
+/// The longest hole in the sender's timeline concealed with silence. Past
+/// this the timestamps were reset, not frames lost.
+pub const CONCEAL_MAX_MS: i64 = 1000;
+/// The ring depth below which a starved, playing stream is topped up with
+/// silence: three periods, so a worker waking once a period still gets there
+/// before the device runs dry when the decoder delays its wake by a period.
+pub const KEEPALIVE_MS: i64 = 60;
+/// OMT timestamps count 100 ns ticks.
+pub const TICKS_PER_SECOND: i64 = 10_000_000;
 const EAGAIN: i64 = 11;
 
 /// The start threshold: the prefill at this rate, never less than one period
@@ -37,6 +64,32 @@ pub fn target_frames(sample_rate: i32, buffer_frames: i64, start: i64) -> i64 {
     let wanted = if sample_rate > 0 { i64::from(sample_rate) * RING_TARGET_MS / 1000 } else { 0 };
     let ceiling = buffer_frames.max(start);
     wanted.clamp(start, ceiling)
+}
+
+/// The sender timestamp one frame of `samples` at `rate` ends on, which is
+/// where the next frame starts when none was lost.
+pub fn end_timestamp(timestamp: i64, samples: i64, rate: i32) -> Option<i64> {
+    if rate <= 0 || samples <= 0 {
+        return None;
+    }
+    let ticks = samples.checked_mul(TICKS_PER_SECOND)? / i64::from(rate);
+    timestamp.checked_add(ticks)
+}
+
+/// Frames of silence standing in for audio missing between `expected` and
+/// a frame stamped `timestamp`. Only a hole of at least three quarters of
+/// this frame counts, so a sender whose stamps jitter is never padded, and
+/// a jump back or past [`CONCEAL_MAX_MS`] is a new timeline rather than a
+/// loss.
+pub fn missing_frames(expected: i64, timestamp: i64, rate: i32, samples: i64) -> i64 {
+    let Some(ticks) = timestamp.checked_sub(expected) else { return 0 };
+    if rate <= 0 || samples <= 0 || ticks <= 0 || ticks > CONCEAL_MAX_MS * (TICKS_PER_SECOND / 1000)
+    {
+        return 0;
+    }
+    // Bounded above by the cap times the rate, far inside i64.
+    let frames = ticks * i64::from(rate) / TICKS_PER_SECOND;
+    if frames * 4 < samples * 3 { 0 } else { frames }
 }
 
 /// Interleaves planar float samples into `out`, which holds at least
@@ -85,6 +138,11 @@ struct Open {
     channels: i32,
     buffer_frames: u64,
     target_frames: u64,
+    start_frames: u64,
+    period_frames: u64,
+    /// The device has reached its start threshold and is playing, so it
+    /// must be kept fed.
+    playing: bool,
 }
 
 #[derive(Default)]
@@ -94,11 +152,22 @@ pub struct AudioOutput {
     /// Underruns recovered this session. Every one is a gap the operator
     /// heard, so it is counted and survives a reopen.
     underruns: u64,
+    /// Where the sender's timeline says the next frame starts, while the
+    /// ring is continuous with it.
+    next_timestamp: Option<i64>,
+    /// Frames of silence written in place of audio the sender dropped.
+    concealed: u64,
+    /// Starved since the last frame was written, so a run of top-ups is
+    /// counted once.
+    starving: bool,
 }
 
 impl std::fmt::Debug for AudioOutput {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("AudioOutput").field("underruns", &self.underruns).finish_non_exhaustive()
+        f.debug_struct("AudioOutput")
+            .field("underruns", &self.underruns)
+            .field("concealed", &self.concealed)
+            .finish_non_exhaustive()
     }
 }
 
@@ -109,6 +178,54 @@ impl AudioOutput {
 
     pub fn underruns(&self) -> u64 {
         self.underruns
+    }
+
+    pub fn concealed(&self) -> u64 {
+        self.concealed
+    }
+
+    /// Whether the device is playing and so must be fed by the worker's
+    /// next wake, not whenever audio happens to arrive.
+    pub fn playing(&self) -> bool {
+        self.open.as_ref().is_some_and(|o| o.playing)
+    }
+
+    /// Keeps a playing stream from running dry: below [`KEEPALIVE_MS`] it
+    /// writes a period of silence. A starvation is a gap the operator hears, so each one is counted
+    /// with the underruns; it is just no longer a restart.
+    pub fn keep_alive(&mut self) -> Result<(), Error> {
+        let Some(o) = self.open.as_mut() else { return Ok(()) };
+        if !o.playing {
+            return Ok(());
+        }
+        // An underrun or suspend: the write path recovers it.
+        let Ok(avail) = u64::try_from(o.pcm.avail_update()) else { return Ok(()) };
+        let used = o.buffer_frames.saturating_sub(avail);
+        let low = u64::try_from(i64::from(o.sample_rate) * KEEPALIVE_MS / 1000).unwrap_or(0);
+        if used >= low {
+            return Ok(());
+        }
+        let channels = o.channels.unsigned_abs() as usize;
+        let frames = usize::try_from(o.period_frames).unwrap_or(0).max(1);
+        let required = frames * channels;
+        if required > self.interleaved.len() {
+            self.interleaved
+                .try_reserve_exact(required - self.interleaved.len())
+                .map_err(|_| Error::new("Unable to allocate bounded audio buffer"))?;
+            self.interleaved.resize(required, 0.0);
+        }
+        self.interleaved[..required].fill(0.0);
+        if !self.starving {
+            self.starving = true;
+            self.underruns = self.underruns.saturating_add(1);
+        }
+        self.play(0, frames, channels)
+    }
+
+    /// Breaks continuity with the sender's timeline, so the next frame is
+    /// not padded: the gap before it was made here, by shedding a backlog.
+    pub fn forget_timeline(&mut self) {
+        self.next_timestamp = None;
     }
 
     /// Frames queued in the ring ahead of the speaker, if the device can say.
@@ -135,6 +252,7 @@ impl AudioOutput {
 
     fn configure(&mut self, device: &str, rate: i32, channels: i32) -> Result<(), Error> {
         self.open = None;
+        self.next_timestamp = None;
         let mut pcm = Pcm::open(device)
             .map_err(|rc| alsa_error("Unable to open audio device", "snd_pcm_open", rc))?;
         let (buffer, period) = pcm
@@ -159,7 +277,11 @@ impl AudioOutput {
             channels,
             buffer_frames: buffer,
             target_frames: target.unsigned_abs(),
+            start_frames: start.unsigned_abs(),
+            period_frames: period,
+            playing: false,
         });
+        self.starving = false;
         Ok(())
     }
 
@@ -186,15 +308,49 @@ impl AudioOutput {
         let body = frame
             .media(AUDIO_HEADER_SIZE as usize)
             .ok_or_else(|| Error::new("truncated OMT audio frame"))?;
+        let timestamp = frame.header.map(|f| f.timestamp);
+        let mut silence = self.silence_frames(timestamp, h.sample_rate, samples);
+        if silence > 0 {
+            self.interleaved[..required].fill(0.0);
+            self.concealed =
+                self.concealed.saturating_add(u64::try_from(silence).unwrap_or(u64::MAX));
+            while silence > 0 {
+                let chunk = silence.min(samples);
+                self.play(0, chunk, channels)?;
+                silence -= chunk;
+            }
+        }
         interleave(body, h.active_channels, samples, channels, &mut self.interleaved)?;
-        self.play(samples, channels)
+        self.starving = false;
+        self.play(0, samples, channels)?;
+        self.next_timestamp = timestamp.and_then(|t| {
+            end_timestamp(t, i64::try_from(samples).unwrap_or(i64::MAX), h.sample_rate)
+        });
+        Ok(())
     }
 
-    fn play(&mut self, samples: usize, channels: usize) -> Result<(), Error> {
+    /// Silence owed before a frame stamped `timestamp`, no more than the ring
+    /// can take alongside the frame itself. A ring that already ran dry gets
+    /// none: the underrun spent that time, and padding it again would only
+    /// add latency.
+    fn silence_frames(&mut self, timestamp: Option<i64>, rate: i32, samples: usize) -> usize {
+        let (Some(expected), Some(timestamp), Some(o)) =
+            (self.next_timestamp, timestamp, self.open.as_mut())
+        else {
+            return 0;
+        };
+        let Ok(free) = usize::try_from(o.pcm.avail_update()) else { return 0 };
+        let wanted =
+            missing_frames(expected, timestamp, rate, i64::try_from(samples).unwrap_or(i64::MAX));
+        usize::try_from(wanted).unwrap_or(0).min(free.saturating_sub(samples))
+    }
+
+    /// Writes interleaved frames `from..samples` of the scratch buffer.
+    fn play(&mut self, from: usize, samples: usize, channels: usize) -> Result<(), Error> {
         let Some(o) = self.open.as_mut() else {
             return Err(Error::new("audio device is not open"));
         };
-        let mut offset = 0;
+        let mut offset = from;
         let mut stalled_since: Option<u64> = None;
         // One frame needing several recoveries is still one gap, counted
         // once.
@@ -231,8 +387,14 @@ impl AudioOutput {
                     )));
                 }
                 recovered = true;
+                o.playing = false;
                 stall(&mut o.pcm, &mut stalled_since)?;
             }
+        }
+        if !o.playing
+            && let Ok(avail) = u64::try_from(o.pcm.avail_update())
+        {
+            o.playing = o.buffer_frames.saturating_sub(avail) >= o.start_frames;
         }
         if recovered {
             self.underruns = self.underruns.saturating_add(1);

@@ -203,6 +203,14 @@ impl Channel {
         self.finish(deadline_ms, true)
     }
 
+    /// Waits until `deadline_ms` for a frame to complete, and no longer even
+    /// once one has begun: a frame still arriving stays partly read for the
+    /// next call, with the body budget still bounding how long it may take.
+    /// For a caller with something else due at its deadline.
+    pub fn receive_until(&mut self, deadline_ms: u64) -> (Recv, Option<Error>) {
+        self.finish(deadline_ms, false)
+    }
+
     /// Completes a frame only from bytes the socket already holds, never
     /// waiting. A frame still arriving stays partly read for the next call,
     /// so a complete frame is never held back behind one that has merely

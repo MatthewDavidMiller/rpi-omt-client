@@ -282,10 +282,50 @@ cap gave 84 ms with 22. On that link the delay audio blocks see is 30 ms at the
 99th percentile and 60 to 100 ms at the 99.9th, so the extra depth after a burst
 is what was absorbing the next one.
 
-Recovered underruns are counted for the life of the audio session and named in
+Audio the sender dropped is concealed with silence rather than closed up. vMix
+drops audio, not only video, when its send pool fills, and the frames after the
+hole carry timestamps that say so. Writing them straight behind the frames
+before the hole took that much depth out of the ring for good, because nothing
+at an equal send and play rate ever puts it back. Measured on a Pi 5 over
+5 GHz Wi-Fi against vMix sending 1080p30 (about 87 Mb/s of video), the sender
+dropped about a second of audio a minute, the cushion bled away, and ordinary
+50 ms jitter then ran the ring dry: 39 underruns in two minutes. The worker
+now writes silence for the missing span, so later audio keeps its place in
+time. It inserts silence only for a hole of at least three quarters of a
+frame, so a sender whose timestamps jitter is never padded. It inserts nothing
+for a jump back or past a second, which is a new timeline, nothing for a ring
+that already underran, because the underrun spent that time, and nothing for
+the gap the backlog shed below just made. The silence never exceeds what the
+ring can take alongside the frame.
+
+A playing stream is never left to run dry. Over HDMI an underrun is not a short
+gap: ALSA stops the stream, recovery re-prepares it, and the sink loses audio
+lock and has to find it again, which a television plays as a loud crack and
+then a mute. On the same Pi 5 the stream restarted 16 to 131 times every two
+minutes, under both this receiver and 2.0.4, and the operator heard no program
+audio at all, only cracks. Prefill was never the problem; the restart was. So
+once the device is playing, the worker wakes once a period even with nothing
+queued, and when the ring falls below 60 ms with nothing to play it writes a
+period of silence. The audio that then arrives late plays behind that silence,
+which rebuilds the cushion the next late burst needs; the 160 ms fill target
+and the 100 ms backlog shed bound the latency that adds, as a restart's prefill
+did. On the same link that took the stream from dozens of restarts every two
+minutes to none, leaving five brief silences. A genuine underrun, a worker that
+missed its wake by more than two periods, still recovers and is counted. The
+wake has to be kept even while an audio frame is half arrived: a frame that has
+begun is otherwise finished on the six-second body budget, and a Wi-Fi stall
+mid-frame held the worker in that read while the ring ran dry. Frames are
+resumable, so the worker's read ends at its own deadline and leaves the rest of
+the frame for the next one.
+
+Recovered underruns and starvations are counted for the life of the audio session and named in
 the running status. An underrun is a gap in the sound, so reporting the count
 is what separates a starved sink from a link dropping the audio stream
-outright — the two are indistinguishable in the room.
+outright — the two are indistinguishable in the room. The document carries one
+detail, and while video plays it is the video session's, so the count is
+appended there; it used to be published only in the audio worker's own detail,
+which the document shows only once audio has failed, so no operator ever saw
+it.
 
 The PCM is opened non-blocking, so a momentarily full ring buffer answers a
 write with `EAGAIN`. That is back-pressure and it happens in steady playback

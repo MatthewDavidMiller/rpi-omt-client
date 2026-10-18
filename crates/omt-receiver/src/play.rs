@@ -4,7 +4,7 @@
 
 use std::fmt::Write as _;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
@@ -118,18 +118,35 @@ pub fn describe_running(base: &str, reconnects: u64, skipped: u64, dropped: u64)
 /// The running detail, rebuilt only when something it names changes.
 #[derive(Debug, Default)]
 pub struct RunningDetail {
-    key: Option<(String, u64, u64, u64)>,
+    key: Option<(String, u64, u64, u64, u64)>,
     text: String,
 }
 
 impl RunningDetail {
     pub fn get(&mut self, base: &str, reconnects: u64, skipped: u64, dropped: u64) -> &str {
-        let current = self.key.as_ref().is_some_and(|(b, r, s, d)| {
-            b == base && *r == reconnects && *s == skipped && *d == dropped
+        self.get_with_audio(base, reconnects, skipped, dropped, 0)
+    }
+
+    /// As [`Self::get`], also naming the audio worker's underruns. The
+    /// document carries one detail, the video session's while it plays, so
+    /// this is the only place a running audio session's gaps can show.
+    pub fn get_with_audio(
+        &mut self,
+        base: &str,
+        reconnects: u64,
+        skipped: u64,
+        dropped: u64,
+        underruns: u64,
+    ) -> &str {
+        let current = self.key.as_ref().is_some_and(|(b, r, s, d, u)| {
+            b == base && *r == reconnects && *s == skipped && *d == dropped && *u == underruns
         });
         if !current {
             self.text = describe_running(base, reconnects, skipped, dropped);
-            self.key = Some((base.to_owned(), reconnects, skipped, dropped));
+            if underruns > 0 {
+                let _ = write!(self.text, " {underruns} audio underrun(s) in this session.");
+            }
+            self.key = Some((base.to_owned(), reconnects, skipped, dropped, underruns));
         }
         &self.text
     }
@@ -179,14 +196,17 @@ fn drain_ready(
 /// Copies every complete frame the socket will give without stalling the
 /// accept path, then waits until `wait_until` for the next one -- unless
 /// `take_ready` is set and a frame is already queued, which is then handed
-/// on at once rather than held while the next one arrives. Returns whether
-/// a frame of the wanted kind arrived.
+/// on at once rather than held while the next one arrives. With `punctual`
+/// the wait ends at `wait_until` even mid-frame, for a caller with work due
+/// then; otherwise a frame that has begun is finished on its body budget.
+/// Returns whether a frame of the wanted kind arrived.
 fn drain(
     c: &mut Channel,
     q: &mut Queue,
     kind: FrameType,
     wait_until: u64,
     take_ready: bool,
+    punctual: bool,
     dropped: &mut u64,
 ) -> Result<bool, Error> {
     let mut received = false;
@@ -194,7 +214,8 @@ fn drain(
     if remaining_ms(wait_until) == 0 || (take_ready && !q.is_empty()) {
         return Ok(received);
     }
-    match c.receive(wait_until) {
+    let next = if punctual { c.receive_until(wait_until) } else { c.receive(wait_until) };
+    match next {
         (Recv::Ok, _) => {
             received |= accept_frame(c, q, kind, dropped);
             drain_ready(c, q, kind, &mut received, dropped)?;
@@ -213,6 +234,8 @@ struct AudioContext {
     connector: Connector,
     status: Arc<PlaybackStatus>,
     active: AtomicBool,
+    /// The current audio session's underruns, for the video session's detail.
+    underruns: AtomicU64,
     stop: &'static AtomicBool,
 }
 
@@ -230,6 +253,7 @@ fn audio_session(ctx: &AudioContext, log: &mut StatusLog) -> Error {
         return e;
     }
     let mut output = AudioOutput::new();
+    ctx.underruns.store(0, Ordering::Relaxed);
     let mut detail = describe_audio(0);
     let mut reported = 0;
     let mut stall_at = now_ms() + MEDIA_STALL_MS;
@@ -239,12 +263,29 @@ fn audio_session(ctx: &AudioContext, log: &mut StatusLog) -> Error {
     while ctx.wanted() {
         // Paced by the device, not the wall clock: while audio is queued and
         // the ring is full, wake once a period.
-        let wait_until = now_ms() + if queue.is_empty() { RECEIVE_SLICE_MS } else { AUDIO_FEED_MS };
-        // Audio is paced by the device, so it keeps waiting out its slice.
-        match drain(&mut channel, &mut queue, FrameType::Audio, wait_until, false, &mut trimmed) {
+        // A playing device is also fed on time when nothing arrives, so the
+        // stream is never let run dry.
+        let wait_until = now_ms()
+            + if queue.is_empty() && !output.playing() { RECEIVE_SLICE_MS } else { AUDIO_FEED_MS };
+        // Audio is paced by the device, so it keeps waiting out its slice,
+        // but no further: a frame stalled mid-air must not hold the worker
+        // past the wake that keeps a playing ring from running dry.
+        let shed = trimmed;
+        match drain(
+            &mut channel,
+            &mut queue,
+            FrameType::Audio,
+            wait_until,
+            false,
+            true,
+            &mut trimmed,
+        ) {
             Ok(true) => stall_at = now_ms() + MEDIA_STALL_MS,
             Err(e) if !channel.connected() => return e,
             Ok(false) | Err(_) => {}
+        }
+        if trimmed != shed {
+            output.forget_timeline();
         }
         // An empty queue is the steady state: what arrived is already in the
         // ring. The underrun that matters is ALSA's.
@@ -264,8 +305,12 @@ fn audio_session(ctx: &AudioContext, log: &mut StatusLog) -> Error {
             }
             written = true;
         }
+        if let Err(e) = output.keep_alive() {
+            return e;
+        }
         if output.underruns() != reported {
             reported = output.underruns();
+            ctx.underruns.store(reported, Ordering::Relaxed);
             detail = describe_audio(reported);
         }
         if written {
@@ -321,6 +366,7 @@ impl AudioWorker {
             connector: connector.describe(),
             status: Arc::clone(status),
             active: AtomicBool::new(true),
+            underruns: AtomicU64::new(0),
             stop,
         });
         // Process signals stay with the main thread.
@@ -401,6 +447,7 @@ fn session(
             FrameType::Video,
             now_ms() + RECEIVE_SLICE_MS,
             true,
+            false,
             &mut dropped,
         ) {
             Ok(received) => {
@@ -471,11 +518,12 @@ fn session(
                     if outcome == Present::Skipped {
                         skipped += 1;
                     }
-                    let text = running.get(
+                    let text = running.get_with_audio(
                         output.presentation_detail(interlaced),
                         reconnects,
                         skipped,
                         dropped,
+                        audio.ctx.underruns.load(Ordering::Relaxed),
                     );
                     log.note(status.video(VideoState::Running, text, &described));
                 }

@@ -22,7 +22,10 @@ use omt_common::timefmt::{now_ms, remaining_ms};
 use omt_protocol::{
     AudioHeader, FrameHeader, FrameType, VIDEO_HEADER_SIZE, VideoHeader, build_metadata,
 };
-use omt_receiver::audio::{interleave, prefill_frames, target_frames};
+use omt_receiver::audio::{
+    CONCEAL_MAX_MS, KEEPALIVE_MS, PERIOD_US, PREFILL_MS, end_timestamp, interleave, missing_frames,
+    prefill_frames, target_frames,
+};
 use omt_receiver::channel::{
     BODY_BUDGET_MS, Channel, Endpoint, Frame, Recv, body_deadline, resolve,
 };
@@ -33,8 +36,9 @@ use omt_receiver::handoff::{
     AUDIO_BYTE_CAP, Queue, QueueKind, SPARE_BUFFERS, VIDEO_BYTE_CAP, audio_interval_ns,
 };
 use omt_receiver::play::{
-    CONNECT_TIMEOUT_MS, MEDIA_GRACE_MS, MEDIA_STALL_MS, RECEIVE_SLICE_MS, RECOVER_ATTEMPTS,
-    RECOVER_BACKOFF_MS, RECOVER_TIMEOUT_MS, RunningDetail, describe_audio, describe_running,
+    AUDIO_FEED_MS, CONNECT_TIMEOUT_MS, MEDIA_GRACE_MS, MEDIA_STALL_MS, RECEIVE_SLICE_MS,
+    RECOVER_ATTEMPTS, RECOVER_BACKOFF_MS, RECOVER_TIMEOUT_MS, RunningDetail, describe_audio,
+    describe_running,
 };
 use omt_receiver::scale::{Placement, Scaler, sample};
 use omt_receiver::video::{
@@ -164,6 +168,12 @@ fn a_frame_still_arriving_does_not_hold_back_a_complete_one() {
     let started = now_ms();
     assert_eq!(c.receive_ready().0, Recv::WouldBlock);
     assert!(now_ms() - started < 50, "a ready-only read must not wait");
+    assert!(c.connected());
+    // A punctual read waits out its deadline and no longer, even mid-frame.
+    let started = now_ms();
+    assert_eq!(c.receive_until(started + 100).0, Recv::WouldBlock);
+    let waited = now_ms() - started;
+    assert!((90..1000).contains(&waited), "waited {waited} ms");
     assert!(c.connected());
     go.send(()).unwrap();
     let (status, err) = c.receive(now_ms() + 2000);
@@ -669,6 +679,15 @@ fn running_details() {
             .get("Playing OMT video and audio.", 0, 0, 2)
             .starts_with("Playing OMT video and audio.")
     );
+    assert_eq!(cache.get_with_audio(base, 0, 0, 0, 0), base);
+    assert_eq!(
+        cache.get_with_audio(base, 0, 0, 0, 3),
+        "Playing OMT video. 3 audio underrun(s) in this session."
+    );
+    assert!(
+        cache.get_with_audio(base, 1, 0, 0, 3).ends_with("3 audio underrun(s) in this session.")
+    );
+    assert_eq!(cache.get(base, 0, 0, 0), base);
     assert_eq!(describe_audio(0), "Playing OMT video and audio.");
     let audio = describe_audio(7);
     assert!(audio.starts_with("Playing OMT video and audio.") && audio.contains('7'));
@@ -701,6 +720,36 @@ fn audio_contract() {
     assert_eq!(target_frames(48000, 11520, 9000), 9000);
     assert_eq!(target_frames(48000, 4000, 1000), 4000);
     assert_eq!(target_frames(0, 11520, 960), 960);
+
+    // The keep-alive floor sits above two periods, so a worker waking once a
+    // period and late by one still tops the ring up before it runs dry, and
+    // below the start threshold, so steady playback never touches it.
+    assert!(KEEPALIVE_MS * 1000 >= 2 * i64::from(PERIOD_US));
+    assert!(KEEPALIVE_MS < PREFILL_MS);
+    assert!(AUDIO_FEED_MS * 1000 <= u64::from(PERIOD_US));
+
+    // vMix stamps 960 samples at 48 kHz 200000 ticks apart.
+    assert_eq!(end_timestamp(1_000_000, 960, 48000), Some(1_200_000));
+    assert_eq!(end_timestamp(0, 1024, 44100), Some(232_199));
+    assert_eq!(end_timestamp(i64::MAX, 960, 48000), None);
+    assert_eq!(end_timestamp(0, 960, 0), None);
+    assert_eq!(end_timestamp(0, 0, 48000), None);
+    // Contiguous, early, or jittering by less than three quarters of a
+    // frame is not a loss.
+    assert_eq!(missing_frames(1_200_000, 1_200_000, 48000, 960), 0);
+    assert_eq!(missing_frames(1_200_000, 1_000_000, 48000, 960), 0);
+    assert_eq!(missing_frames(1_200_000, 1_349_999, 48000, 960), 0);
+    // One or more whole frames dropped by the sender.
+    assert_eq!(missing_frames(1_200_000, 1_400_000, 48000, 960), 960);
+    assert_eq!(missing_frames(1_200_000, 1_350_000, 48000, 960), 720);
+    assert_eq!(missing_frames(0, 3_000_000, 48000, 960), 14_400);
+    // Past the cap the timeline was reset, not frames lost.
+    let cap = CONCEAL_MAX_MS * 10_000;
+    assert_eq!(missing_frames(0, cap, 48000, 960), 48000 * CONCEAL_MAX_MS / 1000);
+    assert_eq!(missing_frames(0, cap + 1, 48000, 960), 0);
+    assert_eq!(missing_frames(i64::MIN, i64::MAX, 48000, 960), 0);
+    assert_eq!(missing_frames(0, 400_000, 0, 960), 0);
+    assert_eq!(missing_frames(0, 400_000, 48000, 0), 0);
 
     let mut out = [0.0_f32; 33];
     interleave(&floats(&[1.0, 2.0, 3.0, -1.0, -2.0, -3.0]), 3, 3, 2, &mut out[..6]).unwrap();

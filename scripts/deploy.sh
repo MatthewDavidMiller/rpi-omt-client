@@ -242,9 +242,13 @@ cleanup_required=false
 ssh -t "${HOST}" \
     "chmod +x '${REMOTE_DIR}/deploy/host/bootstrap.sh' '${REMOTE_DIR}/deploy/host/setup-sys.sh' '${REMOTE_DIR}/deploy/host/install.sh' '${REMOTE_DIR}/deploy/host/uninstall.sh' '${REMOTE_DIR}/deploy/host/host-diagnostics.sh' '${REMOTE_DIR}/deploy/host/host-event-watcher.sh' '${REMOTE_DIR}/deploy/host/host-reboot.sh' '${REMOTE_DIR}/deploy/transaction.sh' && ${ESCALATE} sh -c \"printf 'n\\\\n' | '${REMOTE_DIR}/deploy/host/install.sh'\""
 echo "Rebooting ${HOST} to apply kernel, firmware, and KMS settings..."
+# The terminal stays attached: sudo asks for the password again on this new
+# session, and discarding its output hid that prompt, so the reboot never ran
+# and the Pi kept the old kernel and Wi-Fi settings while this script reported
+# a deployment. The command itself prints nothing.
 ssh -t "${HOST}" \
     "${ESCALATE} sh -c 'nohup sh -c \"sleep 1; /sbin/reboot\" </dev/null >/dev/null 2>&1 &'" \
-    >/dev/null || true
+    || true
 echo "Waiting for ${HOST} to come back..."
 saw_down=false
 rebooted=false
