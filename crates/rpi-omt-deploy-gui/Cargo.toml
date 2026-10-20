@@ -1,6 +1,6 @@
 [package]
-name = "rpi-omt-deploy-tui"
-description = "The deployment, driven from a terminal"
+name = "rpi-omt-deploy-gui"
+description = "The deployment, driven from a local web browser"
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
@@ -10,14 +10,13 @@ rust-version.workspace = true
 omt-capsule = { path = "../omt-capsule" }
 omt-common = { path = "../omt-common" }
 omt-deploy = { path = "../omt-deploy" }
-omt-sys = { path = "../omt-sys" }
 
 [lib]
-name = "omt_tui"
+name = "omt_gui"
 path = "src/lib.rs"
 
 [[bin]]
-name = "rpi-omt-deploy-tui"
+name = "rpi-omt-deploy-gui"
 path = "src/main.rs"
 
 [lints]

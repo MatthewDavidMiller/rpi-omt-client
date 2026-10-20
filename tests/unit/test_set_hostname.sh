@@ -13,7 +13,7 @@ SET_HOSTNAME="${ROOT}/deploy/host/set-hostname.sh"
 SETUP_SYS="${ROOT}/deploy/host/setup-sys.sh"
 MANIFEST="${ROOT}/deploy/manifest-v3.txt"
 OPS_H="${ROOT}/crates/omt-deploy/src/ops.rs"
-TUI_C="${ROOT}/crates/rpi-omt-deploy-tui/src/app.rs"
+GUI_C="${ROOT}/crates/rpi-omt-deploy-gui/src/app.rs"
 CLI_C="${ROOT}/crates/rpi-omt-deploy/src/main.rs"
 
 failures=0
@@ -105,10 +105,10 @@ grep -Fxq 'deploy/host/set-hostname.sh' "${MANIFEST}" || \
 # is a hand-run script on the Pi -- which is the gap this was added to close.
 grep -Fq '("hostname", Cmd::Hostname,' "${CLI_C}" || \
     fail "the CLI has no hostname command"
-grep -Fq 'JobKind::Hostname' "${TUI_C}" || \
-    fail "the terminal deployer does not run a rename"
-grep -Fq '"Apply hostname"' "${TUI_C}" || \
-    fail "the terminal deployer's Manage view has no rename control"
+grep -Fq 'JobKind::Hostname' "${GUI_C}" || \
+    fail "the browser deployer does not run a rename"
+grep -Fq '"Apply hostname"' "${GUI_C}" || \
+    fail "the browser deployer's Manage view has no rename control"
 
 # The two rewrites, run over fixtures. Both programs are read out of the
 # script, so this tests what ships rather than a restatement of it.

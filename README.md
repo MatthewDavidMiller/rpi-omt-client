@@ -37,11 +37,12 @@ embeds it: run `make build-arm64` first, or the deployer build stops and says
 so. Each executable carries the whole manifest-v3 capsule, so an operator needs
 that one file and no checkout.
 
-The Linux build stages a CLI and a terminal application, both static-PIE
-binaries against musl with OpenSSL linked in, plus a CycloneDX SBOM, in
-`.build/deployer-publish/`. A terminal frontend opens no graphics stack, so one
-binary runs on every distribution -- glibc and musl alike -- and works over
-SSH. `scripts/verify-linux-deployer.sh` reads that guarantee back out of the
+The Linux build stages a CLI (`rpi-omt-deploy`) and a browser frontend
+(`rpi-omt-deploy-gui`), both static-PIE binaries against musl with OpenSSL
+linked in, plus a CycloneDX SBOM, in `.build/deployer-publish/`. The browser
+frontend serves its page to the workstation's own browser over loopback and
+opens no graphics stack of its own, so one binary runs on every distribution
+-- glibc and musl alike -- and works over SSH through a forwarded port. `scripts/verify-linux-deployer.sh` reads that guarantee back out of the
 ELF headers rather than trusting the build flags.
 
 `make build-windows-deployer` cross-compiles the same CLI and terminal

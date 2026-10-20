@@ -1,6 +1,6 @@
-//! The terminal deployer's state and input handling. Rendering lives in
-//! ui.rs; this never draws. The field set is the one docs/SETUP.md
-//! describes.
+//! The deployer's state: the form, the prechecks, the confirmations, and
+//! the one job that may run. The browser page is a view of this; nothing
+//! here knows about HTTP. The field set is the one docs/SETUP.md describes.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -10,8 +10,6 @@ use omt_common::buf::wipe_string;
 use omt_deploy::capsule::Capsule;
 use omt_deploy::core::{self, Action, Connection, Secret};
 use omt_deploy::jobs::{self, ConnectionFields, JobKind, JobRequest};
-
-use crate::term::{Code, Key};
 
 /// How many progress lines the activity log keeps: a deployment emits far
 /// more than a screen's worth, and the operator scrolling back wants the
@@ -56,11 +54,7 @@ impl View {
         }
     }
 
-    fn index(self) -> usize {
-        VIEWS.iter().position(|&v| v == self).unwrap_or(0)
-    }
-
-    /// The focusable rows a view shows, in tab order.
+    /// The rows a view shows, in order.
     // Every arm lists slots; the glob keeps the tables readable.
     #[allow(clippy::enum_glob_use)]
     pub fn slots(self) -> &'static [Slot] {
@@ -101,8 +95,8 @@ impl View {
     }
 }
 
-/// One focusable row, flat across every view so focus is a single index
-/// and the render and input paths cannot disagree about what is selected.
+/// One row of a view, flat across every view, so the page and the server
+/// name the same thing the same way.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Slot {
     Host,
@@ -182,6 +176,65 @@ pub enum Field {
 
 const FIELD_COUNT: usize = 20;
 
+pub const FIELDS: [Field; FIELD_COUNT] = [
+    Field::Host,
+    Field::User,
+    Field::Password,
+    Field::SudoPassword,
+    Field::KnownHosts,
+    Field::BootDirectory,
+    Field::WifiCountry,
+    Field::Hostname,
+    Field::OsRootPassword,
+    Field::OsRootConfirm,
+    Field::OsPiPassword,
+    Field::OsPiConfirm,
+    Field::RemoteDirectory,
+    Field::WebPassword,
+    Field::WebConfirm,
+    Field::ManageHostname,
+    Field::ManageWebPassword,
+    Field::ManageWebConfirm,
+    Field::WifiSsid,
+    Field::WifiPassword,
+];
+
+impl Field {
+    /// The name the page addresses this value by.
+    pub fn name(self) -> &'static str {
+        match self {
+            Field::Host => "host",
+            Field::User => "user",
+            Field::Password => "password",
+            Field::SudoPassword => "sudo_password",
+            Field::KnownHosts => "known_hosts",
+            Field::BootDirectory => "boot_directory",
+            Field::WifiCountry => "wifi_country",
+            Field::Hostname => "hostname",
+            Field::OsRootPassword => "os_root_password",
+            Field::OsRootConfirm => "os_root_confirm",
+            Field::OsPiPassword => "os_pi_password",
+            Field::OsPiConfirm => "os_pi_confirm",
+            Field::RemoteDirectory => "remote_directory",
+            Field::WebPassword => "web_password",
+            Field::WebConfirm => "web_confirm",
+            Field::ManageHostname => "manage_hostname",
+            Field::ManageWebPassword => "manage_web_password",
+            Field::ManageWebConfirm => "manage_web_confirm",
+            Field::WifiSsid => "wifi_ssid",
+            Field::WifiPassword => "wifi_password",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Field> {
+        FIELDS.into_iter().find(|f| f.name() == name)
+    }
+
+    pub fn is_secret(self) -> bool {
+        is_secret(self)
+    }
+}
+
 impl Slot {
     pub fn info(self) -> (&'static str, Kind, Option<Field>) {
         use Slot as S;
@@ -254,6 +307,89 @@ impl Slot {
     pub fn field(self) -> Option<Field> {
         self.info().2
     }
+
+    /// The name the page addresses this row by.
+    // One arm per slot; the glob keeps the table readable.
+    #[allow(clippy::enum_glob_use)]
+    pub fn name(self) -> &'static str {
+        use Slot::*;
+        match self {
+            Host => "host",
+            User => "user",
+            Password => "password",
+            SudoPassword => "sudo_password",
+            KnownHosts => "known_hosts",
+            TestButton => "test",
+            BootDirectory => "boot_directory",
+            SdWifiCountry => "sd_wifi_country",
+            SdWifiSsid => "sd_wifi_ssid",
+            SdWifiPassword => "sd_wifi_password",
+            PrepareSdButton => "prepare_sd",
+            AlpineHostname => "alpine_hostname",
+            AlpineRootPassword => "alpine_root_password",
+            AlpineRootConfirm => "alpine_root_confirm",
+            AlpinePiPassword => "alpine_pi_password",
+            AlpinePiConfirm => "alpine_pi_confirm",
+            AlpineWifiSsid => "alpine_wifi_ssid",
+            AlpineWifiPassword => "alpine_wifi_password",
+            AlpineApplyLogin => "alpine_apply_login",
+            AlpineButton => "alpine",
+            RemoteDirectory => "remote_directory",
+            RotateWebPassword => "rotate_web_password",
+            WebPassword => "web_password",
+            WebConfirm => "web_confirm",
+            DeployButton => "deploy",
+            StatusButton => "status",
+            LogsButton => "logs",
+            RestartButton => "restart",
+            RebootButton => "reboot",
+            ManageHostname => "manage_hostname",
+            HostnameButton => "apply_hostname",
+            ManageWebPassword => "manage_web_password",
+            ManageWebConfirm => "manage_web_confirm",
+            WebPasswordButton => "change_web_password",
+            WifiSsid => "wifi_ssid",
+            WifiPassword => "wifi_password",
+            WifiConnect => "wifi_connect",
+            WifiPreserve => "wifi_preserve",
+            WifiButton => "apply_wifi",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Slot> {
+        VIEWS.iter().flat_map(|v| v.slots()).copied().find(|s| s.name() == name)
+    }
+
+    /// What pressing a button runs, and the question asked first when it
+    /// cannot be undone.
+    pub fn job(self) -> Option<(JobKind, Action, Option<&'static str>)> {
+        Some(match self {
+            Slot::TestButton => (JobKind::Test, Action::Status, None),
+            Slot::PrepareSdButton => (JobKind::PrepareSd, Action::Status, None),
+            // This erases the disk the Pi boots from.
+            Slot::AlpineButton => (
+                JobKind::Alpine,
+                Action::Status,
+                Some(
+                    "Erase the boot disk and install Alpine in persistent sys mode? The Pi \
+                     reboots when it finishes.",
+                ),
+            ),
+            Slot::DeployButton => (JobKind::Deploy, Action::Status, None),
+            Slot::StatusButton => (JobKind::Manage, Action::Status, None),
+            Slot::LogsButton => (JobKind::Manage, Action::Logs, None),
+            Slot::RestartButton => {
+                (JobKind::Manage, Action::Restart, Some("Restart the appliance container now?"))
+            }
+            Slot::RebootButton => {
+                (JobKind::Manage, Action::Reboot, Some("Reboot the Raspberry Pi now?"))
+            }
+            Slot::HostnameButton => (JobKind::Hostname, Action::Status, None),
+            Slot::WebPasswordButton => (JobKind::WebPassword, Action::Status, None),
+            Slot::WifiButton => (JobKind::Wifi, Action::Status, None),
+            _ => return None,
+        })
+    }
 }
 
 /// What answering a confirmation yes will do.
@@ -300,11 +436,6 @@ impl Worker {
 #[derive(Debug)]
 pub struct App {
     pub capsule: &'static Capsule,
-    pub current: View,
-    pub focus: usize,
-    /// In characters, so a multi-byte value never splits.
-    pub cursor: usize,
-    pub reveal: bool,
     pub should_quit: bool,
     pub status: String,
 
@@ -315,10 +446,10 @@ pub struct App {
     pub wifi_preserve: bool,
 
     pub log: std::collections::VecDeque<String>,
-    pub log_scroll: usize,
-    pub follow_log: bool,
-    /// First visible line of the About document.
-    pub about_scroll: usize,
+    /// How many lines the log has ever held: the sequence number of the
+    /// line after the newest, so a reader can ask for only what it has not
+    /// seen even after the oldest lines have been dropped.
+    pub log_end: u64,
     pub confirm: Option<Pending>,
 
     pub job: Option<Worker>,
@@ -354,10 +485,6 @@ impl App {
     pub fn new(capsule: &'static Capsule) -> Self {
         let mut a = Self {
             capsule,
-            current: View::Connection,
-            focus: 0,
-            cursor: 0,
-            reveal: false,
             should_quit: false,
             status: "Ready.".into(),
             fields: Default::default(),
@@ -366,9 +493,7 @@ impl App {
             wifi_connect: true,
             wifi_preserve: true,
             log: std::collections::VecDeque::new(),
-            log_scroll: 0,
-            follow_log: true,
-            about_scroll: 0,
+            log_end: 0,
             confirm: None,
             job: None,
             switch_to_pi_after_job: false,
@@ -378,7 +503,6 @@ impl App {
         a.set_field(Field::WifiCountry, "US");
         a.set_field(Field::Hostname, "omt-client");
         a.set_field(Field::RemoteDirectory, "/opt/omt-client");
-        a.cursor_end();
         a
     }
 
@@ -386,24 +510,23 @@ impl App {
         &self.fields[f as usize]
     }
 
-    pub fn set_field(&mut self, f: Field, text: &str) {
+    /// Replaces a value, wiping a secret's old characters first. Control
+    /// characters never reach a value, and nothing longer than
+    /// `FIELD_LIMIT` bytes is kept.
+    pub fn set_field(&mut self, f: Field, text: &str) -> bool {
+        if text.len() > FIELD_LIMIT || text.chars().any(char::is_control) {
+            return false;
+        }
         let slot = &mut self.fields[f as usize];
         if is_secret(f) {
             wipe_string(slot);
         }
         text.clone_into(slot);
+        true
     }
 
     pub fn busy(&self) -> bool {
         self.job.is_some()
-    }
-
-    pub fn selected(&self) -> Option<Slot> {
-        self.current.slots().get(self.focus).copied()
-    }
-
-    pub fn value(&self, s: Slot) -> &str {
-        s.field().map_or("", |f| self.field(f))
     }
 
     pub fn toggle(&self, s: Slot) -> bool {
@@ -416,17 +539,20 @@ impl App {
         }
     }
 
-    fn toggle_mut(&mut self, s: Slot) -> Option<&mut bool> {
-        match s {
-            Slot::AlpineApplyLogin => Some(&mut self.apply_alpine_login),
-            Slot::RotateWebPassword => Some(&mut self.rotate_web_password),
-            Slot::WifiConnect => Some(&mut self.wifi_connect),
-            Slot::WifiPreserve => Some(&mut self.wifi_preserve),
-            _ => None,
-        }
+    /// Sets a toggle; false when `s` is not one.
+    pub fn set_toggle(&mut self, s: Slot, on: bool) -> bool {
+        let flag = match s {
+            Slot::AlpineApplyLogin => &mut self.apply_alpine_login,
+            Slot::RotateWebPassword => &mut self.rotate_web_password,
+            Slot::WifiConnect => &mut self.wifi_connect,
+            Slot::WifiPreserve => &mut self.wifi_preserve,
+            _ => return false,
+        };
+        *flag = on;
+        true
     }
 
-    /// The status bar is one row. Remote errors arrive with line breaks in
+    /// The status line is one row. Remote errors arrive with line breaks in
     /// them, and a break would end the row partway through the message.
     pub fn set_status(&mut self, text: &str) {
         let mut out = String::with_capacity(text.len());
@@ -446,48 +572,12 @@ impl App {
         self.status = out;
     }
 
-    fn value_chars(&self, s: Slot) -> usize {
-        self.value(s).chars().count()
-    }
-
-    pub fn cursor_end(&mut self) {
-        self.cursor = self.selected().map_or(0, |s| self.value_chars(s));
-    }
-
-    pub fn cursor_home(&mut self) {
-        self.cursor = 0;
-    }
-
-    pub fn select_view(&mut self, v: View) {
-        self.current = v;
-        self.focus = 0;
-        // A prefilled first field -- the default host, above all -- is edited
-        // from its end, so Backspace clears it and typing does not land in
-        // front of it.
-        self.cursor_end();
-    }
-
-    pub fn move_focus(&mut self, delta: i64) {
-        let n = self.current.slots().len() as i64;
-        if n == 0 {
-            return;
-        }
-        self.focus = (self.focus as i64 + delta).rem_euclid(n) as usize;
-        // Land at the end of the newly focused text so typing continues it.
-        self.cursor_end();
-    }
-
-    pub fn scroll_about(&mut self, delta: i64) {
-        let next = (self.about_scroll.min(i64::MAX as usize) as i64).saturating_add(delta);
-        self.about_scroll = next.max(0) as usize;
-    }
-
     fn push_log_line(&mut self, line: &str) {
         if self.log.len() >= LOG_CAPACITY {
             self.log.pop_front();
-            self.log_scroll = self.log_scroll.saturating_sub(1);
         }
         self.log.push_back(line.to_owned());
+        self.log_end += 1;
     }
 
     /// One log row per line: a remote error carries its own line breaks,
@@ -510,7 +600,16 @@ impl App {
         }
     }
 
-    /// Drains whatever the worker has produced since the last redraw.
+    /// The lines from sequence number `since` on, and the number the first
+    /// of them carries: later than `since` when older lines have been
+    /// dropped.
+    pub fn log_since(&self, since: u64) -> (u64, impl Iterator<Item = &String>) {
+        let start = self.log_end - self.log.len() as u64;
+        let first = since.clamp(start, self.log_end);
+        (first, self.log.iter().skip((first - start) as usize))
+    }
+
+    /// Drains whatever the worker has produced since the last look.
     pub fn poll_worker(&mut self) {
         let Some(w) = &self.job else { return };
         let (lines, result) = {
@@ -709,9 +808,6 @@ impl App {
         self.job = Some(worker);
         self.switch_to_pi_after_job = job == JobKind::Alpine && self.apply_alpine_login;
         self.set_status("Running...");
-        self.follow_log = true;
-        // Progress belongs in front of the operator, not behind a tab.
-        self.select_view(View::Activity);
     }
 
     fn ask(&mut self, quit: bool, job: JobKind, action: Action, prompt: &str) {
@@ -719,49 +815,22 @@ impl App {
             Some(Pending { quit, job, action, prompt: prompt.chars().take(255).collect() });
     }
 
-    pub fn press(&mut self, s: Slot) {
-        match s {
-            Slot::TestButton => self.start(JobKind::Test, Action::Status),
-            Slot::PrepareSdButton => self.start(JobKind::PrepareSd, Action::Status),
-            // This erases the disk the Pi boots from.
-            Slot::AlpineButton => self.ask(
-                false,
-                JobKind::Alpine,
-                Action::Status,
-                "Erase the boot disk and install Alpine in persistent sys mode? The Pi reboots \
-                 when it finishes.",
-            ),
-            Slot::DeployButton => self.start(JobKind::Deploy, Action::Status),
-            Slot::StatusButton => self.start(JobKind::Manage, Action::Status),
-            Slot::LogsButton => self.start(JobKind::Manage, Action::Logs),
-            Slot::RestartButton => {
-                self.ask(
-                    false,
-                    JobKind::Manage,
-                    Action::Restart,
-                    "Restart the appliance container now?",
-                );
-            }
-            Slot::RebootButton => {
-                self.ask(false, JobKind::Manage, Action::Reboot, "Reboot the Raspberry Pi now?");
-            }
-            Slot::HostnameButton => self.start(JobKind::Hostname, Action::Status),
-            Slot::WebPasswordButton => self.start(JobKind::WebPassword, Action::Status),
-            Slot::WifiButton => self.start(JobKind::Wifi, Action::Status),
-            _ => {}
+    /// Why pressing `s` would not start its job right now, or `None` when
+    /// it would. The page shows this beside the button.
+    pub fn blocked(&self, s: Slot) -> Option<&'static str> {
+        let (job, action, _) = s.job()?;
+        if let Some(problem) = self.precheck(job) {
+            return Some(problem);
         }
+        // Builds, then drops (and wipes), the request the job would run.
+        self.request(job, action).err()
     }
 
-    pub fn activate(&mut self) {
-        let Some(s) = self.selected() else { return };
-        match s.kind() {
-            Kind::Toggle => {
-                if let Some(flag) = self.toggle_mut(s) {
-                    *flag = !*flag;
-                }
-            }
-            Kind::Text | Kind::Secret => self.move_focus(1),
-            Kind::Button => self.press(s),
+    pub fn press(&mut self, s: Slot) {
+        let Some((job, action, prompt)) = s.job() else { return };
+        match prompt {
+            Some(prompt) => self.ask(false, job, action, prompt),
+            None => self.start(job, action),
         }
     }
 
@@ -790,158 +859,6 @@ impl App {
             self.should_quit = true;
         } else {
             self.start(p.job, p.action);
-        }
-    }
-
-    fn focused_field(&self) -> Option<Field> {
-        let s = self.selected()?;
-        matches!(s.kind(), Kind::Text | Kind::Secret).then(|| s.field()).flatten()
-    }
-
-    /// Replaces a value with an edited copy, wiping the old one, so a
-    /// secret's characters do not survive the edit.
-    fn edit(&mut self, f: Field, edit: impl FnOnce(&mut String)) {
-        let mut next = self.field(f).to_owned();
-        edit(&mut next);
-        let slot = &mut self.fields[f as usize];
-        wipe_string(slot);
-        *slot = next;
-    }
-
-    fn byte_offset(text: &str, index: usize) -> usize {
-        text.char_indices().nth(index).map_or(text.len(), |(i, _)| i)
-    }
-
-    pub fn insert(&mut self, ch: u32) {
-        let Some(f) = self.focused_field() else { return };
-        let Some(c) = char::from_u32(ch).filter(|&c| !c.is_control()) else { return };
-        if self.field(f).len() + c.len_utf8() > FIELD_LIMIT {
-            return;
-        }
-        let at = Self::byte_offset(self.field(f), self.cursor);
-        self.edit(f, |s| s.insert(at, c));
-        self.cursor += 1;
-    }
-
-    pub fn backspace(&mut self) {
-        let Some(f) = self.focused_field() else { return };
-        if self.cursor == 0 {
-            return;
-        }
-        let at = Self::byte_offset(self.field(f), self.cursor - 1);
-        if at < self.field(f).len() {
-            self.edit(f, |s| {
-                s.remove(at);
-            });
-            self.cursor -= 1;
-        }
-    }
-
-    pub fn delete(&mut self) {
-        let Some(f) = self.focused_field() else { return };
-        let at = Self::byte_offset(self.field(f), self.cursor);
-        if at < self.field(f).len() {
-            self.edit(f, |s| {
-                s.remove(at);
-            });
-        }
-    }
-
-    pub fn move_cursor(&mut self, delta: i64) {
-        let Some(s) = self.selected() else { return };
-        let length = self.value_chars(s) as i64;
-        self.cursor = (self.cursor as i64 + delta).clamp(0, length) as usize;
-    }
-
-    fn cycle_view(&mut self, delta: i64) {
-        let n = VIEWS.len() as i64;
-        let next = (self.current.index() as i64 + delta).rem_euclid(n) as usize;
-        self.select_view(VIEWS[next]);
-    }
-
-    pub fn scroll_log(&mut self, direction: i32) {
-        if direction < 0 {
-            // Leaving the tail starts from the tail: paging up from a
-            // following view used to land on the oldest line of the run.
-            if self.follow_log {
-                self.log_scroll = self.log.len().saturating_sub(1);
-            }
-            self.follow_log = false;
-            self.log_scroll = self.log_scroll.saturating_sub(10);
-        } else {
-            self.log_scroll += 10;
-            // Back at the tail resumes following.
-            if self.log_scroll >= self.log.len() {
-                self.follow_log = true;
-            }
-        }
-    }
-
-    fn scroll_page(&mut self, direction: i32) {
-        if self.current == View::About {
-            self.scroll_about(i64::from(direction) * 10);
-        } else {
-            self.scroll_log(direction);
-        }
-    }
-
-    pub fn handle_key(&mut self, key: &Key) {
-        // A pending confirmation owns the keyboard until it is answered, so a
-        // reboot cannot be triggered by a keystroke meant for the form
-        // behind.
-        if self.confirm.is_some() {
-            let plain = key.code == Code::Char && !key.ctrl;
-            if plain && (key.ch == u32::from('y') || key.ch == u32::from('Y')) {
-                self.confirm_pending(true);
-            } else if (plain && (key.ch == u32::from('n') || key.ch == u32::from('N')))
-                || key.code == Code::Esc
-            {
-                self.confirm_pending(false);
-            }
-            return;
-        }
-        let about = self.current == View::About;
-        match key.code {
-            Code::Char if key.ctrl => match char::from_u32(key.ch) {
-                Some('q') => self.request_quit(),
-                // Ctrl+C stops the job rather than the program while one runs.
-                Some('c') => {
-                    if self.busy() {
-                        self.cancel_job();
-                    } else {
-                        self.should_quit = true;
-                    }
-                }
-                Some('r') => self.reveal = !self.reveal,
-                _ => {}
-            },
-            Code::Char => self.insert(key.ch),
-            Code::Esc => self.cancel_job(),
-            Code::Right if key.ctrl => self.cycle_view(1),
-            Code::Right => self.move_cursor(1),
-            Code::Left if key.ctrl => self.cycle_view(-1),
-            Code::Left => self.move_cursor(-1),
-            Code::F => {
-                if (1..=8).contains(&key.f) {
-                    self.select_view(VIEWS[usize::from(key.f - 1)]);
-                }
-            }
-            Code::Down if about => self.scroll_about(1),
-            Code::Down | Code::Tab => self.move_focus(1),
-            Code::Up if about => self.scroll_about(-1),
-            Code::Up | Code::BackTab => self.move_focus(-1),
-            Code::Home if about => self.about_scroll = 0,
-            Code::Home => self.cursor_home(),
-            // Overshoots on purpose; clamped where the wrapped length is
-            // known.
-            Code::End if about => self.about_scroll = usize::MAX,
-            Code::End => self.cursor_end(),
-            Code::Enter => self.activate(),
-            Code::Backspace => self.backspace(),
-            Code::Delete => self.delete(),
-            Code::PageUp => self.scroll_page(-1),
-            Code::PageDown => self.scroll_page(1),
-            Code::None => {}
         }
     }
 

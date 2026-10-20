@@ -1,4 +1,4 @@
-//! The deployer core shared by the CLI and the terminal application: the
+//! The deployer core shared by the CLI and the browser frontend: the
 //! first-party SSH client, validation, the embedded capsule, and the
 //! operations. Nothing here draws or prompts; progress is reported through
 //! a callback and failures as errors.

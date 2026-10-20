@@ -29,11 +29,11 @@ OPENSSL_PREFIX="$("${PROJECT_ROOT}/scripts/build-openssl.sh" "${TARGET}")"
 OMT_VERSION="${VERSION}" OMT_CAPSULE_REQUIRED=1 \
     OMT_OPENSSL_STATIC=1 OMT_OPENSSL_DIR="${OPENSSL_PREFIX}" \
     cargo build --release --offline --locked --target x86_64-pc-windows-gnu \
-    --target-dir "${PROJECT_ROOT}/target/deployer" -p rpi-omt-deploy -p rpi-omt-deploy-tui
+    --target-dir "${PROJECT_ROOT}/target/deployer" -p rpi-omt-deploy -p rpi-omt-deploy-gui
 RELEASE_DIR="${PROJECT_ROOT}/target/deployer/x86_64-pc-windows-gnu/release"
 if [[ "${MODE}" == "--no-publish" ]]; then
     "${PROJECT_ROOT}/scripts/verify-windows-deployer.sh" --console "${RELEASE_DIR}/rpi-omt-deploy.exe"
-    "${PROJECT_ROOT}/scripts/verify-windows-deployer.sh" --console "${RELEASE_DIR}/rpi-omt-deploy-tui.exe"
+    "${PROJECT_ROOT}/scripts/verify-windows-deployer.sh" --console "${RELEASE_DIR}/rpi-omt-deploy-gui.exe"
     echo "Verified Windows deployer cross build; not published"
     exit 0
 fi
@@ -41,7 +41,7 @@ STAGE="${PROJECT_ROOT}/.build/deployer-publish-windows.stage"
 PUBLISH="${PROJECT_ROOT}/.build/deployer-publish-windows"
 rm -rf "${STAGE}"
 install -Dm755 "${RELEASE_DIR}/rpi-omt-deploy.exe" "${STAGE}/bin/rpi-omt-deploy.exe"
-install -Dm755 "${RELEASE_DIR}/rpi-omt-deploy-tui.exe" "${STAGE}/bin/rpi-omt-deploy-tui.exe"
+install -Dm755 "${RELEASE_DIR}/rpi-omt-deploy-gui.exe" "${STAGE}/bin/rpi-omt-deploy-gui.exe"
 install -Dm644 LICENSE "${STAGE}/LICENSE"
 install -Dm644 THIRD_PARTY_NOTICES.txt "${STAGE}/THIRD_PARTY_NOTICES.txt"
 OPENSSL_VERSION="$(sed -n 's/^OPENSSL_VERSION="\(.*\)"$/\1/p' scripts/build-openssl.sh)"
@@ -53,7 +53,7 @@ python3 scripts/generate-deployer-sbom.py --output "${STAGE}/deployer-sbom.cdx.j
     --rust-version "$(rustc --version | awk '{print $2}')" \
     --gcc-version "${GCC_VERSION}" --mingw-runtime-version "${MINGW_VERSION:-unknown}"
 "${PROJECT_ROOT}/scripts/verify-windows-deployer.sh" --console "${STAGE}/bin/rpi-omt-deploy.exe"
-"${PROJECT_ROOT}/scripts/verify-windows-deployer.sh" --console "${STAGE}/bin/rpi-omt-deploy-tui.exe"
+"${PROJECT_ROOT}/scripts/verify-windows-deployer.sh" --console "${STAGE}/bin/rpi-omt-deploy-gui.exe"
 rm -rf "${PUBLISH}"
 mv "${STAGE}" "${PUBLISH}"
 echo "Published Windows deployer package: ${PUBLISH}"

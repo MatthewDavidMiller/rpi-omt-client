@@ -9,7 +9,7 @@
 use omt_capsule::CAPSULE;
 use omt_deploy::core;
 use omt_deploy::ops;
-use omt_tui::ui;
+use omt_gui::about;
 
 fn embedded() -> bool {
     if CAPSULE.members.is_empty() && option_env!("OMT_CAPSULE_REQUIRED") != Some("1") {
@@ -92,9 +92,12 @@ fn about_reproduces_the_shipped_licence_and_notices() {
     if !embedded() {
         return;
     }
-    let mut lines = Vec::new();
-    ui::about_text(&CAPSULE, 80, &mut lines);
-    let joined = lines.join("\n");
+    let joined = format!(
+        "{}\n{}\nTHIRD-PARTY NOTICES\n{}",
+        about::summary(&CAPSULE),
+        about::license(&CAPSULE),
+        about::notices(&CAPSULE)
+    );
     for expected in [
         "MIT License",
         "Copyright (c) 2026 Matthew David Miller",

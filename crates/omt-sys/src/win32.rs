@@ -1,8 +1,7 @@
 //! Win32 for the Windows deployer: what the standard library does not wrap.
 //! Randomness (BCrypt), the ROOT certificate store, socket readiness
 //! (WSAPoll), file identity, job objects that take a process tree down with
-//! them, a no-echo console prompt, and the console the terminal application
-//! draws on.
+//! them, and a no-echo console prompt.
 //!
 //! Text crosses this boundary as UTF-8 and is converted to UTF-16 for the
 //! wide APIs, so a path with non-ASCII characters works whatever the system
@@ -29,7 +28,6 @@ const OPEN_EXISTING: DWORD = 3;
 const FILE_ATTRIBUTE_DIRECTORY: DWORD = 0x10;
 const FILE_ATTRIBUTE_REPARSE_POINT: DWORD = 0x400;
 const GET_FILE_EX_INFO_STANDARD: i32 = 0;
-const WAIT_OBJECT_0: DWORD = 0;
 const CP_UTF8: u32 = 65001;
 
 const BCRYPT_USE_SYSTEM_PREFERRED_RNG: u32 = 2;
@@ -112,62 +110,10 @@ pub struct CERT_CONTEXT {
     pub hCertStore: HANDLE,
 }
 
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default)]
-pub struct COORD {
-    pub X: i16,
-    pub Y: i16,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default)]
-pub struct SMALL_RECT {
-    pub Left: i16,
-    pub Top: i16,
-    pub Right: i16,
-    pub Bottom: i16,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default)]
-pub struct CONSOLE_SCREEN_BUFFER_INFO {
-    pub dwSize: COORD,
-    pub dwCursorPosition: COORD,
-    pub wAttributes: WORD,
-    pub srWindow: SMALL_RECT,
-    pub dwMaximumWindowSize: COORD,
-}
-
-/// The key half of INPUT_RECORD's event union; `uChar` is the UTF-16 unit.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default)]
-pub struct KEY_EVENT_RECORD {
-    pub bKeyDown: BOOL,
-    pub wRepeatCount: WORD,
-    pub wVirtualKeyCode: WORD,
-    pub wVirtualScanCode: WORD,
-    pub uChar: u16,
-    pub dwControlKeyState: DWORD,
-}
-
-/// An INPUT_RECORD read as a key event. Every other event type has the same
-/// size (16 bytes) and is skipped by its tag without reading the body.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default)]
-pub struct INPUT_RECORD {
-    pub EventType: WORD,
-    pub Event: KEY_EVENT_RECORD,
-}
-
-const KEY_EVENT: WORD = 1;
-
-type HandlerRoutine = unsafe extern "system" fn(DWORD) -> BOOL;
-
 #[link(name = "kernel32")]
 unsafe extern "system" {
     fn GetLastError() -> DWORD;
     fn CloseHandle(h: HANDLE) -> BOOL;
-    fn GetStdHandle(which: DWORD) -> HANDLE;
     fn CreateFileW(
         name: *const u16,
         access: DWORD,
@@ -177,28 +123,15 @@ unsafe extern "system" {
         flags: DWORD,
         template: HANDLE,
     ) -> HANDLE;
-    fn WriteFile(
-        h: HANDLE,
-        data: *const c_void,
-        len: DWORD,
-        wrote: *mut DWORD,
-        overlapped: *mut c_void,
-    ) -> BOOL;
     fn GetFileAttributesExW(name: *const u16, level: i32, out: *mut c_void) -> BOOL;
     fn CreateJobObjectW(security: *mut c_void, name: *const u16) -> HANDLE;
     fn SetInformationJobObject(job: HANDLE, class: i32, info: *mut c_void, len: DWORD) -> BOOL;
     fn AssignProcessToJobObject(job: HANDLE, process: HANDLE) -> BOOL;
     fn TerminateJobObject(job: HANDLE, code: u32) -> BOOL;
-    fn WaitForSingleObject(h: HANDLE, ms: DWORD) -> DWORD;
     fn GetConsoleMode(h: HANDLE, mode: *mut DWORD) -> BOOL;
     fn SetConsoleMode(h: HANDLE, mode: DWORD) -> BOOL;
-    fn GetConsoleOutputCP() -> u32;
     fn SetConsoleOutputCP(cp: u32) -> BOOL;
     fn SetConsoleCP(cp: u32) -> BOOL;
-    fn SetConsoleCtrlHandler(handler: Option<HandlerRoutine>, add: BOOL) -> BOOL;
-    fn GetConsoleScreenBufferInfo(h: HANDLE, info: *mut CONSOLE_SCREEN_BUFFER_INFO) -> BOOL;
-    fn GetNumberOfConsoleInputEvents(h: HANDLE, n: *mut DWORD) -> BOOL;
-    fn ReadConsoleInputW(h: HANDLE, out: *mut INPUT_RECORD, len: DWORD, got: *mut DWORD) -> BOOL;
     fn WriteConsoleW(
         h: HANDLE,
         text: *const u16,
@@ -234,9 +167,6 @@ unsafe extern "system" {
     fn CertCloseStore(store: HANDLE, flags: DWORD) -> BOOL;
 }
 
-const STD_INPUT_HANDLE: DWORD = -10_i32 as DWORD;
-const STD_OUTPUT_HANDLE: DWORD = -11_i32 as DWORD;
-
 fn last_error() -> io::Error {
     // SAFETY: GetLastError reads the calling thread's error slot.
     let code = unsafe { GetLastError() };
@@ -249,12 +179,6 @@ fn wide(text: &str) -> Option<Vec<u16>> {
         return None;
     }
     Some(text.encode_utf16().chain(std::iter::once(0)).collect())
-}
-
-fn std_handle(which: DWORD) -> HANDLE {
-    // SAFETY: GetStdHandle takes a constant and returns a handle or
-    // INVALID_HANDLE_VALUE; nothing is dereferenced.
-    unsafe { GetStdHandle(which) }
 }
 
 /// An owned kernel handle.
@@ -510,280 +434,4 @@ pub fn read_secret_line(prompt: &str, limit: usize) -> io::Result<Option<Vec<u8>
         return Err(last_error());
     }
     Ok((line.len() <= limit).then_some(line))
-}
-
-/// The terminal application's console: virtual-terminal output (Windows 10
-/// and later, conhost and Windows Terminal alike) and key records decoded
-/// by virtual-key code, which reports F-keys and Ctrl+arrows the same on
-/// every console host.
-pub mod console {
-    use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU32, Ordering};
-
-    use super::{
-        BOOL, CONSOLE_SCREEN_BUFFER_INFO, CP_UTF8, DWORD, GetConsoleMode, GetConsoleOutputCP,
-        GetConsoleScreenBufferInfo, GetNumberOfConsoleInputEvents, HANDLE, INPUT_RECORD, KEY_EVENT,
-        KEY_EVENT_RECORD, ReadConsoleInputW, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE,
-        SetConsoleCtrlHandler, SetConsoleMode, SetConsoleOutputCP, WAIT_OBJECT_0,
-        WaitForSingleObject, WriteFile, std_handle,
-    };
-
-    /// Key codes, in the terminal application's `Code` order.
-    pub const NONE: u8 = 0;
-    pub const CHAR: u8 = 1;
-    pub const ENTER: u8 = 2;
-    pub const TAB: u8 = 3;
-    pub const BACKTAB: u8 = 4;
-    pub const ESC: u8 = 5;
-    pub const BACKSPACE: u8 = 6;
-    pub const DELETE: u8 = 7;
-    pub const LEFT: u8 = 8;
-    pub const RIGHT: u8 = 9;
-    pub const UP: u8 = 10;
-    pub const DOWN: u8 = 11;
-    pub const HOME: u8 = 12;
-    pub const END: u8 = 13;
-    pub const PAGE_UP: u8 = 14;
-    pub const PAGE_DOWN: u8 = 15;
-    pub const F: u8 = 16;
-
-    const ENTER_SEQUENCE: &[u8] = b"\x1b[?1049h\x1b[?25l\x1b[2J";
-    const LEAVE_SEQUENCE: &[u8] = b"\x1b[0m\x1b[?25h\x1b[?1049l";
-
-    const ENABLE_PROCESSED_OUTPUT: DWORD = 0x1;
-    const ENABLE_VIRTUAL_TERMINAL_PROCESSING: DWORD = 0x4;
-    const DISABLE_NEWLINE_AUTO_RETURN: DWORD = 0x8;
-    const ENABLE_WINDOW_INPUT: DWORD = 0x8;
-    const ENABLE_EXTENDED_FLAGS: DWORD = 0x80;
-    const CTRL_CLOSE_EVENT: DWORD = 2;
-    const CTRL_LOGOFF_EVENT: DWORD = 5;
-    const CTRL_SHUTDOWN_EVENT: DWORD = 6;
-    const RIGHT_ALT_PRESSED: DWORD = 0x1;
-    const LEFT_ALT_PRESSED: DWORD = 0x2;
-    const RIGHT_CTRL_PRESSED: DWORD = 0x4;
-    const LEFT_CTRL_PRESSED: DWORD = 0x8;
-    const SHIFT_PRESSED: DWORD = 0x10;
-
-    static ACTIVE: AtomicBool = AtomicBool::new(false);
-    static SAVED_IN: AtomicU32 = AtomicU32::new(0);
-    static SAVED_OUT: AtomicU32 = AtomicU32::new(0);
-    static SAVED_CP: AtomicU32 = AtomicU32::new(0);
-    static HIGH_SURROGATE: AtomicU16 = AtomicU16::new(0);
-
-    fn input() -> HANDLE {
-        std_handle(STD_INPUT_HANDLE)
-    }
-
-    fn output() -> HANDLE {
-        std_handle(STD_OUTPUT_HANDLE)
-    }
-
-    pub fn write(mut data: &[u8]) {
-        let out = output();
-        while !data.is_empty() {
-            let want = data.len().min(1 << 20);
-            let mut wrote: DWORD = 0;
-            // SAFETY: `data` is readable for `want` bytes.
-            let ok = unsafe {
-                WriteFile(
-                    out,
-                    data.as_ptr().cast(),
-                    want as DWORD,
-                    &raw mut wrote,
-                    std::ptr::null_mut(),
-                )
-            };
-            if ok == 0 || wrote == 0 {
-                return;
-            }
-            data = &data[(wrote as usize).min(data.len())..];
-        }
-    }
-
-    /// Restores the console. Safe to call more than once, and from the
-    /// console control handler.
-    pub fn leave() {
-        if !ACTIVE.swap(false, Ordering::SeqCst) {
-            return;
-        }
-        write(LEAVE_SEQUENCE);
-        // SAFETY: restores modes read from these handles in `enter`.
-        unsafe {
-            SetConsoleMode(input(), SAVED_IN.load(Ordering::SeqCst));
-        }
-        // SAFETY: as above.
-        unsafe {
-            SetConsoleMode(output(), SAVED_OUT.load(Ordering::SeqCst));
-        }
-        let cp = SAVED_CP.load(Ordering::SeqCst);
-        if cp != 0 {
-            // SAFETY: restores the code page read in `enter`.
-            unsafe {
-                SetConsoleOutputCP(cp);
-            }
-        }
-    }
-
-    /// Closing the console window or logging off ends the process; restore
-    /// the console first so a shared console is left usable.
-    unsafe extern "system" fn on_console_event(kind: DWORD) -> BOOL {
-        if matches!(kind, CTRL_CLOSE_EVENT | CTRL_LOGOFF_EVENT | CTRL_SHUTDOWN_EVENT) {
-            leave();
-        }
-        0
-    }
-
-    /// Virtual-terminal output, raw key input, UTF-8, and the alternate
-    /// screen; the error says what the operator should use instead.
-    pub fn enter() -> Result<(), &'static str> {
-        let (input, output) = (input(), output());
-        let (mut saved_in, mut saved_out): (DWORD, DWORD) = (0, 0);
-        // SAFETY: the handles are the process's standard handles; the modes
-        // are written to locals.
-        let consoles = unsafe { GetConsoleMode(input, &raw mut saved_in) } != 0
-            // SAFETY: as above.
-            && unsafe { GetConsoleMode(output, &raw mut saved_out) } != 0;
-        if !consoles {
-            return Err(
-                "rpi-omt-deploy-tui needs an interactive console; use rpi-omt-deploy for scripts",
-            );
-        }
-        let out_mode = saved_out
-            | ENABLE_PROCESSED_OUTPUT
-            | ENABLE_VIRTUAL_TERMINAL_PROCESSING
-            | DISABLE_NEWLINE_AUTO_RETURN;
-        // SAFETY: a mode change on the console's output handle.
-        if unsafe { SetConsoleMode(output, out_mode) } == 0 {
-            return Err(
-                "this console does not support virtual-terminal output; use Windows Terminal or \
-                 Windows 10 or later",
-            );
-        }
-        SAVED_IN.store(saved_in, Ordering::SeqCst);
-        SAVED_OUT.store(saved_out, Ordering::SeqCst);
-        // No processed input: Ctrl+C arrives as a key and cancels a job
-        // rather than killing the program. No line input or echo.
-        // SAFETY: a mode change on the console's input handle.
-        unsafe {
-            SetConsoleMode(input, ENABLE_WINDOW_INPUT | ENABLE_EXTENDED_FLAGS);
-        }
-        // SAFETY: reads the console's output code page.
-        SAVED_CP.store(unsafe { GetConsoleOutputCP() }, Ordering::SeqCst);
-        // SAFETY: as in `set_console_utf8`.
-        unsafe {
-            SetConsoleOutputCP(CP_UTF8);
-        }
-        // SAFETY: the handler is a static function that only restores the
-        // console.
-        unsafe {
-            SetConsoleCtrlHandler(Some(on_console_event), 1);
-        }
-        ACTIVE.store(true, Ordering::SeqCst);
-        write(ENTER_SEQUENCE);
-        Ok(())
-    }
-
-    /// The visible window in cells.
-    pub fn size() -> Option<(u16, u16)> {
-        let mut info = CONSOLE_SCREEN_BUFFER_INFO::default();
-        // SAFETY: `info` receives the buffer description.
-        if unsafe { GetConsoleScreenBufferInfo(output(), &raw mut info) } == 0 {
-            return None;
-        }
-        let w = i32::from(info.srWindow.Right) - i32::from(info.srWindow.Left) + 1;
-        let h = i32::from(info.srWindow.Bottom) - i32::from(info.srWindow.Top) + 1;
-        Some((u16::try_from(w).ok().filter(|&w| w > 0)?, u16::try_from(h).ok().filter(|&h| h > 0)?))
-    }
-
-    /// One key record as (code, character, F-key number, ctrl).
-    fn map_key(k: &KEY_EVENT_RECORD) -> Option<(u8, u32, u8, bool)> {
-        let state = k.dwControlKeyState;
-        let ctrl = state & (LEFT_CTRL_PRESSED | RIGHT_CTRL_PRESSED) != 0;
-        let alt = state & (LEFT_ALT_PRESSED | RIGHT_ALT_PRESSED) != 0;
-        let shift = state & SHIFT_PRESSED != 0;
-        let vk = k.wVirtualKeyCode;
-        let code = match vk {
-            0x26 => Some(UP),
-            0x28 => Some(DOWN),
-            0x25 => Some(LEFT),
-            0x27 => Some(RIGHT),
-            0x24 => Some(HOME),
-            0x23 => Some(END),
-            0x21 => Some(PAGE_UP),
-            0x22 => Some(PAGE_DOWN),
-            0x2E => Some(DELETE),
-            0x08 => Some(BACKSPACE),
-            0x09 => Some(if shift { BACKTAB } else { TAB }),
-            0x0D => Some(ENTER),
-            0x1B => Some(ESC),
-            _ => None,
-        };
-        if let Some(code) = code {
-            return Some((code, 0, 0, ctrl));
-        }
-        // VK_F1..VK_F12
-        if (0x70..=0x7B).contains(&vk) {
-            return Some((F, 0, (vk - 0x70 + 1) as u8, ctrl));
-        }
-        // Ctrl+letter, but not AltGr (reported as Ctrl+Alt), which types
-        // characters on many layouts.
-        if ctrl && !alt && (u16::from(b'A')..=u16::from(b'Z')).contains(&vk) {
-            return Some((CHAR, u32::from(vk - u16::from(b'A') + u16::from(b'a')), 0, true));
-        }
-        let c = k.uChar;
-        if c == 0 {
-            return None;
-        }
-        if (0xD800..=0xDBFF).contains(&c) {
-            HIGH_SURROGATE.store(c, Ordering::Relaxed);
-            return None;
-        }
-        let mut cp = u32::from(c);
-        if (0xDC00..=0xDFFF).contains(&c) {
-            let high = HIGH_SURROGATE.swap(0, Ordering::Relaxed);
-            if high == 0 {
-                return None;
-            }
-            cp = 0x10000 + ((u32::from(high) - 0xD800) << 10) + (u32::from(c) - 0xDC00);
-        }
-        (cp >= 0x20).then_some((CHAR, cp, 0, false))
-    }
-
-    /// Waits up to `timeout_ms` for input and returns up to `max` keys.
-    pub fn read_keys(max: usize, timeout_ms: u64) -> Vec<(u8, u32, u8, bool)> {
-        let mut out = Vec::new();
-        let input = input();
-        let ms = u32::try_from(timeout_ms).unwrap_or(u32::MAX - 1);
-        // SAFETY: waits on the console input handle.
-        if unsafe { WaitForSingleObject(input, ms) } != WAIT_OBJECT_0 {
-            return out;
-        }
-        let mut records = [INPUT_RECORD::default(); 32];
-        while out.len() < max {
-            let mut available: DWORD = 0;
-            // SAFETY: `available` receives the count.
-            let ok = unsafe { GetNumberOfConsoleInputEvents(input, &raw mut available) };
-            if ok == 0 || available == 0 {
-                break;
-            }
-            let mut got: DWORD = 0;
-            // SAFETY: `records` is writable for 32 records.
-            let ok = unsafe { ReadConsoleInputW(input, records.as_mut_ptr(), 32, &raw mut got) };
-            if ok == 0 {
-                break;
-            }
-            for r in &records[..(got as usize).min(records.len())] {
-                if r.EventType != KEY_EVENT || r.Event.bKeyDown == 0 {
-                    continue;
-                }
-                let Some(key) = map_key(&r.Event) else { continue };
-                for _ in 0..r.Event.wRepeatCount.max(1) {
-                    if out.len() >= max {
-                        break;
-                    }
-                    out.push(key);
-                }
-            }
-        }
-        out
-    }
 }

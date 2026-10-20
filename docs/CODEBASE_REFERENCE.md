@@ -119,7 +119,7 @@ are POST and CSRF protected.
 | Workstation tooling: executable discovery, prerequisites, winget installs, ARM64 emulation, and the image-build plan | `crates/omt-deploy/src/tools.rs` |
 | Secure command-line deployer | `crates/rpi-omt-deploy/src/main.rs` |
 | Deployer CLI contract, and the SSH client held to OpenSSH | `tests/native/test_deployer_cli.sh`, `tests/integration/test_ssh_client.sh` |
-| Terminal deployer for Linux and Windows: views and input handling (`crates/rpi-omt-deploy-tui/src/app.rs`), a diffing VT renderer, and the embedded legal texts | `crates/rpi-omt-deploy-tui/` |
+| Browser deployer for Linux and Windows: the state model (`crates/rpi-omt-deploy-gui/src/app.rs`), the loopback server and its API (`crates/rpi-omt-deploy-gui/src/server.rs`), the folder picker (`crates/rpi-omt-deploy-gui/src/fs.rs`), the embedded legal texts, and the page (`crates/rpi-omt-deploy-gui/web/`) | `crates/rpi-omt-deploy-gui/` |
 | Job definitions both deployer frontends share, so a deployment means one thing | `crates/omt-deploy/src/jobs.rs` |
 | Gate toolbox image: every compiler, linter, and scanner the gates use | `tools/toolbox/Dockerfile` |
 | Target sysroot for the cross-compiled appliance build and AArch64 suites | `scripts/make-sysroot.sh` |

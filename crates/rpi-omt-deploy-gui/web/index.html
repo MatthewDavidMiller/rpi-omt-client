@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>OMT Client Deployer</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark light">
+    <meta name="theme-color" content="#0a1119" media="(prefers-color-scheme: dark)">
+    <meta name="theme-color" content="#eef2f8" media="(prefers-color-scheme: light)">
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <link rel="stylesheet" href="/style.css">
+    <link rel="stylesheet" href="/deployer.css">
+    <script src="/app.js" defer></script>
+</head>
+<body>
+    <a class="skip-link" href="#main-content">Skip to main content</a>
+    <header class="site-header">
+        <div class="header-inner">
+            <p class="brand">OMT Client Deployer</p>
+            <nav class="nav-strip" id="nav" aria-label="Deployment steps"></nav>
+            <div class="header-actions">
+                <button type="button" class="button button-secondary" id="quit">Quit</button>
+            </div>
+        </div>
+    </header>
+    <main id="main-content" class="page">
+        <noscript><p class="notice notice-danger">The deployer page needs JavaScript.</p></noscript>
+        <p class="notice notice-danger" id="fatal" role="alert" hidden></p>
+        <div id="views"></div>
+    </main>
+    <footer class="status-bar" aria-live="polite">
+        <div class="status-inner">
+            <span class="state-token banner-neutral" id="state-token">Ready</span>
+            <span class="status-text" id="status-text">Connecting to the deployer…</span>
+            <button type="button" class="button button-danger" id="cancel-job" hidden>Cancel job</button>
+        </div>
+    </footer>
+
+    <dialog id="confirm-dialog" aria-labelledby="confirm-title">
+        <h2 id="confirm-title">Are you sure?</h2>
+        <p id="confirm-text"></p>
+        <div class="button-row">
+            <button type="button" class="button button-danger" id="confirm-yes">Yes, continue</button>
+            <button type="button" class="button button-secondary" id="confirm-no">Cancel</button>
+        </div>
+    </dialog>
+
+    <dialog id="picker" class="picker" aria-labelledby="picker-title">
+        <h2 id="picker-title">Choose a folder</h2>
+        <div class="picker-roots" id="picker-roots" aria-label="Places"></div>
+        <form class="picker-path" id="picker-path-form">
+            <button type="button" class="button button-secondary" id="picker-up" aria-label="Parent folder">Up</button>
+            <input type="text" id="picker-path" aria-label="Folder path" spellcheck="false" autocomplete="off">
+            <button type="submit" class="button button-secondary">Go</button>
+        </form>
+        <p class="picker-current" id="picker-current" aria-live="polite"></p>
+        <ul class="picker-list" id="picker-list" aria-label="Folder contents"></ul>
+        <label class="checkbox-label"><input type="checkbox" id="picker-hidden"> Show hidden items</label>
+        <div class="button-row">
+            <button type="button" class="button" id="picker-use">Use this folder</button>
+            <button type="button" class="button button-secondary" id="picker-cancel">Cancel</button>
+        </div>
+    </dialog>
+
+    <div class="stopped" id="stopped" hidden>
+        <div class="card">
+            <h2>The deployer has stopped</h2>
+            <p>You can close this tab. Run <code>rpi-omt-deploy-gui</code> again to start a new session.</p>
+        </div>
+    </div>
+</body>
+</html>

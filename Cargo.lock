@@ -111,11 +111,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "rpi-omt-deploy-tui"
+name = "rpi-omt-deploy-gui"
 version = "0.0.0"
 dependencies = [
  "omt-capsule",
  "omt-common",
  "omt-deploy",
- "omt-sys",
 ]

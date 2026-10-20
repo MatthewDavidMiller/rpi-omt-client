@@ -67,7 +67,7 @@ cargo clippy --workspace --lib --bins --offline --locked --target aarch64-unknow
 # The Windows deployer's crates only; the appliance crates are Linux-only.
 cargo clippy --offline --locked --target x86_64-pc-windows-gnu --all-targets \
     -p omt-sys -p omt-common -p omt-crypto -p omt-deploy -p omt-capsule \
-    -p rpi-omt-deploy -p rpi-omt-deploy-tui -- -D warnings
+    -p rpi-omt-deploy -p rpi-omt-deploy-gui -- -D warnings
 
 # Every hand-written declaration in omt-sys against the real headers, for
 # each shipped target; compiled, never run.

@@ -91,7 +91,7 @@ change crosses a boundary.
 | `crates/omt-web`, `crates/omt-crypto`, its templates or static assets | `make test-web`; `make test` when behavior changes materially |
 | `crates/omt-receiver*`, `crates/omt-protocol`, `crates/omt-vmx`, or the status contract | `make test-receiver` **and** `make test-web` — both assert `tests/schema/playback-status-vectors.json` |
 | `crates/omt-common` or `crates/omt-sys` | `make test-sanitized`, `make lint` (its ABI probe for `omt-sys`), and the narrow gates of whatever links it |
-| `crates/omt-deploy`, `crates/omt-capsule`, `crates/rpi-omt-deploy*` (core, SSH, CLI, TUI) | `make test-deployer` **and** `make build-windows-deployer` — one source set ships as two packages |
+| `crates/omt-deploy`, `crates/omt-capsule`, `crates/rpi-omt-deploy*` (core, SSH, CLI, web GUI) | `make test-deployer` **and** `make build-windows-deployer` — one source set ships as two packages |
 | A parser of untrusted input | its suite **and** `make fuzz-smoke` |
 | Shell scripts, installer, OpenRC, or HDMI configuration | `make test-quick` |
 | `deploy/Dockerfile`, entrypoint, or image contents | `make test`, or `./scripts/toolbox.sh ./scripts/test-local.sh --full` |
@@ -169,8 +169,9 @@ PSK vectors, bounded processes, manifest-v3 path safety, the operations' fixed
 scripts and parsers), the SSH client's parts (wire encoding, every cipher and
 MAC round trip, `known_hosts` matching including hashed and revoked entries,
 `bcrypt_pbkdf` against its published vector, user-key signing), and the
-terminal application (input decoding, editing, confirmations, scrolling, and
-rendering checked as text). A separate suite holds the real embedded capsule to
+browser frontend (its state model's prechecks and confirmations, the loopback
+server's token, Host, Origin, and size refusals, that no secret is ever sent
+back, and the folder picker's listing and removable-media discovery). A separate suite holds the real embedded capsule to
 the manifest it ships: that the compiled-in member list is exactly
 `deploy/manifest-v3.txt`, that every embedded name passes the real
 `core::valid_manifest_name` rule rather than the build script's copy of it, and that

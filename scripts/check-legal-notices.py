@@ -43,7 +43,7 @@ def main() -> int:
             fail(f"THIRD_PARTY_NOTICES.txt still lists a retired component: {retired}")
 
     # Every About surface an operator can reach: the appliance's Web page and
-    # the deployer's terminal view, which reproduces LICENSE and the notices
+    # the deployer's browser About view, which reproduces LICENSE and the notices
     # embedded through the capsule.
     for path in (
         ROOT / "LICENSE",
@@ -51,8 +51,8 @@ def main() -> int:
     ):
         require_text(path, COPYRIGHT)
     require_text(ROOT / "LICENSE", "MIT License")
-    require_text(ROOT / "crates/rpi-omt-deploy-tui/src/ui.rs", "capsule.license")
-    require_text(ROOT / "crates/rpi-omt-deploy-tui/src/ui.rs", "capsule.notices")
+    require_text(ROOT / "crates/rpi-omt-deploy-gui/src/about.rs", "capsule.license")
+    require_text(ROOT / "crates/rpi-omt-deploy-gui/src/about.rs", "capsule.notices")
     require_text(ROOT / "crates/omt-capsule/build.rs", "THIRD_PARTY_NOTICES.txt")
 
     require_text(ROOT / "third_party/omt/libvmx/LICENSE.txt", "MIT License")

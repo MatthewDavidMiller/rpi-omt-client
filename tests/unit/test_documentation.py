@@ -49,7 +49,7 @@ def test_high_value_paths_are_documented():
         "crates/omt-deploy/src/ops.rs",
         "crates/omt-deploy/src/ssh/kex.rs",
         "crates/rpi-omt-deploy/src/main.rs",
-        "crates/rpi-omt-deploy-tui/src/app.rs",
+        "crates/rpi-omt-deploy-gui/src/app.rs",
         "deploy/manifest-v3.txt",
         "deploy/transaction.sh",
     )
@@ -137,12 +137,12 @@ def test_deployer_web_password_rotation_is_documented():
     setup = (REPO_ROOT / "docs" / "SETUP.md").read_text(encoding="utf-8")
     operations = (REPO_ROOT / "docs" / "OPERATIONS.md").read_text(encoding="utf-8")
     configuration = (REPO_ROOT / "docs" / "CONFIGURATION.md").read_text(encoding="utf-8")
-    tui = (REPO_ROOT / "crates" / "rpi-omt-deploy-tui" / "src" / "app.rs").read_text(
+    gui = (REPO_ROOT / "crates" / "rpi-omt-deploy-gui" / "src" / "app.rs").read_text(
         encoding="utf-8"
     )
     # The labels the operator is told to look for are the ones the view draws.
     for label in ("Also set the Web GUI password", "Change Web GUI password"):
-        assert f'"{label}"' in tui
+        assert f'"{label}"' in gui
         assert label in setup
     assert "web-password" in operations
     assert "12-128" in operations

@@ -34,7 +34,13 @@ pub fn validate_sd_settings(s: &SdSettings) -> Option<&'static str> {
     if let Some(problem) = validate_wifi(&wifi) {
         return Some(problem);
     }
-    let boot = s.boot_directory.as_str();
+    boot_partition_problem(&s.boot_directory)
+}
+
+/// Why `boot` is not a flashed Alpine Raspberry Pi boot partition, or
+/// `None` when it is. Frontends that offer a directory to pick use it to
+/// point at the right one.
+pub fn boot_partition_problem(boot: &str) -> Option<&'static str> {
     match sys::path_lstat(boot) {
         PathKind::Missing | PathKind::Error => return Some(NOT_FOUND),
         PathKind::Dir => {}

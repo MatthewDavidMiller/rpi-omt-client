@@ -1,6 +1,6 @@
 #!/bin/bash
-# Build and test the deployer: core, SSH client, CLI, and terminal
-# application. --publish also stages the Linux package.
+# Build and test the deployer: core, SSH client, CLI, and browser
+# frontend. --publish also stages the Linux package.
 set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MODE="${1:-}"
@@ -22,10 +22,10 @@ export OMT_VERSION="${VERSION}"
 # rather than an empty capsule.
 export OMT_CAPSULE_REQUIRED=1
 TARGET=x86_64-unknown-linux-musl
-DEPLOYER_CRATES=(-p omt-deploy -p rpi-omt-deploy -p rpi-omt-deploy-tui)
+DEPLOYER_CRATES=(-p omt-deploy -p rpi-omt-deploy -p rpi-omt-deploy-gui)
 
 # Every deployer suite under AddressSanitizer: the core, the SSH client's
-# parts, the terminal application, and the real capsule.
+# parts, the browser frontend, and the real capsule.
 scripts/rust-sanitized.sh test "${DEPLOYER_CRATES[@]}"
 scripts/rust-sanitized.sh build -p omt-deploy --bin ssh_interop -p rpi-omt-deploy --bin rpi-omt-deploy
 SANITIZED_DIR="${PROJECT_ROOT}/target/sanitized/${TARGET}/sanitize"
@@ -45,10 +45,10 @@ OMT_SYSROOT=/ CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER="${PROJECT_ROOT}/scr
     OMT_OPENSSL_STATIC=1 OMT_OPENSSL_DIR=/usr \
     RUSTFLAGS="-C target-feature=+crt-static -C relocation-model=pie -C link-self-contained=no" \
     cargo build --release --offline --locked --target "${TARGET}" \
-    --target-dir "${PROJECT_ROOT}/target/deployer" -p rpi-omt-deploy -p rpi-omt-deploy-tui
+    --target-dir "${PROJECT_ROOT}/target/deployer" -p rpi-omt-deploy -p rpi-omt-deploy-gui
 RELEASE_DIR="${PROJECT_ROOT}/target/deployer/${TARGET}/release"
 "${PROJECT_ROOT}/scripts/verify-linux-deployer.sh" "${RELEASE_DIR}/rpi-omt-deploy"
-"${PROJECT_ROOT}/scripts/verify-linux-deployer.sh" "${RELEASE_DIR}/rpi-omt-deploy-tui"
+"${PROJECT_ROOT}/scripts/verify-linux-deployer.sh" "${RELEASE_DIR}/rpi-omt-deploy-gui"
 # The CLI's own contract, against the binary that ships.
 tests/native/test_deployer_cli.sh "${RELEASE_DIR}/rpi-omt-deploy" "${PROJECT_ROOT}"
 
@@ -57,7 +57,7 @@ if [[ "${MODE}" == "--publish" ]]; then
     PUBLISH="${PROJECT_ROOT}/.build/deployer-publish"
     rm -rf "${STAGE}"
     install -Dm755 "${RELEASE_DIR}/rpi-omt-deploy" "${STAGE}/bin/rpi-omt-deploy"
-    install -Dm755 "${RELEASE_DIR}/rpi-omt-deploy-tui" "${STAGE}/bin/rpi-omt-deploy-tui"
+    install -Dm755 "${RELEASE_DIR}/rpi-omt-deploy-gui" "${STAGE}/bin/rpi-omt-deploy-gui"
     install -Dm644 LICENSE "${STAGE}/LICENSE"
     install -Dm644 THIRD_PARTY_NOTICES.txt "${STAGE}/THIRD_PARTY_NOTICES.txt"
     OPENSSL_VERSION="$(openssl version | awk '{print $2}')"

@@ -74,7 +74,7 @@ impl Default for JobRequest {
     }
 }
 
-/// The connection fields the terminal application collects, as typed.
+/// The connection fields the browser frontend collects, as typed.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ConnectionFields<'a> {
     pub host: &'a str,

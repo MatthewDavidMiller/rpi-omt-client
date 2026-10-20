@@ -129,7 +129,7 @@ fi
 # commit carries, so `make build-deployer` and `make build-windows-deployer`
 # own publishing and the post-commit hook runs them; this runner only has to
 # prove both builds compile and pass their contracts.
-run_test "Deployer Core, SSH, CLI, and TUI" "${PROJECT_ROOT}/scripts/check-deployer.sh"
+run_test "Deployer Core, SSH, CLI, and web GUI" "${PROJECT_ROOT}/scripts/check-deployer.sh"
 if [[ "${QUICK_MODE}" != "true" ]]; then
     # Both deployer packages come off this one Linux workstation, so the
     # Windows build is compiled and header-verified in the same gate that

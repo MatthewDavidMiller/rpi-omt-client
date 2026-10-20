@@ -101,7 +101,7 @@ persistent `web_password` value is a one-way hash, not a recoverable copy.
 
 ### Change the Web GUI password
 
-Rotation is optional and off by default. In the terminal deployer, enable
+Rotation is optional and off by default. In the browser deployer, enable
 **Also set the Web GUI password** on the **Deploy** view, or open
 **Manage**, enter and confirm a new password, and select **Change Web GUI
 password**. The password must contain 12-128 UTF-8 bytes
@@ -125,7 +125,7 @@ The operation refuses an active `OMT_WEB_PASSWORD` emergency override.
 ### Rename the appliance
 
 The name in the Web GUI header and in the `<name>.local` mDNS record is the
-Raspberry Pi's own hostname. Change it from the terminal deployer's **Manage**
+Raspberry Pi's own hostname. Change it from the browser deployer's **Manage**
 view under **Rename appliance to**, or from the CLI:
 
 ```bash

@@ -601,9 +601,9 @@ x86-64. A Linux workstation publishes both: `scripts/check-deployer.sh
 --publish` stages the static-PIE musl package, and
 `scripts/build-windows-deployer.sh` cross-compiles the Windows one against the
 pinned OpenSSL. `rpi-omt-deploy` provides human and JSON-lines CLI surfaces,
-while `rpi-omt-deploy-tui` presents Connection, SD card, Alpine, Deploy,
-Manage, Wi-Fi, Activity, and About views in a terminal -- on Linux and, through
-the console's virtual-terminal mode, on Windows. Both run the jobs in
+while `rpi-omt-deploy-gui` presents Connection, SD card, Alpine, Deploy,
+Manage, Wi-Fi, Activity, and About views in the workstation's own web browser
+-- on Linux and on Windows alike. Both run the jobs in
 `crates/omt-deploy/src/jobs.rs`; secrets are wiped when dropped and never accepted
 through arguments or environment variables. That covers every buffer a secret
 passes through, not only the ones it is stored in: the sudo stdin a deployment
@@ -673,9 +673,9 @@ Fixed management actions cross the same privilege boundary as deployment and
 Wi-Fi: a non-root SSH account uses its bounded sudo-password channel, while a
 root session runs the fixed command directly. Neither account needs membership
 in the Docker group. Status, logs, service restart, and a deferred OS reboot
-are typed actions; the terminal application requires a second confirmation before the reboot.
-Host-key verification defaults to OpenSSH's
-`~/.ssh/known_hosts`; the CLI and terminal application can select another verified file without
+are typed actions; the browser frontend requires a second confirmation before the restart and
+the reboot. Host-key verification defaults to OpenSSH's
+`~/.ssh/known_hosts`; the CLI and browser frontend can select another verified file without
 relaxing strict checking.
 
 An untouched Alpine host has neither sudo nor an active doas rule. When the
@@ -729,16 +729,36 @@ every Windows rule is a pure function tested with the Windows answer supplied,
 and the behaviour of the resulting `.exe` on a real desktop remains a
 validation boundary.
 
-The terminal application draws into a cell buffer each frame and writes only
-the cells that changed, so a slow SSH session repaints what moved rather than
-the screen. A view with more rows than the terminal scrolls to the focused row
-instead of hiding rows that stay focusable -- on a short terminal that used to
-mean an invisible button that erases the Pi's disk -- and the label gutter
-follows the width so a path being typed stays readable. On Windows the same
-renderer runs through the console's virtual-terminal mode, with key input read
-as console records so F-keys and Ctrl+arrows arrive the same in conhost and
-Windows Terminal. That behaviour on a real Windows desktop is a validation
-boundary: the Linux publisher verifies the `.exe`'s headers, not its console.
+The browser frontend is a small HTTP/1.1 server bound to `127.0.0.1` only,
+with its page, script, and the appliance Web GUI's own `style.css` compiled
+in, so the two operator surfaces share one design system and the deployer
+still ships as one file with no third-party code. The page is a view of the
+same state model the jobs are started from (`crates/rpi-omt-deploy-gui/src/app.rs`):
+its forms are generated from that model's view and row tables, every action
+button shows the model's precheck for it, and the server -- not the page --
+decides what needs confirming. Loopback is not treated as trust, because any
+page the operator's browser opens can send requests to it. The launch URL
+carries a random 256-bit session token in its fragment, which a browser never
+sends to a server or in a Referer; every API call must present it in a
+header, compared in constant time. The `Host` header must name `127.0.0.1` or
+`localhost` on this port, which defeats DNS rebinding; a cross-origin request
+is refused; actions accept only JSON bodies, which a plain HTML form
+cannot send; and responses carry a `'self'`-only Content-Security-Policy and
+refuse framing. Secrets are write-only: state reports a password as set or
+empty, never its value, and a request body that carried one is wiped. Each
+connection carries one request with a bounded head, body, and timeout, and at
+most sixteen are served at once.
+
+The SD-card view lists mounted removable media -- FAT and exFAT mounts and
+anything under `/media`, `/run/media`, or `/mnt` on Linux, drive letters on
+Windows -- and marks each folder that passes the same boot-partition check the
+preparation job runs (`omt_deploy::sd_card::boot_partition_problem`), so a
+freshly inserted card is one click rather than a typed path. A folder picker
+browses the workstation for the boot partition and the optional
+`known_hosts` file; it only reads, and lists at most 2000 entries a folder.
+Its behaviour on a real Windows desktop -- the browser launch and drive
+enumeration -- is a validation boundary: the Linux publisher verifies the
+`.exe`'s headers, not its runtime.
 
 ## Trust and legal surfaces
 

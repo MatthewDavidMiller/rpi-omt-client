@@ -1,0 +1,265 @@
+/* The deployer's additions to the appliance design system (style.css,
+   served from crates/omt-web/static unchanged). Only what the appliance has
+   no class for lives here, and only in terms of its tokens, so light and
+   dark follow the same way. */
+
+/* The page toggles visibility with the hidden attribute; the appliance's
+   classes set display explicitly and would otherwise win. */
+[hidden] {
+  display: none !important;
+}
+
+body {
+  padding-bottom: 4.5rem;
+}
+
+.chip-row:empty {
+  display: none;
+}
+
+.view > .card:first-of-type {
+  margin-top: var(--space-2);
+}
+
+/* An input with its buttons beside it: Show, Browse. */
+.input-row {
+  display: flex;
+  gap: var(--space-2);
+  align-items: stretch;
+}
+
+.input-row input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.input-row .button {
+  flex: none;
+  min-height: 0;
+}
+
+.short-input {
+  max-width: 7rem;
+}
+
+.match-ok {
+  color: var(--success);
+}
+
+.match-bad {
+  color: var(--warning);
+}
+
+.blocked-reason:empty {
+  display: none;
+}
+
+.button:disabled,
+.button[disabled] {
+  cursor: not-allowed;
+  filter: saturate(0.3);
+  opacity: 0.55;
+}
+
+input:disabled {
+  opacity: 0.7;
+}
+
+/* ------------------------------------------------------- boot partitions */
+
+.boot-panel {
+  margin-top: var(--space-2);
+  padding: var(--space-3);
+  background: var(--surface-2);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+}
+
+.boot-panel .eyebrow {
+  margin-top: var(--space-2);
+}
+
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.chip {
+  min-height: 2.25rem;
+  padding: 0.3rem 0.85rem;
+  font-size: var(--step--1);
+  overflow-wrap: anywhere;
+}
+
+.chip-boot {
+  border-color: var(--success);
+  color: var(--success);
+}
+
+/* ----------------------------------------------------------- status bar */
+
+.status-bar {
+  position: fixed;
+  inset: auto 0 0;
+  z-index: 20;
+  background: var(--header-bg);
+  border-top: 1px solid var(--border);
+  backdrop-filter: blur(10px);
+}
+
+.status-inner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  width: min(var(--measure), 100%);
+  margin: 0 auto;
+  padding: var(--space-2) var(--gutter) calc(var(--space-2) + env(safe-area-inset-bottom, 0px));
+}
+
+.status-text {
+  flex: 1 1 16rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.status-inner .button {
+  min-height: 2.25rem;
+  padding: 0.3rem 0.85rem;
+  font-size: var(--step--1);
+}
+
+.activity-log {
+  min-height: 16rem;
+}
+
+/* --------------------------------------------------------------- dialogs */
+
+dialog {
+  width: min(34rem, calc(100% - 2 * var(--gutter)));
+  max-height: calc(100dvh - 2 * var(--gutter));
+  padding: var(--space-4);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-1);
+  color: var(--text);
+}
+
+dialog::backdrop {
+  background: rgb(0 0 0 / 55%);
+}
+
+dialog h2 {
+  margin: 0 0 var(--space-2);
+  font-size: var(--step-1);
+}
+
+.picker {
+  width: min(48rem, calc(100% - 2 * var(--gutter)));
+}
+
+.picker-roots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin-bottom: var(--space-2);
+}
+
+.picker-path {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.picker-path input {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: var(--step--1);
+}
+
+.picker-path .button {
+  min-height: 0;
+}
+
+.picker-current {
+  min-height: 1.5em;
+  margin: var(--space-2) 0;
+  color: var(--muted);
+  font-size: var(--step--1);
+}
+
+.picker-current.match-ok {
+  color: var(--success);
+}
+
+.picker-current.match-bad {
+  color: var(--warning);
+}
+
+.picker-list {
+  height: min(50vh, 24rem);
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  list-style: none;
+}
+
+.picker-list li {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-inline-end: var(--space-2);
+  border-bottom: 1px solid var(--border);
+}
+
+.picker-item {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: var(--space-2) var(--space-3);
+  background: transparent;
+  border: 0;
+  color: var(--text);
+  font: inherit;
+  text-align: start;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.picker-item:hover {
+  background: var(--accent-surface);
+}
+
+.picker-item.is-dir::before {
+  content: "\1F4C1\00A0";
+}
+
+.picker-item.is-file::before {
+  content: "\1F4C4\00A0";
+}
+
+.picker-empty {
+  padding: var(--space-3);
+  color: var(--muted);
+}
+
+/* ------------------------------------------------------------- stopped */
+
+.stopped {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: var(--gutter);
+  background: rgb(0 0 0 / 60%);
+}
+
+.stopped .card {
+  width: min(28rem, 100%);
+}

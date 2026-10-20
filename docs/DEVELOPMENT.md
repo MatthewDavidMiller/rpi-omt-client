@@ -26,7 +26,7 @@ declarations in `crates/omt-sys`.
 | `crates/omt-deploy` | Deployment jobs, the first-party SSH and SFTP client, SD-card prep, workstation probes |
 | `crates/omt-capsule` | The manifest-v3 capsule, compiled into the deployer by its build script |
 | `crates/rpi-omt-deploy` | `rpi-omt-deploy`, human and JSON-lines surfaces |
-| `crates/rpi-omt-deploy-tui` | `rpi-omt-deploy-tui`, the terminal deployer for Linux and Windows |
+| `crates/rpi-omt-deploy-gui` | `rpi-omt-deploy-gui`, the browser deployer for Linux and Windows: a loopback server and its embedded page |
 | `crates/omt-fuzz` | libFuzzer targets and their corpora (nightly only) |
 
 | Directory | Owns |
@@ -42,9 +42,11 @@ crate forbids it at its root.
 
 Both deployer frontends run the same jobs from `crates/omt-deploy/src/jobs.rs`,
 so a deployment means one thing regardless of which one the operator ran. The
-deployer ships as a CLI and a terminal application on both Linux and Windows:
-a terminal frontend opens no graphics stack, so each is one self-contained
-file, and it works over SSH.
+deployer ships as a CLI and a browser frontend on both Linux and Windows. The
+browser frontend is a loopback HTTP server with its page compiled in and the
+appliance Web GUI's stylesheet served unchanged; it opens no graphics stack of
+its own, so each is one self-contained file, and over SSH a forwarded port
+reaches it.
 
 ## Workstation contract
 
@@ -68,8 +70,8 @@ wants it locally, but nothing requires it. See
 # Build
 make build-arm64              # appliance image -> omt-client-arm64.tar.gz
 make build-amd64              # local test image
-make build-deployer           # Linux CLI + TUI, static-PIE musl
-make build-windows-deployer   # Windows CLI + TUI, mingw-w64 with the pinned OpenSSL
+make build-deployer           # Linux CLI + web GUI, static-PIE musl
+make build-windows-deployer   # Windows CLI + web GUI, mingw-w64 with the pinned OpenSSL
 make build-omt-sender         # OMT A/V test sender
 
 # Verify

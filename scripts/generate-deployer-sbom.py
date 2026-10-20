@@ -17,7 +17,7 @@ import json
 from pathlib import Path
 
 # The published package contains both deployer binaries and nothing else.
-DEPLOYER_ROOTS = ["rpi-omt-deploy", "rpi-omt-deploy-tui"]
+DEPLOYER_ROOTS = ["rpi-omt-deploy", "rpi-omt-deploy-gui"]
 
 
 def main() -> int:

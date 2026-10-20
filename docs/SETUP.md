@@ -40,8 +40,8 @@ The Raspberry Pi Imager's headless presets do not apply to the Alpine image:
 they write Raspberry Pi OS `userconf`/`firstrun` files that Alpine never reads,
 so an Alpine card flashed that way still boots to a login prompt on the console
 with no network. After Imager finishes, mount the card's `PIBOOT` partition and
-open **SD card** in the Windows GUI or terminal deployer. Select that mounted
-partition, enter the two-letter uppercase regulatory country, SSID, and Wi-Fi
+open **SD card** in the browser deployer. Pick the card from **Detected Alpine
+boot partitions** (or **Browse…** to the mounted partition), enter the two-letter uppercase regulatory country, SSID, and Wi-Fi
 password, then choose **Prepare SD card**. The deployer:
 
 1. confirms the selected directory is an Alpine boot partition;
@@ -128,16 +128,16 @@ make build-windows-deployer
 ```
 
 That target cross-compiles with mingw-w64 against a checksum-pinned OpenSSL
-3.5 LTS and stages `rpi-omt-deploy.exe` and `rpi-omt-deploy-tui.exe` with the
+3.5 LTS and stages `rpi-omt-deploy.exe` and `rpi-omt-deploy-gui.exe` with the
 license, notices, and CycloneDX SBOM. Both import only Windows' own DLLs.
 
-The Linux package is the same pair: `rpi-omt-deploy` and the terminal
-`rpi-omt-deploy-tui`, both static-PIE musl binaries with no shared-library
+The Linux package is the same pair: `rpi-omt-deploy` and the browser frontend
+`rpi-omt-deploy-gui`, both static-PIE musl binaries with no shared-library
 dependencies at all. The same file runs on Ubuntu, Debian, RHEL, Fedora, Arch,
-and Alpine, needs no runtime to be installed first, and runs over SSH -- which
-is usually how a rack-mounted Pi is reached. The terminal application opens no
-graphics stack, which is what lets one binary run everywhere; on Windows it runs
-in Windows Terminal or the console host.
+and Alpine and needs no runtime to be installed first. The browser frontend
+serves its page to the workstation's own browser over loopback and opens no
+graphics stack of its own, which is what lets one binary run everywhere; on
+Windows it is a console program whose window shows the address it serves.
 
 Every build runs in the pinned Linux containers, so a Windows workstation
 publishes nothing itself; it runs the published executables.
@@ -151,7 +151,7 @@ archive copied in beside it, and no build tooling of any kind. The deployer
 version and the capsule version cannot disagree, because they are the same
 artifact.
 
-Both applications report what they carry: the terminal application on its
+Both applications report what they carry: the browser frontend on its
 About view, and the CLI without a connection at all.
 
 ```bash
@@ -203,12 +203,23 @@ that VM restarts; a `--rebuild-image` deployment registers it again first. On
 Linux the handler belongs in the host's own kernel, where
 `make setup-arm64-emulation` installs it persistently and verifies it as root.
 
-Run `rpi-omt-deploy-tui` (or `rpi-omt-deploy-tui.exe` on Windows) with a Pi
+Run `rpi-omt-deploy-gui` (or `rpi-omt-deploy-gui.exe` on Windows) with a Pi
 key already trusted in `~/.ssh/known_hosts` and administrator SSH/sudo
-credentials. Nothing else: the capsule is inside it. F1-F8 switch views, Tab
-and Enter move between fields and run the focused action, and secrets are
-masked until `Ctrl+R`. The Connection view accepts an optional sudo password
-and an optional alternate `known_hosts` path; the CLI equivalents are the
+credentials. Nothing else: the capsule is inside it. It listens on
+`127.0.0.1` only, prints an address ending in `#t=<token>`, and opens it in the
+default browser; `--no-browser` skips that and `--port N` fixes the port, which
+is how it is used from another machine: `ssh -L 8765:127.0.0.1:8765 <workstation>`,
+run `rpi-omt-deploy-gui --port 8765 --no-browser` there, and open the printed
+address locally. The token is the session's credential, so the page answers
+only to the address the deployer printed. The views follow the deployment
+order along the top; every action shows why it cannot start yet (a password
+confirmation that does not match, a remote directory the core would refuse, a
+folder that is not a boot partition) and stays disabled until it can, and
+secrets are masked until their **Show** button is pressed. Non-secret fields
+are remembered by the browser for the next session; passwords never are, and
+the page is never sent them back. The Connection view accepts an optional sudo
+password and an optional alternate `known_hosts` path (**Browse…** picks the
+file); the CLI equivalents are the
 `sudo_password` field in `--secrets-stdin` and `--known-hosts <path>`. Factory
 Alpine images accept `root` with an empty SSH password; leave that field blank
 until Alpine setup has set one. The Alpine view's root password is the
@@ -219,8 +230,7 @@ The Alpine view runs `setup-alpine` equivalent configuration and a persistent
 `sys` install: hostname, optional Wi-Fi (a blank SSID keeps an existing
 boot-partition association), DHCP for IPv4, user `pi` in `wheel`,
 root and `pi` passwords, and US HTTPS apk mirrors. It erases the boot disk and
-reboots, so the terminal application confirms it with a `y`/`n` prompt before
-it starts. Deploy uploads, verifies, and installs the embedded capsule, naming
+reboots, so the browser frontend asks for confirmation before it starts. Deploy uploads, verifies, and installs the embedded capsule, naming
 the archive it carries before it sends it; the only field is the remote
 directory. Web GUI password rotation is off by default; enable **Also set the
 Web GUI password** on that view to replace the generated credential as part of
@@ -245,16 +255,15 @@ About shows `LICENSE` and `THIRD_PARTY_NOTICES.txt` from inside the executable:
 both texts are compiled in with the capsule, so the view cannot go blank
 because the binary was copied somewhere without them. The published packages
 still carry the files as well, for anyone reading the package rather than
-running it. About is one document -- version, capsule digest, keys, license,
-notices -- scrolled with PageUp/PageDown, Up/Down, Home, and End.
+running it. About also shows the version and the digest of the capsule.
 
-The terminal application fits itself to the window it is given rather than
-requiring a large one. A view with more fields than the terminal has lines
-scrolls to whichever field is focused and says which of them are on screen, and
-a narrow terminal shortens the label column and scrolls the value being typed
-so the cursor stays visible. `Ctrl+Q` quits, asking first when a job is still
-running: quitting stops watching a deployment rather than stopping it, so
-cancel with `Esc` or `Ctrl+C` first if it should not finish.
+A running job switches the page to **Activity**, which follows its progress
+until scrolled back and offers **Copy log**; the status bar along the bottom
+carries the job's state and a **Cancel job** button wherever the page is.
+**Quit** stops the deployer, asking first when a job is still running:
+quitting stops watching a deployment rather than stopping it, so cancel first
+if it should not finish. Closing the console window, or `Ctrl+C` in it, also
+stops it.
 
 The application does not rely on the working directory it happens to inherit,
 and it reads no file beside itself: the capsule it deploys is compiled in the
@@ -396,11 +405,11 @@ a password manager before Docker's bounded logs rotate. The persistent
 recover the plaintext, and upgrading or redeploying preserves that hash rather
 than generating another password.
 
-The terminal deployer's **Logs** action and the CLI deployer's
+The browser deployer's **Logs** action and the CLI deployer's
 `logs` command show the same container output, so they can also be used while
 the first-start message is still retained.
 
-Password rotation is optional. On the terminal deployer's **Deploy** view, enable
+Password rotation is optional. On the browser deployer's **Deploy** view, enable
 **Also set the Web GUI password**, enter and confirm a 12-128 byte
 password, then deploy. The same change is available later from **Manage**
 without redeploying: enter and confirm the password and select

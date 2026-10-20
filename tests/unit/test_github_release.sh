@@ -34,10 +34,10 @@ mkdir -p \
     "${REPO}/.build/deployer-publish-windows/bin"
 for artifact in \
     .build/deployer-publish/bin/rpi-omt-deploy \
-    .build/deployer-publish/bin/rpi-omt-deploy-tui \
+    .build/deployer-publish/bin/rpi-omt-deploy-gui \
     .build/deployer-publish/deployer-sbom.cdx.json \
     .build/deployer-publish-windows/bin/rpi-omt-deploy.exe \
-    .build/deployer-publish-windows/bin/rpi-omt-deploy-tui.exe \
+    .build/deployer-publish-windows/bin/rpi-omt-deploy-gui.exe \
     .build/deployer-publish-windows/deployer-sbom.cdx.json; do
     printf 'fixture artifact: %s\n' "${artifact}" > "${REPO}/${artifact}"
 done
@@ -81,8 +81,8 @@ REMOTE_TAG_COMMIT="$(git --git-dir="${REMOTE}" rev-parse 'refs/tags/v0.2.3^{comm
 RELEASE_DIR="${REPO}/.build/github-release/v0.2.3"
 LINUX_ARCHIVE="${RELEASE_DIR}/rpi-omt-deployer-v0.2.3-linux-x86_64.tar.gz"
 WINDOWS_ARCHIVE="${RELEASE_DIR}/rpi-omt-deployer-v0.2.3-windows-x86_64.tar.gz"
-tar -tzf "${LINUX_ARCHIVE}" | grep -Fq './bin/rpi-omt-deploy-tui'
-tar -tzf "${WINDOWS_ARCHIVE}" | grep -Fq './bin/rpi-omt-deploy-tui.exe'
+tar -tzf "${LINUX_ARCHIVE}" | grep -Fq './bin/rpi-omt-deploy-gui'
+tar -tzf "${WINDOWS_ARCHIVE}" | grep -Fq './bin/rpi-omt-deploy-gui.exe'
 (cd "${RELEASE_DIR}" && sha256sum --check SHA256SUMS >/dev/null)
 grep -Fq 'release create v0.2.3' "${TEST_ROOT}/gh.log"
 grep -Fq -- '--verify-tag --generate-notes --title v0.2.3 --prerelease' \

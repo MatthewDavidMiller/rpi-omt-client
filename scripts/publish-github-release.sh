@@ -87,10 +87,10 @@ LINUX_PUBLISH="${PROJECT_ROOT}/.build/deployer-publish"
 WINDOWS_PUBLISH="${PROJECT_ROOT}/.build/deployer-publish-windows"
 for required in \
     "${LINUX_PUBLISH}/bin/rpi-omt-deploy" \
-    "${LINUX_PUBLISH}/bin/rpi-omt-deploy-tui" \
+    "${LINUX_PUBLISH}/bin/rpi-omt-deploy-gui" \
     "${LINUX_PUBLISH}/deployer-sbom.cdx.json" \
     "${WINDOWS_PUBLISH}/bin/rpi-omt-deploy.exe" \
-    "${WINDOWS_PUBLISH}/bin/rpi-omt-deploy-tui.exe" \
+    "${WINDOWS_PUBLISH}/bin/rpi-omt-deploy-gui.exe" \
     "${WINDOWS_PUBLISH}/deployer-sbom.cdx.json"; do
     if [[ ! -f "${required}" || -L "${required}" || ! -s "${required}" ]]; then
         echo "ERROR: Release build did not produce ${required}." >&2

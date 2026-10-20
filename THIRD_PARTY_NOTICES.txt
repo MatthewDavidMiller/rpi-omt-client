@@ -96,7 +96,7 @@ OPENSSL
 
 Component:
   OpenSSL 3.5 (libssl and libcrypto). The appliance image links Alpine's
-  shared libraries; rpi-omt-deploy and rpi-omt-deploy-tui link it statically
+  shared libraries; rpi-omt-deploy and rpi-omt-deploy-gui link it statically
   (Alpine's build on Linux, the pinned 3.5 release on Windows).
 Copyright:
   Copyright (c) 1998-2025 The OpenSSL Project Authors
@@ -317,7 +317,7 @@ WINDOWS DEPLOYER RUNTIME
 ------------------------
 
 These components are statically linked into rpi-omt-deploy.exe and
-rpi-omt-deploy-tui.exe by the mingw-w64 cross build so the application runs on a stock Windows host. They are
+rpi-omt-deploy-gui.exe by the mingw-w64 cross build so the application runs on a stock Windows host. They are
 not part of the appliance image or the Linux deployer package.
 
 mingw-w64 runtime (headers, CRT, winpthreads)

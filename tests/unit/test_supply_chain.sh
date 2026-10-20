@@ -38,7 +38,7 @@ literal "${PROJECT_ROOT}/crates/omt-deploy/src/ssh/kex.rs" 'known_hosts::check('
 literal "${PROJECT_ROOT}/crates/omt-deploy/src/ops.rs" 'wpa_cli -i \"$iface\"' "Wi-Fi updates use wpa_cli"
 literal "${PROJECT_ROOT}/scripts/build-openssl.sh" 'OPENSSL_SHA256="' "The Windows OpenSSL is checksum pinned"
 literal "${PROJECT_ROOT}/scripts/generate-runtime-sbom.py" 'RUNTIME_ROOTS = ["omt-receiver", "omt-web"]' "Runtime SBOM is scoped to both appliance binaries"
-literal "${PROJECT_ROOT}/scripts/generate-deployer-sbom.py" 'DEPLOYER_ROOTS = ["rpi-omt-deploy", "rpi-omt-deploy-tui"]' "Deployer SBOM is scoped to the deployer"
+literal "${PROJECT_ROOT}/scripts/generate-deployer-sbom.py" 'DEPLOYER_ROOTS = ["rpi-omt-deploy", "rpi-omt-deploy-gui"]' "Deployer SBOM is scoped to the deployer"
 literal "${PROJECT_ROOT}/deploy/Dockerfile" 'alpine:3.23.5@${ALPINE_DIGEST} AS builder' "Container builder is digest pinned"
 literal "${PROJECT_ROOT}/deploy/Dockerfile" 'FROM scratch AS runtime-artifacts' "Runtime export omits its toolchain"
 literal "${PROJECT_ROOT}/deploy/Dockerfile" '--apk-installed /tmp/runtime-installed' "Runtime SBOM inventories the installed packages"
