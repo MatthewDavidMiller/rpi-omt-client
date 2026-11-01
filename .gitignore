@@ -14,6 +14,8 @@ build/
 /vm-files/
 /.codex/
 **/bin/
+# Cargo's bin targets are source, not build output.
+!crates/*/src/bin/
 **/obj/
 TestResults/
 
