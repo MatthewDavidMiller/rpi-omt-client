@@ -337,7 +337,7 @@ GCC runtime library (libgcc)
 ALPINE LINUX RUNTIME
 --------------------
 
-The runtime is based on Alpine Linux 3.23.5 and includes dynamically linked
+The runtime is based on Alpine Linux 3.23.8 and includes dynamically linked
 runtime packages such as musl, BusyBox, ALSA lib, OpenSSL, bash,
 coreutils, and util-linux.
 Each package remains governed by the license recorded in its Alpine package

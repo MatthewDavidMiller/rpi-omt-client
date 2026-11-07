@@ -503,7 +503,7 @@ a flip that a vanished display will never complete never returns, and the
 
 ## Container and host boundary
 
-The Alpine 3.23.5 runtime is read-only, drops all Linux capabilities, runs as
+The Alpine 3.23.8 runtime is read-only, drops all Linux capabilities, runs as
 the `omt` user, retains Docker's default sensitive `/proc` and `/sys` path
 confinement, and receives only DRM/ALSA devices, the OMT config volume, a
 filtered Avahi D-Bus socket, diagnostics state, and the host-action directory.

@@ -17,10 +17,10 @@
 # overridden on Docker and would collide with Podman's --userns=keep-id
 # mapping, where the caller's uid is whatever it happens to be.
 
-ARG ALPINE_DIGEST=sha256:fd791d74b68913cbb027c6546007b3f0d3bc45125f797758156952bc2d6daf40
+ARG ALPINE_DIGEST=sha256:5c216c9767869f6ec7c4718977601d52f087c5c7bf2fdfb198e403f6b48ec40d
 
 # hadolint ignore=DL3029,DL3006
-FROM alpine:3.23.5@${ALPINE_DIGEST}
+FROM alpine:3.23.8@${ALPINE_DIGEST}
 
 SHELL ["/bin/ash", "-eo", "pipefail", "-c"]
 

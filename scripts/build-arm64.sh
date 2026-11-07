@@ -57,7 +57,9 @@ cleanup() {
 trap cleanup EXIT
 
 ensure_test_container_engine || exit 1
-"${PROJECT_ROOT}/scripts/check-arm64-emulation.sh"
+# No emulation check: deploy/Dockerfile assembles the ARM64 runtime without
+# executing any target binary, so this builds under rootless Podman on a host
+# that has never registered a binfmt_misc handler.
 echo "Building ARM64 image..."
 # This build does not route through container_engine_build -- it needs the
 # archive export each engine spells differently -- so it applies the same CPU

@@ -22,7 +22,7 @@ when a pinned version changes, because the image tag is a content hash of the
 Dockerfile, the Python requirements, the pinned installers, and the sysroot
 recipe.
 
-The toolbox is built on the same digest-pinned `alpine:3.23.5` image the
+The toolbox is built on the same digest-pinned `alpine:3.23.8` image the
 appliance compiles with, so the gates and the shipped receiver resolve one
 compiler and one OpenSSL rather than two that can drift. Its musl host is also what makes the
 static Linux deployer a native build rather than a cross-compile.

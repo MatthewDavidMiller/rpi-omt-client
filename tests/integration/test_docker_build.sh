@@ -161,14 +161,8 @@ for index in "${!checks[@]}"; do
 done
 
 # The appliance only ever runs ARM64, so its builder stage is not an optional
-# extra: without registered emulation this host cannot certify what it ships.
-# `make install` registers it; `make setup-arm64-emulation` repairs it.
-arm_probe_image="docker.io/library/debian:bookworm-slim@sha256:4724b8cc51e33e398f0e2e15e18d5ec2851ff0c2280647e1310bc1642182655d"
-if ! timeout 30 "${CONTAINER_ENGINE}" run --rm --platform linux/arm64 \
-    --entrypoint /bin/true "${arm_probe_image}" >/dev/null 2>&1; then
-    fail "ARM64 emulation is unavailable; run: make setup-arm64-emulation"
-fi
-
+# extra. Nothing in the image build executes an ARM64 binary, so this needs no
+# registered emulation and no root.
 if [[ "${CONTAINER_ENGINE_KIND}" == "docker" ]]; then
     arm_build=(
         "${CONTAINER_ENGINE}" buildx build

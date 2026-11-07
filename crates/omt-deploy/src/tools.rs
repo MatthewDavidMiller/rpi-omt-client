@@ -141,11 +141,25 @@ pub fn find_bash() -> Option<String> {
     find_executable("bash").filter(|b| !ON_WINDOWS || !is_wsl_launcher(b))
 }
 
-/// Docker first, then Podman: the order scripts/docker-test-env.sh uses.
+/// Docker first, then Podman, and an engine that answers `info` ahead of one
+/// that does not: the order scripts/docker-test-env.sh uses. Under WSL a
+/// Windows Docker Desktop CLI is on PATH whether or not its engine is running,
+/// and taking it blindly would hide a working rootless Podman behind it. When
+/// neither answers, the first one found is returned so the caller can name it.
 pub fn find_container_engine() -> Option<(String, &'static str)> {
-    find_executable("docker")
-        .map(|e| (e, "docker"))
-        .or_else(|| find_executable("podman").map(|e| (e, "podman")))
+    let found: Vec<(String, &'static str)> = [("docker", "docker"), ("podman", "podman")]
+        .into_iter()
+        .filter_map(|(program, kind)| find_executable(program).map(|e| (e, kind)))
+        .collect();
+    let cwd = sys::current_dir();
+    found
+        .iter()
+        .find(|(engine, _)| {
+            sys::run_process(engine, &["info"], Some(&cwd), &[], None)
+                .is_ok_and(|r| r.exit_code == 0)
+        })
+        .or_else(|| found.first())
+        .cloned()
 }
 
 // -------------------------------------------------------------------- plan
