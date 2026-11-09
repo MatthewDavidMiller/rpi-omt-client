@@ -55,6 +55,7 @@ executable "${PROJECT_ROOT}/scripts/build-openssl.sh" "Pinned OpenSSL build is e
 executable "${PROJECT_ROOT}/tests/integration/test_ssh_client.sh" "SSH interop gate is executable"
 executable "${PROJECT_ROOT}/scripts/publish-github-release.sh" "Local GitHub Release publisher is executable"
 executable "${PROJECT_ROOT}/scripts/check-no-c-sources.sh" "Source-language gate is executable"
+executable "${PROJECT_ROOT}/scripts/codesign.sh" "Windows signing script is executable"
 literal "${PROJECT_ROOT}/Makefile" 'test-receiver:' "Make exposes test-receiver"
 literal "${PROJECT_ROOT}/Makefile" 'test-deployer:' "Make exposes test-deployer"
 literal "${PROJECT_ROOT}/scripts/security-scan.sh" '--skip-files vars.yml' "Security scan excludes vars.yml"

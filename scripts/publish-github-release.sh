@@ -98,6 +98,18 @@ for required in \
     fi
 done
 
+# Sign the Windows deployers with the personal code-signing key. This runs on
+# the host because the key lives outside the repository and the toolbox never
+# sees it. The cross build has already verified the unsigned files; each
+# signature is verified and timestamped before it replaces its executable.
+command -v osslsigncode >/dev/null 2>&1 || {
+    echo "ERROR: osslsigncode is required to sign the Windows deployers." >&2
+    exit 1
+}
+for exe in "${WINDOWS_PUBLISH}"/bin/*.exe; do
+    "${PROJECT_ROOT}/scripts/codesign.sh" "${exe}" "$(basename -- "${exe}" .exe)"
+done
+
 RELEASE_DIR="${PROJECT_ROOT}/.build/github-release/${VERSION}"
 rm -rf -- "${RELEASE_DIR}"
 mkdir -p -- "${RELEASE_DIR}"
@@ -106,7 +118,8 @@ LINUX_ARCHIVE="${RELEASE_DIR}/rpi-omt-deployer-${VERSION}-linux-x86_64.tar.gz"
 WINDOWS_ARCHIVE="${RELEASE_DIR}/rpi-omt-deployer-${VERSION}-windows-x86_64.tar.gz"
 CHECKSUMS="${RELEASE_DIR}/SHA256SUMS"
 
-# Fixed ownership, ordering, and timestamps make a retry byte-reproducible.
+# Fixed ownership, ordering, and timestamps make a retry byte-reproducible,
+# apart from the Windows signatures, which each carry a timestamp.
 tar --sort=name --mtime="@${SOURCE_DATE_EPOCH}" --owner=0 --group=0 \
     --numeric-owner -czf "${LINUX_ARCHIVE}" -C "${LINUX_PUBLISH}" .
 tar --sort=name --mtime="@${SOURCE_DATE_EPOCH}" --owner=0 --group=0 \

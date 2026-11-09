@@ -12,6 +12,12 @@ REMOTE="${TEST_ROOT}/remote.git"
 mkdir -p "${REPO}/scripts" "${TEST_ROOT}/bin"
 cp "${PROJECT_ROOT}/scripts/publish-github-release.sh" "${REPO}/scripts/"
 cp "${PROJECT_ROOT}/scripts/detect-version.sh" "${REPO}/scripts/"
+# The real signer needs the personal key and osslsigncode; the fixture only
+# records which files the publisher asks it to sign.
+cat > "${REPO}/scripts/codesign.sh" <<EOF
+#!/bin/bash
+printf '%s\n' "\$1" >> "${TEST_ROOT}/codesign.log"
+EOF
 chmod +x "${REPO}/scripts/"*.sh
 
 printf '0.2.3\n' > "${REPO}/VERSION"
@@ -56,7 +62,8 @@ case "${1:-} ${2:-}" in
     *) exit 1 ;;
 esac
 EOF
-chmod +x "${TEST_ROOT}/bin/make" "${TEST_ROOT}/bin/gh"
+printf '#!/bin/bash\n' > "${TEST_ROOT}/bin/osslsigncode"
+chmod +x "${TEST_ROOT}/bin/make" "${TEST_ROOT}/bin/gh" "${TEST_ROOT}/bin/osslsigncode"
 
 MAKE_LOG="${TEST_ROOT}/make.log" \
 GH_LOG="${TEST_ROOT}/gh.log" \
@@ -89,6 +96,15 @@ grep -Fq -- '--verify-tag --generate-notes --title v0.2.3 --prerelease' \
     "${TEST_ROOT}/gh.log"
 
 echo "PASS: local builds produce a tagged prerelease with verified packages"
+
+# Both Windows executables, and only those, are signed before packaging.
+signed="$(sed 's|.*/||' "${TEST_ROOT}/codesign.log" | sort | tr '\n' ' ')"
+[[ "${signed}" == "rpi-omt-deploy-gui.exe rpi-omt-deploy.exe " ]] || {
+    echo "FAIL: the Windows deployers were not both signed (got: ${signed})" >&2
+    exit 1
+}
+
+echo "PASS: the Windows deployers are signed before they are packaged"
 
 # A retry recognizes the release and must not issue another create operation or
 # mutate its published assets.

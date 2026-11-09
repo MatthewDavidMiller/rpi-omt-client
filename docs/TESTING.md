@@ -313,6 +313,14 @@ upstream, and a version tag that already belongs to another commit. It never
 replaces assets on an existing GitHub Release. The staged upload files remain
 under `.build/github-release/<version>/` for inspection or recovery.
 
+The Windows deployers are signed on the host after the cross build and before
+they are packaged, by `scripts/codesign.sh` with `osslsigncode`. The key is the
+personal self-signed code-signing key in `~/.config/code-signing/`; it is never
+in this repository and the toolbox never sees it. Each signature is verified and
+timestamped before it replaces its executable, and `SHA256SUMS` covers the
+signed archive. A machine trusts the signature once it has imported the public
+certificate (`certs/matt-code-signing.cer` in the `windows-config` repository).
+
 ## Hardware validation boundary
 
 There is intentionally no full-system Raspberry Pi VM tier. QEMU models none of
